@@ -32,17 +32,20 @@ const OFFICIAL_RATES_FEED = {
     "macos-15": 0.062,
     "macos-large": 0.077,
     "macos-15-large": 0.077,
-    "macos-xlarge": 0.102,
-    "macos-15-xlarge": 0.102,
+    "macos-14-xlarge": 0.102,
+    "macos-xlarge": 0.12,
+    "macos-15-xlarge": 0.12,
     "gpu-t4-4-core": 0.052
   },
   gitlab_ci: {
     "saas-linux-small-amd64": 0.01,
     "saas-linux-small-arm64": 0.01,
-    "saas-linux-medium-amd64": 0.02,
-    "saas-linux-large-amd64": 0.04,
-    "saas-linux-xlarge-amd64": 0.08,
-    "saas-linux-2xlarge-amd64": 0.16,
+    "saas-linux-medium-amd64": 0.03,
+    "saas-linux-medium-arm64": 0.03,
+    "saas-linux-large-amd64": 0.06,
+    "saas-linux-large-arm64": 0.06,
+    "saas-linux-xlarge-amd64": 0.12,
+    "saas-linux-2xlarge-amd64": 0.24,
     "saas-macos-medium-m1": 0.06,
     "saas-macos-large-m2pro": 0.12
   },
@@ -52,8 +55,9 @@ const OFFICIAL_RATES_FEED = {
     "docker-medium+": 0.009,
     "docker-large": 0.012,
     "docker-xlarge": 0.024,
-    "arm-medium": 0.0042,
-    "arm-large": 0.0084,
+    "arm-medium": 0.0078,
+    "arm-large": 0.0156,
+    "arm-xlarge": 0.0234,
     "macos-m1-medium": 0.09,
     "macos-m2pro-medium": 0.09,
     "macos-m2pro-large": 0.18
@@ -69,12 +73,12 @@ const OFFICIAL_RATES_FEED = {
     "BUILD_GENERAL1_SMALL": 0.005,
     "BUILD_GENERAL1_MEDIUM": 0.01,
     "BUILD_GENERAL1_LARGE": 0.02,
-    "BUILD_GENERAL1_XLARGE": 0.08,
+    "BUILD_GENERAL1_XLARGE": 0.1,
     "ARM_CONTAINER_SMALL": 0.0034,
     "ARM_CONTAINER_LARGE": 0.015
   },
   gcp_cloud_build: {
-    "E2_MEDIUM": 0.003,
+    "E2_MEDIUM": 0.006,
     "E2_HIGHCPU_8": 0.016,
     "E2_HIGHCPU_32": 0.064,
     "N1_HIGHCPU_8": 0.016,
@@ -82,8 +86,8 @@ const OFFICIAL_RATES_FEED = {
   },
   azure_pipelines: {
     "azure-microsoft-hosted-linux": 0.008,
-    "azure-microsoft-hosted-windows": 0.008,
-    "azure-microsoft-hosted-macos": 0.008
+    "azure-microsoft-hosted-windows": 0.016,
+    "azure-microsoft-hosted-macos": 0.062
   }
 };
 
@@ -93,13 +97,17 @@ function resolveRunnerRate(label) {
     return OFFICIAL_RATES_FEED.github_actions[raw];
   }
   const l = raw.toLowerCase();
+  if (l.includes("self-hosted")) {
+    return 0.0;
+  }
   if (OFFICIAL_RATES_FEED.github_actions[l] !== undefined) {
     return OFFICIAL_RATES_FEED.github_actions[l];
   }
   const isArm = l.includes("arm") || l.includes("aarch64") || l.includes("graviton");
   const isWin = l.includes("windows");
   if (l.includes("gpu") || l.includes("cuda") || l.includes("t4")) return 0.052;
-  if (l.includes("macos") && l.includes("xlarge")) return 0.102;
+  if (l.includes("macos-14") && l.includes("xlarge")) return 0.102;
+  if (l.includes("macos") && l.includes("xlarge")) return 0.12;
   if (l.includes("macos") && l.includes("large")) return 0.077;
   if (l.includes("macos")) return 0.062;
   if (l.includes("64-core") || l.includes("64core") || l.includes("64vcpu")) {
@@ -232,13 +240,21 @@ async function fetchLiveGitHubRepoSummary(slug, ghToken, windowDays = 30) {
   let newestRunMs = 0;
   const completedSampleRuns = [];
 
+  let isSampleTruncated = false;
   if (runsResp && runsResp.ok) {
     const runsJson = await runsResp.json().catch(() => ({}));
     const rawRuns = Array.isArray(runsJson.workflow_runs) ? runsJson.workflow_runs : [];
     if (rawRuns.length > 0 && rawRuns[0].head_sha) {
       headSha = String(rawRuns[0].head_sha).slice(0, 12);
     }
+    if (rawRuns.length >= 100) {
+      const tailMs = Date.parse(rawRuns[rawRuns.length - 1].created_at || "");
+      if (Number.isFinite(tailMs) && tailMs > cutoffMs) {
+        isSampleTruncated = true;
+      }
+    }
     for (const run of rawRuns) {
+      if (run.status && run.status !== "completed") continue;
       const createdMs = Date.parse(run.created_at || "");
       if (!Number.isFinite(createdMs) || createdMs < cutoffMs) continue;
       if (createdMs < oldestRunMs) oldestRunMs = createdMs;
@@ -262,15 +278,14 @@ async function fetchLiveGitHubRepoSummary(slug, ghToken, windowDays = 30) {
     }
   }
 
-  // Compute real monthly run cadence extrapolated from the actual observed time span
+  // Extrapolate ONLY when 100-run page truncated before `cutoffMs`; otherwise divide over full `clampedDays` (`B1`)!
   let monthlyRuns = 0.0;
   let provenanceMode = "STATIC_TOPOLOGY";
   if (observedRunsInWindow > 0) {
     provenanceMode = "LIVE_CALIBRATED";
-    const spanDays = Math.max(
-      1.0,
-      Math.min(clampedDays, (Math.max(nowMs, newestRunMs) - oldestRunMs) / (86400 * 1000))
-    );
+    const spanDays = isSampleTruncated
+      ? Math.max(1 / 24, Math.min(clampedDays, (nowMs - oldestRunMs) / (86400 * 1000)))
+      : clampedDays;
     monthlyRuns = observedRunsInWindow * (30.0 / spanDays);
   }
 
@@ -278,6 +293,9 @@ async function fetchLiveGitHubRepoSummary(slug, ghToken, windowDays = 30) {
   let totalJobs = 0;
   let billedMinsPerRun = 0.0;
   let runCostUsd = 0.0;
+  let stdPoolMinsPerRun = 0.0;
+  let stdGrossPerRun = 0.0;
+  let nonPoolGrossPerRun = 0.0;
   let cancelledWastedMins = 0.0;
 
   if (completedSampleRuns.length > 0) {
@@ -294,25 +312,58 @@ async function fetchLiveGitHubRepoSummary(slug, ghToken, windowDays = 30) {
     let sumJobs = 0;
     let sumBilledMins = 0.0;
     let sumRunCost = 0.0;
+    let sumStdPool = 0.0;
+    let sumStdGross = 0.0;
+    let sumNonPoolGross = 0.0;
 
     for (const jPayload of jobResponses) {
       if (!jPayload || !Array.isArray(jPayload.jobs) || jPayload.jobs.length === 0) continue;
       let sampleBilled = 0.0;
       let sampleCost = 0.0;
+      let sampleStdPool = 0.0;
+      let sampleStdGross = 0.0;
+      let sampleNonPoolGross = 0.0;
       let sampleJobCount = 0;
       for (const job of jPayload.jobs) {
-        if (job.conclusion === "skipped") continue;
+        if (job.conclusion === "skipped" || job.conclusion === "startup_failure") continue;
         const startMs = Date.parse(job.started_at || "");
         const endMs = Date.parse(job.completed_at || "");
-        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) continue;
-        const durSec = Math.max(1, (endMs - startMs) / 1000.0);
-        const billedMins = Math.ceil(durSec / 60.0);
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue;
+        const durSec = (endMs - startMs) / 1000.0;
+        const billedMins = Math.max(1, Math.ceil(durSec / 60.0));
         const labels = Array.isArray(job.labels) ? job.labels : [];
-        const runtimeLabel = labels.find((l) => l && l !== "self-hosted") || labels[0] || "ubuntu-latest";
+        const hasSelfHosted = labels.some((l) => String(l).toLowerCase() === "self-hosted");
+        const specific = labels.find((l) => l && String(l).toLowerCase() !== "self-hosted");
+        const runtimeLabel = hasSelfHosted
+          ? specific
+            ? `self-hosted-${specific}`
+            : "self-hosted"
+          : specific || "ubuntu-latest";
+        const rlLow = runtimeLabel.toLowerCase();
         const rate = resolveRunnerRate(runtimeLabel);
+        const isLargerOr3p =
+          hasSelfHosted ||
+          rlLow.includes("-core") ||
+          rlLow.includes("core") ||
+          rlLow.includes("vcpu") ||
+          rlLow.includes("large") ||
+          rlLow.includes("xlarge") ||
+          rlLow.includes("gpu") ||
+          rlLow.includes("blacksmith") ||
+          rlLow.includes("warp") ||
+          rlLow.includes("depot") ||
+          rlLow.includes("buildjet");
         sampleJobCount += 1;
         sampleBilled += billedMins;
-        sampleCost += billedMins * rate;
+        const jc = billedMins * rate;
+        sampleCost += jc;
+        if (isLargerOr3p) {
+          sampleNonPoolGross += jc;
+        } else {
+          const osMult = rlLow.includes("macos") ? 10.0 : rlLow.includes("windows") ? 2.0 : 1.0;
+          sampleStdPool += billedMins * osMult;
+          sampleStdGross += jc;
+        }
         if (job.conclusion === "cancelled") {
           cancelledWastedMins += billedMins;
         }
@@ -322,6 +373,9 @@ async function fetchLiveGitHubRepoSummary(slug, ghToken, windowDays = 30) {
         sumJobs += sampleJobCount;
         sumBilledMins += sampleBilled;
         sumRunCost += sampleCost;
+        sumStdPool += sampleStdPool;
+        sumStdGross += sampleStdGross;
+        sumNonPoolGross += sampleNonPoolGross;
       }
     }
 
@@ -329,6 +383,9 @@ async function fetchLiveGitHubRepoSummary(slug, ghToken, windowDays = 30) {
       totalJobs = Math.round(sumJobs / validRunSamples);
       billedMinsPerRun = sumBilledMins / validRunSamples;
       runCostUsd = sumRunCost / validRunSamples;
+      stdPoolMinsPerRun = sumStdPool / validRunSamples;
+      stdGrossPerRun = sumStdGross / validRunSamples;
+      nonPoolGrossPerRun = sumNonPoolGross / validRunSamples;
     }
   }
 
@@ -369,8 +426,25 @@ async function fetchLiveGitHubRepoSummary(slug, ghToken, windowDays = 30) {
   const botRunSharePct =
     observedRunsInWindow > 0 ? (botRuns / observedRunsInWindow) * 100.0 : 0.0;
   const grossMonthlyUsd = runCostUsd * monthlyRuns;
-  // Public GitHub repositories receive $0.00 net billed standard GitHub-hosted minutes
-  const netMonthlyUsd = isPublic ? 0.0 : Math.max(0.0, grossMonthlyUsd - 2000 * 0.006);
+  // Public GitHub repos pay $0 for standard hosted runners (only Larger/3rd-party runners bill);
+  // Private repos draw 2,000 OS-weighted pool minutes proportionally (`E1, E2, E4`)!
+  let netMonthlyUsd = 0.0;
+  if (isPublic) {
+    netMonthlyUsd = nonPoolGrossPerRun * monthlyRuns;
+  } else {
+    const monthlyStdPool = stdPoolMinsPerRun * monthlyRuns;
+    const monthlyStdGross = stdGrossPerRun * monthlyRuns;
+    const monthlyNonPool = nonPoolGrossPerRun * monthlyRuns;
+    if (stdPoolMinsPerRun === 0 && nonPoolGrossPerRun === 0 && grossMonthlyUsd > 0) {
+      netMonthlyUsd = Math.max(0.0, grossMonthlyUsd - 2000 * 0.006);
+    } else {
+      const stdOverage =
+        monthlyStdPool <= 2000.0 || monthlyStdPool <= 0.0
+          ? 0.0
+          : monthlyStdGross * ((monthlyStdPool - 2000.0) / monthlyStdPool);
+      netMonthlyUsd = stdOverage + monthlyNonPool;
+    }
+  }
 
   return {
     repo: slug,
@@ -1308,13 +1382,18 @@ async function dispatchFridayFinOpsDigests(env) {
 
   for (const ent of rows) {
     const agg = await env.MINICI_D1.prepare(
-      `SELECT COUNT(DISTINCT repo) AS repo_count,
-              COUNT(*) AS runs_synced,
-              AVG(gross_monthly_usd) AS avg_gross_usd,
-              AVG(net_billed_monthly_usd) AS avg_net_usd,
-              AVG(dev_wait_monthly_usd) AS avg_wait_usd
-         FROM cloud_run_ledger
-        WHERE key_sha256 = ?1 AND recorded_at >= ?2`
+      `SELECT COUNT(*) AS repo_count,
+              COALESCE(SUM(s.sync_cnt), 0) AS runs_synced,
+              COALESCE(SUM(l.gross_monthly_usd), 0.0) AS total_gross_usd,
+              COALESCE(SUM(l.net_billed_monthly_usd), 0.0) AS total_net_usd,
+              COALESCE(SUM(l.dev_wait_monthly_usd), 0.0) AS total_wait_usd
+         FROM cloud_run_ledger l
+         INNER JOIN (
+           SELECT repo, MAX(id) AS max_id, COUNT(*) AS sync_cnt
+             FROM cloud_run_ledger
+            WHERE key_sha256 = ?1 AND recorded_at >= ?2
+            GROUP BY repo
+         ) s ON l.id = s.max_id`
     )
       .bind(ent.key_sha256, weekAgo)
       .first()
@@ -1322,7 +1401,7 @@ async function dispatchFridayFinOpsDigests(env) {
     if (!agg || !agg.runs_synced) continue;
 
     const slackMsg = {
-      text: `MiniCI Weekly Friday FinOps Digest (${ent.plan.toUpperCase()}): ${agg.repo_count} repo(s), $${Number(agg.avg_gross_usd || 0).toFixed(2)}/mo run-rate`,
+      text: `MiniCI Weekly Friday FinOps Digest (${ent.plan.toUpperCase()}): ${agg.repo_count} repo(s), $${Number(agg.total_gross_usd || 0).toFixed(2)}/mo total run-rate`,
       blocks: [
         {
           type: "header",
@@ -1332,9 +1411,9 @@ async function dispatchFridayFinOpsDigests(env) {
           type: "section",
           fields: [
             { type: "mrkdwn", text: `*Tracked Repos (7d):*\n\`${agg.repo_count}\` (` + "`" + `${agg.runs_synced}` + "`" + ` syncs)` },
-            { type: "mrkdwn", text: `*Avg Gross Run-Rate:*\n\`$${Number(agg.avg_gross_usd || 0).toFixed(2)}/mo\`` },
-            { type: "mrkdwn", text: `*Avg Net Billed:*\n\`$${Number(agg.avg_net_usd || 0).toFixed(2)}/mo\`` },
-            { type: "mrkdwn", text: `*Avg Dev Wait Impact:*\n\`$${Number(agg.avg_wait_usd || 0).toFixed(2)}/mo\`` }
+            { type: "mrkdwn", text: `*Total Gross Run-Rate:*\n\`$${Number(agg.total_gross_usd || 0).toFixed(2)}/mo\`` },
+            { type: "mrkdwn", text: `*Total Net Billed:*\n\`$${Number(agg.total_net_usd || 0).toFixed(2)}/mo\`` },
+            { type: "mrkdwn", text: `*Total Dev Wait Impact:*\n\`$${Number(agg.total_wait_usd || 0).toFixed(2)}/mo\`` }
           ]
         }
       ]
@@ -1443,7 +1522,7 @@ export default {
     // 3-Layer Cached Live Repo Report Endpoint: GET /v1/report/:owner/:repo?days=30&refresh=1
     if (
       (url.pathname.startsWith("/v1/report/") || url.pathname === "/api/analyze") &&
-      request.method === "GET"
+      (request.method === "GET" || request.method === "HEAD")
     ) {
       const slug = url.pathname.startsWith("/v1/report/")
         ? url.pathname.slice("/v1/report/".length).replace(/^\/+|\/+$/g, "")
@@ -1622,7 +1701,7 @@ export default {
 
     // Cross-Repo SHA-256 Step Classification Cache (`GET/POST /v1/jev/step-cache`)
     if (url.pathname.startsWith("/v1/jev/step-cache")) {
-      if (request.method === "GET") {
+      if ((request.method === "GET" || request.method === "HEAD")) {
         const hash = url.pathname.split("/").pop() || "";
         if (!/^[a-f0-9]{64}$/i.test(hash)) {
           return new Response(JSON.stringify({ error: "invalid_sha256" }), {
@@ -2056,7 +2135,7 @@ export default {
     }
 
     // 1. Smart Polar.sh Checkout Redirects (`/v1/checkout/starter` -> $1, `/pro` -> $10, `/custom` -> Team Flex)
-    if (url.pathname.startsWith("/v1/checkout/") && request.method === "GET") {
+    if (url.pathname.startsWith("/v1/checkout/") && (request.method === "GET" || request.method === "HEAD")) {
       const planSlug = url.pathname.slice("/v1/checkout/".length).trim().toLowerCase();
       let dest = "https://polar.sh/minici";
       if (planSlug === "starter") {
@@ -2143,7 +2222,7 @@ export default {
     }
 
     // 3. Unlisted Shared Report Viewer (`GET /r/:id` & `/r/:id.json`) — Starter ($1/mo+)
-    if (url.pathname.startsWith("/r/") && request.method === "GET") {
+    if (url.pathname.startsWith("/r/") && (request.method === "GET" || request.method === "HEAD")) {
       const rawTail = url.pathname.slice("/r/".length).trim();
       const wantJson = rawTail.endsWith(".json");
       const shareId = (wantJson ? rawTail.slice(0, -5) : rawTail).replace(/[^A-Za-z0-9_-]/g, "");
@@ -2193,7 +2272,7 @@ export default {
     }
 
     // 4. Live Dynamic README / PR Cost & 30d Trend SVG Badge (`GET /v1/badge/:owner/:repo.svg`)
-    if (url.pathname.startsWith("/v1/badge/") && request.method === "GET") {
+    if (url.pathname.startsWith("/v1/badge/") && (request.method === "GET" || request.method === "HEAD")) {
       const rawSlug = url.pathname
         .slice("/v1/badge/".length)
         .replace(/\.svg$/i, "")
@@ -2201,7 +2280,12 @@ export default {
       let badgeVal = "audit ready";
       let badgeColor = "#10b981";
 
-      const memRows = EDGE_MEM_LEDGER.get(rawSlug) || [];
+      const cutoff30dSec = Math.floor(Date.now() / 1000) - 30 * 86400;
+      const memRows = (EDGE_MEM_LEDGER.get(rawSlug) || []).filter(
+        (r) =>
+          (!r.recorded_at || r.recorded_at >= cutoff30dSec) &&
+          (!r.branch || r.branch === "main" || r.branch === "master")
+      );
       let latestUsd = null;
       let oldestUsd = null;
       if (memRows.length > 0) {
@@ -2209,9 +2293,9 @@ export default {
         oldestUsd = memRows[0].gross_monthly_usd;
       } else if (env && env.MINICI_D1) {
         const res = await env.MINICI_D1.prepare(
-          "SELECT gross_monthly_usd FROM cloud_run_ledger WHERE repo = ?1 ORDER BY recorded_at DESC LIMIT 30"
+          "SELECT gross_monthly_usd FROM cloud_run_ledger WHERE repo = ?1 AND recorded_at >= ?2 AND branch IN ('main', 'master', '') ORDER BY recorded_at DESC LIMIT 200"
         )
-          .bind(rawSlug)
+          .bind(rawSlug, cutoff30dSec)
           .all()
           .catch(() => null);
         const pts = (res && res.results) || [];
@@ -2267,7 +2351,7 @@ export default {
       }
 
       // 5a. `GET /v1/cloud/me` — Verify key & return entitlement + custom enterprise rate overrides
-      if (url.pathname === "/v1/cloud/me" && request.method === "GET") {
+      if (url.pathname === "/v1/cloud/me" && (request.method === "GET" || request.method === "HEAD")) {
         let customRates = {};
         try {
           customRates = JSON.parse(ent.custom_rates_json || "{}");
@@ -2526,7 +2610,7 @@ export default {
       }
 
       // 5d. `GET /v1/cloud/trends/:owner/:repo` — 30d/365d Cross-Run Ledger (`Starter $1+`)
-      if (url.pathname.startsWith("/v1/cloud/trends/") && request.method === "GET") {
+      if (url.pathname.startsWith("/v1/cloud/trends/") && (request.method === "GET" || request.method === "HEAD")) {
         const repoSlug = url.pathname.slice("/v1/cloud/trends/".length).replace(/^\/+|\/+$/g, "");
         let points = EDGE_MEM_LEDGER.get(repoSlug) || [];
         if (env && env.MINICI_D1) {
@@ -2555,7 +2639,7 @@ export default {
       }
 
       // 5e. `GET /v1/cloud/dashboard` — Multi-Repo Team Dashboard (`Pro $10+` & `Custom`)
-      if (url.pathname === "/v1/cloud/dashboard" && request.method === "GET") {
+      if (url.pathname === "/v1/cloud/dashboard" && (request.method === "GET" || request.method === "HEAD")) {
         if (ent.plan === "starter") {
           return new Response(
             JSON.stringify({
@@ -2608,7 +2692,7 @@ export default {
 
       // 5f. `GET/POST /v1/cloud/policy` — Org Governance & Custom Enterprise Rates (`Pro $10+` Slack hook / `Custom` Policy)
       if (url.pathname === "/v1/cloud/policy") {
-        if (request.method === "GET") {
+        if ((request.method === "GET" || request.method === "HEAD")) {
           let customRates = {};
           try {
             customRates = JSON.parse(ent.custom_rates_json || "{}");

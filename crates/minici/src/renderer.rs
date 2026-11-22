@@ -247,12 +247,18 @@ fn show_full_job_table() -> bool {
 }
 
 fn ranked_job_indices(r: &BreakdownReport) -> Vec<usize> {
+    let app_costs = r.apportioned_job_monthly_costs();
     let mut indices: Vec<usize> = (0..r.jobs.len()).collect();
     indices.sort_by(|&a, &b| {
-        r.jobs[b]
-            .run_compute_cost_usd
-            .partial_cmp(&r.jobs[a].run_compute_cost_usd)
+        app_costs[b]
+            .partial_cmp(&app_costs[a])
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                r.jobs[b]
+                    .run_compute_cost_usd
+                    .partial_cmp(&r.jobs[a].run_compute_cost_usd)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .then_with(|| a.cmp(&b))
     });
     indices
@@ -327,6 +333,7 @@ pub fn render_cli_compact_summary_with_opts(
         r42, r24, r11, r10, r10, r13
     ));
 
+    let app_costs = r.apportioned_job_monthly_costs();
     let max_default_rows = 15usize;
     let full_table = force_full_table || r.jobs.len() <= max_default_rows;
     let display_indices: Vec<usize> = if full_table {
@@ -360,7 +367,7 @@ pub fn render_cli_compact_summary_with_opts(
             mat_runner_raw
         };
 
-        let monthly_job_usd = j.run_compute_cost_usd * r.monthly_runs;
+        let monthly_job_usd = app_costs[idx];
         let mins_col = format!("{:.1}m", j.total_billed_mins_all_matrix);
         let rate_col = format!("${:.4}/m", j.rate_per_min_usd);
         let run_col = format!("${:.3}", j.run_compute_cost_usd);
@@ -383,7 +390,7 @@ pub fn render_cli_compact_summary_with_opts(
             .map(|&i| r.jobs[i].total_billed_mins_all_matrix)
             .sum();
         let hidden_run_usd: f64 = hidden.iter().map(|&i| r.jobs[i].run_compute_cost_usd).sum();
-        let hidden_mo_usd = hidden_run_usd * r.monthly_runs;
+        let hidden_mo_usd: f64 = hidden.iter().map(|&i| app_costs[i]).sum();
         let more_lbl = format!("... +{} lower-cost job(s) (--all)", hidden.len());
         let more_mat = format!("{} expanded job(s)", hidden_exp_jobs);
         out.push_str(&format!(
@@ -401,7 +408,10 @@ pub fn render_cli_compact_summary_with_opts(
         " {:<42}  {:<24}  {:>11}  {:>10}  {:>10}  {:>13}\n",
         r42, r24, r11, r10, r10, r13
     ));
-    let tier_short = if r.effective_tier.starts_with("free") {
+    let tier_short = if r.effective_tier.starts_with("free")
+        || r.effective_tier.starts_with("public-free")
+        || r.effective_tier.contains("within included quota")
+    {
         "free tier"
     } else {
         "paid tier"
@@ -439,16 +449,40 @@ pub fn render_cli_compact_summary_with_opts(
     } else {
         String::new()
     };
-    out.push_str(&format!(
-        " {} Free-Tier Quota  : {:.0} / {:.0} mins ({:.1}% of monthly quota){}Net Billed: ${:.2}/mo{}\n",
-        g.bullet,
-        r.monthly_billed_mins,
-        r.free_tier_included_mins,
-        r.free_tier_quota_burn_pct,
-        g.sep,
-        r.net_billed_monthly_compute_cost_usd,
-        rounding_suffix
-    ));
+    if r.free_tier_included_mins.is_infinite() {
+        out.push_str(&format!(
+            " {} Free-Tier Quota  : {:.0} mins (unlimited public quota){}Net Billed: ${:.2}/mo{}\n",
+            g.bullet,
+            r.monthly_billed_mins,
+            g.sep,
+            r.net_billed_monthly_compute_cost_usd,
+            rounding_suffix
+        ));
+    } else if (cc.monthly_os_weighted_free_tier_mins - r.monthly_billed_mins).abs() > 0.5
+        && cc.monthly_os_weighted_free_tier_mins > 0.0
+    {
+        out.push_str(&format!(
+            " {} Free-Tier Quota  : {:.0} / {:.0} pool mins ({:.1}% of monthly quota){}Net Billed: ${:.2}/mo{}\n",
+            g.bullet,
+            cc.monthly_os_weighted_free_tier_mins,
+            r.free_tier_included_mins,
+            r.free_tier_quota_burn_pct,
+            g.sep,
+            r.net_billed_monthly_compute_cost_usd,
+            rounding_suffix
+        ));
+    } else {
+        out.push_str(&format!(
+            " {} Free-Tier Quota  : {:.0} / {:.0} mins ({:.1}% of monthly quota){}Net Billed: ${:.2}/mo{}\n",
+            g.bullet,
+            r.monthly_billed_mins,
+            r.free_tier_included_mins,
+            r.free_tier_quota_burn_pct,
+            g.sep,
+            r.net_billed_monthly_compute_cost_usd,
+            rounding_suffix
+        ));
+    }
 
     let concurrency_suffix = if cc.parallelism_tier_upgrade_tax_monthly_usd > 0.0 {
         format!(
@@ -669,12 +703,32 @@ pub fn render_cli_compact_summary_with_opts(
         let catalog_state = crate::catalog::pricing_catalog_status();
         let account_info = detect_github_account_and_git_user();
         let bin_kb = detect_binary_size_kb();
+        let trace_lines = if r.provenance_mode == "static_heuristic" {
+            format!(
+                "               [MATH TRACE] Runs/Mo = round({:.1} PRs/wk * 4.33 wks * {:.1} pushes/PR) = {:.1} runs/mo\n\
+               [MATH TRACE] Gross = sum_j(run_cost_j * runs_j) = ${:.2}/mo | Discount = ${:.2}/mo | Net = ${:.2}/mo",
+                r.usage.prs_per_week,
+                r.usage.pushes_per_pr,
+                r.monthly_runs,
+                r.gross_monthly_compute_cost_usd,
+                r.discount_allowance_monthly_usd,
+                r.net_billed_monthly_compute_cost_usd
+            )
+        } else {
+            format!(
+                "               [MATH TRACE] Provenance = {} ({:.1} observed runs/mo)\n\
+               [MATH TRACE] Gross = ${:.2}/mo | Discount = ${:.2}/mo | Net = ${:.2}/mo",
+                r.provenance_mode,
+                r.monthly_runs,
+                r.gross_monthly_compute_cost_usd,
+                r.discount_allowance_monthly_usd,
+                r.net_billed_monthly_compute_cost_usd
+            )
+        };
         out.push_str(&format!(
             "\n\n [OWNER / INTERNAL DEBUG VIEW{}{}{}{} KB Rust Binary]\n\
                [ON] feat.matrix_ast_expansion  : {} defined jobs -> {} expanded matrix combinations\n\
-               [ON] feat.hot_reload_catalog    : {}\n\
-               [MATH TRACE] Runs/Mo = {:.1} PRs/wk * 4.333 wks * {:.1} pushes/PR = {:.1} runs/mo\n\
-               [MATH TRACE] Gross = ${:.3}/run * {:.1} runs = ${:.2}/mo | Net = ${:.2}/mo",
+               [ON] feat.hot_reload_catalog    : {}\n{}",
             g.sep,
             account_info,
             g.sep,
@@ -682,13 +736,7 @@ pub fn render_cli_compact_summary_with_opts(
             r.total_defined_jobs,
             r.total_expanded_matrix_jobs,
             catalog_state,
-            r.usage.prs_per_week,
-            r.usage.pushes_per_pr,
-            r.monthly_runs,
-            r.gross_compute_cost_per_run_usd,
-            r.monthly_runs,
-            r.gross_monthly_compute_cost_usd,
-            r.net_billed_monthly_compute_cost_usd
+            trace_lines
         ));
     }
 
@@ -1312,10 +1360,11 @@ pub fn render_breakdown_markdown(r: &BreakdownReport) -> String {
         ranked.iter().copied().take(max_default_rows).collect()
     };
 
+    let app_costs = r.apportioned_job_monthly_costs();
     let mut rows = String::new();
     for &idx in &primary_indices {
         let j = &r.jobs[idx];
-        let monthly_job_usd = j.run_compute_cost_usd * r.monthly_runs;
+        let monthly_job_usd = app_costs[idx];
         rows.push_str(&format!(
             "| `{}` | `{}` | `{}x {}` | `{:.1}m` | `${:.4}/m` | `${:.3}` | **`${:.2}/mo`** |\n",
             short_workflow_label(&j.workflow_file),
@@ -1336,7 +1385,7 @@ pub fn render_breakdown_markdown(r: &BreakdownReport) -> String {
         let mut rest_mo_usd = 0.0_f64;
         for &idx in rest_indices {
             let j = &r.jobs[idx];
-            let monthly_job_usd = j.run_compute_cost_usd * r.monthly_runs;
+            let monthly_job_usd = app_costs[idx];
             rest_mo_usd += monthly_job_usd;
             rest_rows.push_str(&format!(
                 "| `{}` | `{}` | `{}x {}` | `{:.1}m` | `${:.4}/m` | `${:.3}` | **`${:.2}/mo`** |\n",
@@ -1656,7 +1705,7 @@ pub fn generate_post_tool_use_launch_pack(feature_name: &str, sample_latency_us:
 - **Founder:** Aamir Raza (`raza.aamir01@gmail.com`)\n\
 - **Company / Project:** MiniCI — **Deterministic CI/CD FinOps & Workflow Economics**\n\
 - **50-Character Description:** Sub-ms Rust CI/CD cost breakdown & PR diff engine.\n\
-- **What we built (`{feature_name}`):** AI coding agents push 4x more commits per day, silently expanding CI matrices and burning runner budgets. We built `minici` 100% in **Rust** (`{sample_latency_us} µs` execution, zero runtime dependencies). Every `git push` or PR gets an instant `< 1 ms` receipt showing **Free-Tier Quota Burn %**, **Developer Wait-Time Dollars (`$65/hr` default, 40% DORA context-switch loss)**, **Billed Compute Cost (with GitHub's 1-minute per-job ceiling rounding and macOS 10x multiplier)**, **Artifact Storage Optimization (`$0.083/GB-mo` vs `$0.023` S3)**, and **Self-Hosted Spot Break-Even (`5,000 mins/mo`)**.\n\n\
+- **What we built (`{feature_name}`):** AI coding agents push 4x more commits per day, silently expanding CI matrices and burning runner budgets. We built `minici` 100% in **Rust** (`{sample_latency_us} µs` execution, zero runtime dependencies). Every `git push` or PR gets an instant `< 1 ms` receipt showing **Free-Tier Quota Burn %**, **Developer Wait-Time Dollars (`$65/hr` default, 40% DORA context-switch loss)**, **Billed Compute Cost (with GitHub's 1-minute per-job ceiling rounding and macOS 10x multiplier)**, **Artifact Storage Optimization (`$0.25/GB-mo` vs `$0.023` S3)**, and **Self-Hosted Spot Break-Even (`5,000 mins/mo`)**.\n\n\
 ## 2. Product Hunt — Maker Launch Listing\n\
 - **Name:** MiniCI — Sub-Millisecond CI/CD Cost & PR Diff Engine\n\
 - **Maker Contact:** Aamir Raza (`raza.aamir01@gmail.com`)\n\
@@ -1664,7 +1713,7 @@ pub fn generate_post_tool_use_launch_pack(feature_name: &str, sample_latency_us:
 - **Maker Comment (Natural Voice):** Hey Product Hunt! AI coding agents are shipping code faster than ever, but CI/CD hasn't caught up—one tiny `strategy.matrix` edit in a PR can silently multiply your GitHub Actions or GitLab bill by 10x. I built `minici` in pure Rust (`{sample_latency_us} µs` execution, zero dependencies): it shows your exact Free Quota Burn %, Developer Wait-Time cost, and Per-PR Compute Invoice before merge.\n\n\
 ## 3. Reddit (`r/devops`, `r/rust`, `r/sre`) Technical Post (Natural Engineer Voice)\n\
 - **Title:** `I built a zero-dependency Rust CLI that expands GitHub/GitLab/CircleCI workflow matrices and calculates PR cost diffs in {sample_latency_us} µs`\n\
-- **Body:** GitHub Actions and GitLab CI only show you a lump-sum bill at the end of the month—they never tell you which PR or `strategy.matrix` change spiked your runner bill or burned your 2,000 free minutes. I wrote `minici` in pure Rust with an embedded zero-copy SKU catalog (supporting 1-minute per-job ceiling rounding, macOS 10x multipliers, `$0.083/GB-mo` artifact storage overage, developer wait-time cost, and the 5,000 min/mo self-hosted break-even threshold). Always exits `0` so it never blocks a build. Feedback welcome: `raza.aamir01@gmail.com`.\n\n\
+- **Body:** GitHub Actions and GitLab CI only show you a lump-sum bill at the end of the month—they never tell you which PR or `strategy.matrix` change spiked your runner bill or burned your 2,000 free minutes. I wrote `minici` in pure Rust with an embedded zero-copy SKU catalog (supporting 1-minute per-job ceiling rounding, macOS 10x multipliers, `$0.25/GB-mo` artifact storage overage, developer wait-time cost, and the 5,000 min/mo self-hosted break-even threshold). Always exits `0` so it never blocks a build. Feedback welcome: `raza.aamir01@gmail.com`.\n\n\
 ## 4. LinkedIn — Founder Build-in-Public Post (Natural Staff SRE Voice)\n\
 - **Post:** AI coding agents expanded PR volume 4x, and one `strategy.matrix` change can silently multiply your GitHub Actions bill overnight. So I built **MiniCI (`minici`)** in pure Rust. In **{sample_latency_us} microseconds** (`< 1 ms`), it expands your CI matrices and posts the exact Per-PR & Monthly Cost Diff, Free-Tier Quota Burn %, and Developer Wait-Time cost right on the PR or local `pre-push` hook. Open-source CLI, Action, and MCP server (`Apache-2.0`). Reach out anytime at `raza.aamir01@gmail.com`.\n\n\
 ## 5. AI Coding Agent & IDE (`PreToolUse` / `PostToolUse` / MCP) Profile\n\

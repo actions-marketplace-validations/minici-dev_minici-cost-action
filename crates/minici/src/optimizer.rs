@@ -1999,6 +1999,7 @@ fn extract_explicit_linux_cores_for_migration(cur_low: &str) -> Option<u32> {
         cleaned = cleaned.replace(os_ver, "");
     }
     for (cores, pats) in [
+        (96u32, &["96core", "96-core", "96vcpu", "-96"][..]),
         (64u32, &["64core", "64-core", "64vcpu", "-64"][..]),
         (32u32, &["32core", "32-core", "32vcpu", "-32"][..]),
         (16u32, &["16core", "16-core", "16vcpu", "-16", "-xl"][..]),
@@ -2058,7 +2059,7 @@ fn resolve_target_runner_sku_for_github(
             }
             Some(
                 match explicit_cores {
-                    Some(64) => "ubuntu-24.04-arm-64core",
+                    Some(64..=u32::MAX) => "ubuntu-24.04-arm-64core",
                     Some(32) => "ubuntu-24.04-arm-32core",
                     Some(16) => "ubuntu-24.04-arm-16core",
                     Some(8) => "ubuntu-24.04-arm-8core",
@@ -2077,6 +2078,8 @@ fn resolve_target_runner_sku_for_github(
         }
         "blacksmith" | "high-speed" => Some(
             match explicit_cores {
+                Some(96..=u32::MAX) => "blacksmith-96vcpu-ubuntu-2404",
+                Some(64) => "blacksmith-64vcpu-ubuntu-2404",
                 Some(32) => "blacksmith-32vcpu-ubuntu-2404",
                 Some(16) => "blacksmith-16vcpu-ubuntu-2404",
                 Some(8) => "blacksmith-8vcpu-ubuntu-2404",
@@ -2251,11 +2254,12 @@ fn migrate_single_workflow_yaml(
             if t.starts_with("resource_class:")
                 && matches!(target_runner_mode, "arm64" | "circleci-arm64" | "github-arm64" | "ubuntu-arm64")
             {
+                // Note: CircleCI `arm.medium` (13 credits) > `medium` (10 credits) and `arm.large` (26) > `large` (20);
+                // only `xlarge` (40 -> 39) and `2xlarge` (80 -> 78) reduce credits on ARM64 (`H3`)!
                 let cur_rc = t.splitn(2, ':').nth(1).unwrap_or("").trim();
                 let new_rc = match cur_rc {
-                    "medium" => Some("arm.medium"),
-                    "large" => Some("arm.large"),
                     "xlarge" => Some("arm.xlarge"),
+                    "2xlarge" => Some("arm.2xlarge"),
                     _ => None,
                 };
                 if let Some(nrc) = new_rc {
@@ -3124,8 +3128,8 @@ pub fn emit_pipeline_ir_to_target(ir: &PipelineIr, target_platform: &str) -> Str
                 let (exec_block, rc) = match (j.os.as_str(), j.vcpus) {
                     ("macos", _) => ("    macos:\n      xcode: \"16.0.0\"", "macos.m2pro.medium"),
                     (_, c) if c >= 8 => ("    docker:\n      - image: cimg/base:current", "arm.xlarge"),
-                    (_, c) if c >= 4 => ("    docker:\n      - image: cimg/base:current", "arm.large"),
-                    _ => ("    docker:\n      - image: cimg/base:current", "arm.medium"),
+                    (_, c) if c >= 4 => ("    docker:\n      - image: cimg/base:current", "large"),
+                    _ => ("    docker:\n      - image: cimg/base:current", "medium"),
                 };
                 y.push_str(&format!("  {}:\n", j.id));
                 if let Some(m) = j.est_mins {
@@ -3175,22 +3179,45 @@ pub fn emit_pipeline_ir_to_target(ir: &PipelineIr, target_platform: &str) -> Str
                 } else {
                     "1x"
                 };
-                y.push_str(&format!("    - step:\n        name: {}\n        size: {}\n", j.id, sz));
-                for note in &j.unmapped_notes {
-                    y.push_str(&format!("        # MANUAL_REVIEW_REQUIRED: {}\n", note));
-                }
-                y.push_str("        script:\n");
-                for cmd in &j.commands {
-                    y.push_str(&format!("          - \"{}\"\n", cmd.replace('"', "\\\"")));
+                let shards = j.matrix_count.max(1);
+                for s_idx in 1..=shards {
+                    let step_name = if shards > 1 {
+                        format!("{}-{}", j.id, s_idx)
+                    } else {
+                        j.id.clone()
+                    };
+                    y.push_str(&format!(
+                        "    - step:\n        name: {}\n        size: {}\n",
+                        step_name, sz
+                    ));
+                    if let Some(m) = j.est_mins {
+                        y.push_str(&format!("        # est-minutes: {:.2}\n", m));
+                    }
+                    for note in &j.unmapped_notes {
+                        y.push_str(&format!("        # MANUAL_REVIEW_REQUIRED: {}\n", note));
+                    }
+                    y.push_str("        script:\n");
+                    for cmd in &j.commands {
+                        y.push_str(&format!("          - \"{}\"\n", cmd.replace('"', "\\\"")));
+                    }
                 }
             }
             y
         }
         "aws-codebuild" => {
             let mut y = format!(
-                "# Auto-converted from {} ({}) by MiniCI 7x7 Pipeline IR Translator\n# Recommended CodeBuild computeType: BUILD_GENERAL1_SMALL (ARM_CONTAINER)\nversion: 0.2\nphases:\n  build:\n    commands:\n",
+                "# Auto-converted from {} ({}) by MiniCI 7x7 Pipeline IR Translator\n# Recommended CodeBuild computeType: BUILD_GENERAL1_SMALL (ARM_CONTAINER)\nversion: 0.2\nphases:\n  build:\n",
                 ir.source_vendor, ir.source_file
             );
+            let total_est: f64 = ir
+                .jobs
+                .iter()
+                .filter_map(|j| j.est_mins.map(|m| m * (j.matrix_count.max(1) as f64)))
+                .sum();
+            if total_est > 0.0 {
+                y.push_str(&format!("    # est-minutes: {:.2}\n", total_est));
+            }
+            y.push_str("    commands:\n");
             for j in &ir.jobs {
                 for note in &j.unmapped_notes {
                     y.push_str(&format!("      # MANUAL_REVIEW_REQUIRED ({}): {}\n", j.id, note));
@@ -3213,6 +3240,12 @@ pub fn emit_pipeline_ir_to_target(ir: &PipelineIr, target_platform: &str) -> Str
                 let joined = j.commands.join(" && ");
                 for note in &j.unmapped_notes {
                     y.push_str(&format!("  # MANUAL_REVIEW_REQUIRED ({}): {}\n", j.id, note));
+                }
+                if let Some(m) = j.est_mins {
+                    y.push_str(&format!(
+                        "  # est-minutes: {:.2}\n",
+                        m * (j.matrix_count.max(1) as f64)
+                    ));
                 }
                 y.push_str(&format!(
                     "  - id: '{}'\n    name: 'ubuntu:24.04'\n    entrypoint: 'bash'\n    args: ['-c', \"{}\"]\n",
@@ -3239,6 +3272,15 @@ pub fn emit_pipeline_ir_to_target(ir: &PipelineIr, target_platform: &str) -> Str
                     j.timeout_mins,
                     vm
                 ));
+                if let Some(m) = j.est_mins {
+                    y.push_str(&format!("    # est-minutes: {:.2}\n", m));
+                }
+                if j.matrix_count > 1 {
+                    y.push_str(&format!(
+                        "    strategy:\n      parallel: {}\n",
+                        j.matrix_count
+                    ));
+                }
                 if !j.needs.is_empty() {
                     let deps: Vec<String> = j.needs.iter().map(|d| d.replace('-', "_")).collect();
                     y.push_str(&format!("    dependsOn: [{}]\n", deps.join(", ")));
@@ -3832,6 +3874,29 @@ pub fn run_surgical_optimizer_with_opts(
         }
     }
 
+    if is_cross_platform {
+        // In cross-platform translation, the target file name changes (e.g. `ci.yml` -> `.gitlab-ci.yml`),
+        // so clear per-filename `workflow_monthly_runs` in `shadow_root` while preserving `observed_monthly_runs`!
+        if let Some(mut snap) = crate::telemetry::CanonicalTelemetrySnapshot::load_lockfile(&shadow_root) {
+            snap.workflow_monthly_runs.clear();
+            let _ = snap.save_lockfile(&shadow_root);
+        }
+    } else if operation == "shrink" || operation == "accelerate" {
+        // When `shrink` / `accelerate` optimizes YAML steps on a telemetry-locked repo, strip stale
+        // `job_durations_mins` only if zero live runs exist; otherwise adjust observed artifact storage
+        // proportionally when `retention-days` was tightened!
+        if let Some(mut snap) = crate::telemetry::CanonicalTelemetrySnapshot::load_lockfile(&shadow_root) {
+            if let Some(obs_gb) = snap.observed_artifact_storage_gb {
+                let base_ret = base_report.cost_components.configured_retention_days.max(1);
+                if base_ret > 14 && all_edits.iter().any(|e| e.description.contains("retention-days")) {
+                    snap.observed_artifact_storage_gb =
+                        Some(((obs_gb * (14.0 / (base_ret as f64))) * 100.0).round() / 100.0);
+                    let _ = snap.save_lockfile(&shadow_root);
+                }
+            }
+        }
+    }
+
     let mut head_report = if wf_files.is_empty() && !is_cross_platform {
         base_report.clone()
     } else {
@@ -3839,12 +3904,21 @@ pub fn run_surgical_optimizer_with_opts(
     };
 
     // Gate 6 (Mandatory Cost-Drop Safety Gate for in-place runner migrations):
-    // Never write an in-place runner rewrite that unexpectedly increases monthly compute cost!
+    // Never write an in-place runner rewrite that unexpectedly increases monthly compute cost
+    // (or increases net-billed cost on native `github-arm64` / `ubuntu-slim` migrations)!
+    let native_free_pool_target = matches!(
+        canonical_target,
+        "github-arm64" | "ubuntu-arm64" | "arm64" | "ubuntu-slim" | "slim"
+    );
     if operation == "migrate"
         && !is_cross_platform
         && !is_ci_platform_target(canonical_target)
         && canonical_target != "buildkite"
-        && head_report.gross_monthly_compute_cost_usd > base_report.gross_monthly_compute_cost_usd + 0.01
+        && (head_report.gross_monthly_compute_cost_usd
+            > base_report.gross_monthly_compute_cost_usd + 0.01
+            || (native_free_pool_target
+                && head_report.net_billed_monthly_compute_cost_usd
+                    > base_report.net_billed_monthly_compute_cost_usd + 0.01))
     {
         all_edits.clear();
         files_modified = 0;
@@ -3878,11 +3952,24 @@ pub fn run_surgical_optimizer_with_opts(
 
     let cc_base = &base_report.cost_components;
     let cc_head = &head_report.cost_components;
-    let raw_ci_in_place = cc_base.arm64_migration_monthly_savings_usd
-        + cc_base.monthly_superseded_run_waste_usd
-        + cc_base.monthly_unrealized_cache_savings_usd
-        + (cc_base.monthly_vendor_storage_configured_usd - cc_base.monthly_vendor_storage_14d_usd).max(0.0);
-    let in_place_savings = raw_ci_in_place.min(base_report.gross_monthly_compute_cost_usd * 0.65);
+    // Multiplicative compute compound `1 - prod(1 - r_i)` + uncapped storage savings (`H2`)!
+    let compute_in_place = if base_report.gross_monthly_compute_cost_usd > 0.0 {
+        let g = base_report.gross_monthly_compute_cost_usd;
+        let r_arm = (cc_base.arm64_migration_monthly_savings_usd / g).clamp(0.0, 0.45);
+        let r_cancel = (cc_base.monthly_superseded_run_waste_usd / g).clamp(0.0, 0.50);
+        let r_cache = (cc_base.monthly_unrealized_cache_savings_usd / g).clamp(0.0, 0.70);
+        let compound = 1.0 - (1.0 - r_arm) * (1.0 - r_cancel) * (1.0 - r_cache);
+        (g * compound).min(g * 0.75)
+    } else {
+        0.0
+    };
+    let storage_in_place = if cc_base.configured_retention_days > 14 {
+        (cc_base.monthly_vendor_storage_configured_usd - cc_base.monthly_vendor_storage_14d_usd)
+            .max(0.0)
+    } else {
+        0.0
+    };
+    let in_place_savings = compute_in_place + storage_in_place;
 
     let switching_verdict = if operation == "migrate"
         && (is_ci_platform_target(canonical_target) || canonical_target == "buildkite")
@@ -3917,7 +4004,7 @@ pub fn run_surgical_optimizer_with_opts(
             canonical_target,
             src_tco,
             target_tco,
-            cc_base.blended_fully_loaded_hourly_usd,
+            base_report.usage.dev_hourly_rate_usd,
             true,
         );
         Some((

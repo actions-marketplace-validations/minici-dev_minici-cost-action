@@ -745,9 +745,13 @@ fn resolve_target_to_dir_in_repo(
         .output();
     if let Ok(out) = check_ref {
         if out.status.success() {
+            static GITREF_SEQ: std::sync::atomic::AtomicUsize =
+                std::sync::atomic::AtomicUsize::new(1);
+            let seq = GITREF_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let tmp_dir = env::temp_dir().join(format!(
-                "minici_gitref_{}_{}",
+                "minici_gitref_{}_{}_{}",
                 std::process::id(),
+                seq,
                 raw_clean.replace(['/', '~', '^', ':'], "_")
             ));
             let _ = fs::remove_dir_all(&tmp_dir);
@@ -813,6 +817,21 @@ fn load_or_analyze_in_repo(
     } else {
         resolve_target_to_dir_ext(raw_str, force_refresh, quiet)
     };
+    if cleanup_dir.is_some() && resolved_dir.is_dir() {
+        if let Some(hint) = repo_hint {
+            let hint_root = if hint.is_file() {
+                hint.parent().unwrap_or(Path::new("."))
+            } else {
+                hint
+            };
+            let hint_lock = hint_root.join(".minici").join("telemetry.lock.json");
+            let dst_lock = resolved_dir.join(".minici").join("telemetry.lock.json");
+            if hint_lock.is_file() && !dst_lock.exists() {
+                let _ = fs::create_dir_all(resolved_dir.join(".minici"));
+                let _ = fs::copy(&hint_lock, &dst_lock);
+            }
+        }
+    }
     let mut rep = analyze_path(&resolved_dir, cfg);
     rep.target_path = display_label;
     if let Some(tmp) = cleanup_dir {
@@ -2638,7 +2657,7 @@ fn main() {
                                 short_workflow_label(&j.workflow_file),
                                 j.line_start.max(1),
                                 j.job_id,
-                                j.run_compute_cost_usd * report.monthly_runs
+                                j.monthly_compute_cost(report.monthly_runs)
                             )
                         })
                         .unwrap_or_default();
@@ -2947,7 +2966,7 @@ fn main() {
                     }
                     "--tier" => {
                         if i + 1 < rest.len() {
-                            tier = rest[i + 1].clone();
+                            tier = rest[i + 1].trim().to_ascii_lowercase();
                             custom_usage = true;
                             i += 1;
                         }
@@ -6874,5 +6893,173 @@ jobs:
         assert!(cb_mig.verified_diff.delta_monthly_compute_usd < 0.0);
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_all_58_math_invariants_static_live_and_invoice_reconciliation() {
+        // Invariant 1: Cloud Spot < On-Demand (`F1`), t3.large RAM/rate (`F4`), WarpBuild & RunsOn vCPUs (`F3`)
+        let spot_sku = catalog::resolve_runner_sku("aws-c6i.xlarge-spot");
+        let od_sku = catalog::resolve_runner_sku("aws-c6i.xlarge-on-demand");
+        assert!(
+            spot_sku.rate_per_min_usd < od_sku.rate_per_min_usd * 0.70,
+            "Spot rate ({}) must be strictly cheaper than On-Demand ({})",
+            spot_sku.rate_per_min_usd,
+            od_sku.rate_per_min_usd
+        );
+        let warp_sku = catalog::resolve_runner_sku("warp-ubuntu-latest-arm64-8x");
+        assert_eq!(warp_sku.vcpus, 8);
+        let runson_sku = catalog::resolve_runner_sku("runs-on=runner=8cpu-linux-arm64");
+        assert_eq!(runson_sku.vcpus, 8);
+        assert!((runson_sku.rate_per_min_usd - 0.0036).abs() < 0.0005);
+
+        // Invariant 2: Job-Order Commutativity on Proportional Pool Deduction (`E2`)
+        let dir_a = std::env::temp_dir().join("minici_math_comm_a");
+        let dir_b = std::env::temp_dir().join("minici_math_comm_b");
+        let _ = fs::remove_dir_all(&dir_a);
+        let _ = fs::remove_dir_all(&dir_b);
+        fs::create_dir_all(dir_a.join(".github/workflows")).unwrap();
+        fs::create_dir_all(dir_b.join(".github/workflows")).unwrap();
+        fs::write(
+            dir_a.join(".github/workflows/ci.yml"),
+            "name: A\non: pull_request\njobs:\n  lin:\n    runs-on: ubuntu-latest\n    # est-minutes: 5.0\n    steps:\n      - run: echo ok\n  mac:\n    runs-on: macos-latest\n    # est-minutes: 1.0\n    steps:\n      - run: echo ok\n",
+        )
+        .unwrap();
+        fs::write(
+            dir_b.join(".github/workflows/ci.yml"),
+            "name: B\non: pull_request\njobs:\n  mac:\n    runs-on: macos-latest\n    # est-minutes: 1.0\n    steps:\n      - run: echo ok\n  lin:\n    runs-on: ubuntu-latest\n    # est-minutes: 5.0\n    steps:\n      - run: echo ok\n",
+        )
+        .unwrap();
+        let priv_cfg = UsageConfig {
+            tier: "team".to_string(),
+            prs_per_week: 20.0,
+            pushes_per_pr: 3.0,
+            ..Default::default()
+        };
+        fs::write(dir_a.join("minici-usage.yml"), "visibility: private\n").unwrap();
+        fs::write(dir_b.join("minici-usage.yml"), "visibility: private\n").unwrap();
+        let rep_a = analyze_path(&dir_a, Some(priv_cfg.clone()));
+        let rep_b = analyze_path(&dir_b, Some(priv_cfg));
+        assert_eq!(rep_a.gross_monthly_compute_cost_usd, rep_b.gross_monthly_compute_cost_usd);
+        assert_eq!(rep_a.net_billed_monthly_compute_cost_usd, rep_b.net_billed_monthly_compute_cost_usd);
+        assert_eq!(rep_a.discount_allowance_monthly_usd, rep_b.discount_allowance_monthly_usd);
+        assert_eq!(rep_a.free_tier_quota_burn_pct, rep_b.free_tier_quota_burn_pct);
+        assert!(
+            ((rep_a.gross_monthly_compute_cost_usd - rep_a.discount_allowance_monthly_usd)
+                - rep_a.net_billed_monthly_compute_cost_usd)
+                .abs()
+                < 1e-6
+        );
+        let _ = fs::remove_dir_all(&dir_a);
+        let _ = fs::remove_dir_all(&dir_b);
+
+        // Invariant 3: Multi-OS Matrix + Hyperplane `exclude:` + Mixed PR/Cron/Manual Cadence + Exact Row-Sum (`D1-D5, G1, H1`)
+        let mix_dir = std::env::temp_dir().join("minici_math_mixed_cadence");
+        let _ = fs::remove_dir_all(&mix_dir);
+        fs::create_dir_all(mix_dir.join(".github/workflows")).unwrap();
+        fs::write(
+            mix_dir.join(".github/workflows/ci.yml"),
+            "name: CI\non: [push, pull_request]\njobs:\n  test:\n    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [ubuntu-latest, macos-latest, windows-latest]\n        node: [20, 22]\n        exclude:\n          - os: macos-latest\n    # est-minutes: 2.0\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm test\n",
+        )
+        .unwrap();
+        fs::write(
+            mix_dir.join(".github/workflows/monthly_audit.yml"),
+            "name: Monthly\non:\n  schedule:\n    - cron: '0 2 1 * *'\njobs:\n  audit:\n    runs-on: ubuntu-8-core\n    # est-minutes: 10.0\n    steps:\n      - run: echo monthly\n",
+        )
+        .unwrap();
+        fs::write(
+            mix_dir.join(".github/workflows/manual_release.yml"),
+            "name: Release\non: workflow_dispatch\njobs:\n  publish:\n    runs-on: macos-15-xlarge\n    # est-minutes: 15.0\n    steps:\n      - run: echo release\n",
+        )
+        .unwrap();
+        let rep_mix = analyze_path(&mix_dir, None);
+        // `ci.yml` has 1 defined job (`test`) + `audit` + `publish` = 3 defined jobs!
+        assert_eq!(rep_mix.total_defined_jobs, 3);
+        // `test`: 3*2 = 6 minus hyperplane `os: macos-latest` (2 cells) = 4 cells (2 linux + 2 windows) + 1 audit + 1 publish = 6!
+        assert_eq!(rep_mix.total_expanded_matrix_jobs, 6);
+        assert!(
+            !rep_mix.jobs.iter().any(|j| j.workflow_file.ends_with("ci.yml") && j.os == "macos"),
+            "Excluded macos-latest hyperplane should not appear in ci.yml jobs!"
+        );
+        let audit_job = rep_mix.jobs.iter().find(|j| j.job_id == "audit").unwrap();
+        assert_eq!(audit_job.monthly_runs_for_job, Some(1.0)); // `0 2 1 * *` = 1st of month = 1.0 run/mo!
+        let pub_job = rep_mix.jobs.iter().find(|j| j.job_id == "publish").unwrap();
+        assert_eq!(pub_job.monthly_runs_for_job, Some(4.0)); // `workflow_dispatch` only = 4.0 runs/mo (NOT 433)!
+        let app_sum: f64 = rep_mix.apportioned_job_monthly_costs().iter().sum();
+        assert!(
+            (app_sum - rep_mix.gross_monthly_compute_cost_usd).abs() < 1e-6,
+            "Apportioned row sum ({:.2}) must equal gross_monthly_compute_cost_usd ({:.2})",
+            app_sum,
+            rep_mix.gross_monthly_compute_cost_usd
+        );
+        assert!(
+            rep_mix.cost_components.always_on_runner_utilization_pct
+                + rep_mix.cost_components.off_hours_idle_capacity_pct
+                <= 100.0 + 1e-6
+        );
+
+        // Invariant 4: Jensen's Inequality `mean(ceil(d))`, Exact EOM Velocity `30v/(7v+23)`, and Symmetric `diff(HEAD, HEAD) == $0` (`A1, B4, C7`)
+        let _ = Command::new("git").arg("init").arg(&mix_dir).output();
+        let _ = Command::new("git").arg("-C").arg(&mix_dir).args(["config", "user.email", "t@minici.dev"]).output();
+        let _ = Command::new("git").arg("-C").arg(&mix_dir).args(["config", "user.name", "MiniCI"]).output();
+        let _ = Command::new("git").arg("-C").arg(&mix_dir).args(["add", "."]).output();
+        let _ = Command::new("git").arg("-C").arg(&mix_dir).args(["commit", "-m", "init"]).output();
+
+        let snap = telemetry::CanonicalTelemetrySnapshot {
+            provenance_mode: "live_telemetry".to_string(),
+            window_days: 30,
+            observed_runs_in_window: Some(93),
+            observed_monthly_runs: Some(93.0),
+            observed_runs_last_7d: Some(70.0),  // 10/day
+            observed_runs_prev_23d: Some(23.0), // 1/day -> v = 10.0x!
+            workflow_monthly_runs: vec![
+                ("ci.yml".to_string(), 90.0),
+                ("monthly_audit.yml".to_string(), 1.0),
+                ("manual_release.yml".to_string(), 2.0),
+            ],
+            job_durations_mins: vec![("monthly_audit.yml#audit".to_string(), 1.05)],
+            job_billed_mins: vec![("monthly_audit.yml#audit".to_string(), 2.33)], // mean(ceil([1.05, 1.05, 2.05])) = 7/3 = 2.33 > ceil(1.05) = 2.00!
+            ..Default::default()
+        };
+        snap.save_lockfile(&mix_dir).unwrap();
+
+        let rep_live = analyze_path(&mix_dir, None);
+        let live_audit = rep_live.jobs.iter().find(|j| j.job_id == "audit").unwrap();
+        assert_eq!(live_audit.billed_mins_per_job, 2.33);
+        let expected_eom = ((rep_live.gross_monthly_compute_cost_usd * (300.0 / 93.0)) * 100.0).round() / 100.0;
+        assert!((rep_live.cost_components.projected_eom_compute_usd - expected_eom).abs() <= 0.02);
+
+        // Symmetric `diff(HEAD, HEAD)` with `.minici/telemetry.lock.json` on disk MUST be $0.00!
+        let d_base = load_or_analyze_in_repo(Path::new("HEAD"), Some(&mix_dir), None, false, true);
+        let d_head = load_or_analyze_in_repo(&mix_dir, None, Some(d_base.usage.clone()), false, true);
+        let sym_diff = compute_diff(&d_base, &d_head);
+        assert_eq!(sym_diff.delta_monthly_compute_usd, 0.0);
+        assert_eq!(sym_diff.delta_billed_mins_per_run, 0.0);
+        assert!(sym_diff.job_changes.is_empty(), "Expected 0 job_changes on untouched HEAD, got: {:?}", sym_diff.job_changes);
+
+        // Invariant 5: CSV Invoice Reconciliation excludes Codespaces/Copilot/Packages from Compute Gross (`H5`)
+        let csv_p = mix_dir.join("mixed_gh_invoice.csv");
+        fs::write(
+            &csv_p,
+            "date,product,sku,quantity,unit_type,applied_cost_per_quantity,gross_amount,discount_amount,net_amount,repository\n\
+             2026-11-01,actions,Actions Linux,2000,minutes,0.006,12.00,12.00,0.00,org/mix\n\
+             2026-11-02,actions,Actions macOS,100,minutes,0.062,6.20,0.00,6.20,org/mix\n\
+             2026-11-02,codespaces,Codespaces Linux 4-core,500,minutes,0.036,18.00,0.00,18.00,org/mix\n\
+             2026-11-02,copilot,Copilot Business,1,seats,19.00,19.00,0.00,19.00,org/mix\n\
+             2026-11-02,actions,Actions Storage,10.0,gb-day,0.008,2.50,0.00,2.50,org/mix\n\
+             2026-11-03,actions,Actions Storage,10.0,gb-day,0.008,2.50,0.00,2.50,org/mix\n",
+        )
+        .unwrap();
+        let inv_snap = telemetry::parse_universal_billing_csv(&csv_p, Some("org/mix")).unwrap();
+        assert_eq!(inv_snap.invoice_compute_gross_usd, Some(18.20)); // $12.00 + $6.20 Actions compute ONLY!
+        assert_eq!(inv_snap.invoice_compute_net_usd, Some(6.20));
+        assert_eq!(inv_snap.observed_artifact_storage_gb, Some(10.0)); // Daily 10 GB snapshot averaged across 2 dates = 10.0 GB (NOT summed to 20.0 GB)!
+        let rep_inv = analyze_path_with_telemetry(&mix_dir, None, Some(inv_snap));
+        assert_eq!(rep_inv.gross_monthly_compute_cost_usd, 18.20);
+        assert_eq!(rep_inv.discount_allowance_monthly_usd, 12.00);
+        assert_eq!(rep_inv.net_billed_monthly_compute_cost_usd, 6.20);
+        let inv_row_sum: f64 = rep_inv.apportioned_job_monthly_costs().iter().sum();
+        assert!((inv_row_sum - 18.20).abs() < 1e-6);
+
+        let _ = fs::remove_dir_all(&mix_dir);
     }
 }

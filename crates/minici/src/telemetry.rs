@@ -558,6 +558,25 @@ fn http_get_with_etag_inner(
     let key = sanitize_url_key(url);
     let etag_file = dir.join(format!("{}.etag", key));
     let body_file = dir.join(format!("{}.json", key));
+    // Completed workflow run `/actions/runs/<id>/jobs` payloads are immutable once `status == "completed"`;
+    // serve cached JSON body directly to preserve zero-token rate limits across repeated CLI/MD/HTML renders!
+    if use_cached_etag && url.contains("/actions/runs/") && url.contains("/jobs") {
+        let alt_key = sanitize_url_key(&format!("{}&page=1", url));
+        let alt_body = dir.join(format!("{}.json", alt_key));
+        for cand_f in [&body_file, &alt_body] {
+            if let Ok(cached_body) = fs::read_to_string(cand_f) {
+                let tb = cached_body.trim_start();
+                if tb.starts_with('{') {
+                    return Some(EtagHttpResponse {
+                        status_code: 200,
+                        was_304_hit: true,
+                        rate_remaining: None,
+                        body: cached_body,
+                    });
+                }
+            }
+        }
+    }
     let cached_etag = if use_cached_etag {
         fs::read_to_string(&etag_file)
             .ok()
@@ -645,6 +664,35 @@ fn http_get_with_etag_inner(
             rate_remaining: rate_rem,
             body: body_part.to_string(),
         });
+    }
+
+    if status_code == 403 && rate_rem == Some(0) {
+        if let Ok(cached_body) = fs::read_to_string(&body_file) {
+            let tb = cached_body.trim_start();
+            if tb.starts_with('{') || tb.starts_with('[') {
+                return Some(EtagHttpResponse {
+                    status_code: 200,
+                    was_304_hit: true,
+                    rate_remaining: Some(0),
+                    body: cached_body,
+                });
+            }
+        }
+        if let Some(prefix) = url.split("?state=closed").next() {
+            let legacy_key = sanitize_url_key(&format!("{}?state=closed&per_page=100", prefix));
+            let legacy_file = dir.join(format!("{}.json", legacy_key));
+            if let Ok(cached_body) = fs::read_to_string(&legacy_file) {
+                let tb = cached_body.trim_start();
+                if tb.starts_with('{') || tb.starts_with('[') {
+                    return Some(EtagHttpResponse {
+                        status_code: 200,
+                        was_304_hit: true,
+                        rate_remaining: Some(0),
+                        body: cached_body,
+                    });
+                }
+            }
+        }
     }
 
     None
@@ -786,7 +834,7 @@ pub fn sync_github_live_telemetry_window(
     let cache_url = format!("https://api.github.com/repos/{}/actions/cache/usage", slug);
 
     // Parallel fetch of core metadata + page-1 runs + PRs + cache/usage (works zero-token on public repos!)
-    let (repo_resp, runs_p1_resp, pulls_resp, cache_resp) = std::thread::scope(|s| {
+    let (mut repo_resp, mut runs_p1_resp, mut pulls_resp, mut cache_resp) = std::thread::scope(|s| {
         let h1 = s.spawn(|| github_get_with_etag(&repo_url, tok_ref));
         let h2 = s.spawn(|| github_get_with_etag(&runs_url_p1, tok_ref));
         let h3 = s.spawn(|| github_get_with_etag(&pulls_url, tok_ref));
@@ -798,6 +846,34 @@ pub fn sync_github_live_telemetry_window(
             h4.join().ok().flatten(),
         )
     });
+    // If an ambient/keyring token was expired or revoked (`401 Bad credentials`), retry unauthenticated on public repos!
+    let mut effective_tok_ref = tok_ref;
+    if tok_ref.is_some() && runs_p1_resp.is_none() && repo_resp.is_none() {
+        effective_tok_ref = None;
+        let retried = std::thread::scope(|s| {
+            let h1 = s.spawn(|| github_get_with_etag(&repo_url, None));
+            let h2 = s.spawn(|| github_get_with_etag(&runs_url_p1, None));
+            let h3 = s.spawn(|| github_get_with_etag(&pulls_url, None));
+            let h4 = s.spawn(|| github_get_with_etag(&cache_url, None));
+            (
+                h1.join().ok().flatten(),
+                h2.join().ok().flatten(),
+                h3.join().ok().flatten(),
+                h4.join().ok().flatten(),
+            )
+        });
+        repo_resp = retried.0;
+        runs_p1_resp = retried.1;
+        pulls_resp = retried.2;
+        cache_resp = retried.3;
+    }
+    let tok_ref = effective_tok_ref;
+    if runs_p1_resp.is_none() {
+        return Err(format!(
+            "GitHub Actions runs API unavailable or rate-limited for '{}' (set GITHUB_TOKEN for 5,000 req/hr)",
+            slug
+        ));
+    }
 
     let mut api_calls = 0usize;
     let mut hits_304 = 0usize;
@@ -1192,7 +1268,7 @@ pub fn sync_github_live_telemetry_window(
                 .iter()
                 .map(|(rid, wf_base)| {
                     let u = format!(
-                        "https://api.github.com/repos/{}/actions/runs/{}/jobs?per_page=100&page=1",
+                        "https://api.github.com/repos/{}/actions/runs/{}/jobs?per_page=100",
                         slug, rid
                     );
                     let wfb = wf_base.clone();
@@ -1503,10 +1579,17 @@ pub fn sync_github_live_telemetry_window(
         let mut got_any_art_resp = false;
         let max_art_pages = if token.is_some() { 3usize } else { 1usize };
         for ap in 1..=max_art_pages {
-            let art_url = format!(
-                "https://api.github.com/repos/{}/actions/artifacts?per_page=100&page={}",
-                slug, ap
-            );
+            let art_url = if ap == 1 {
+                format!(
+                    "https://api.github.com/repos/{}/actions/artifacts?per_page=100",
+                    slug
+                )
+            } else {
+                format!(
+                    "https://api.github.com/repos/{}/actions/artifacts?per_page=100&page={}",
+                    slug, ap
+                )
+            };
             let a_resp = github_get_with_etag(&art_url, tok_ref);
             record_resp(&a_resp);
             if let Some(ar) = a_resp {

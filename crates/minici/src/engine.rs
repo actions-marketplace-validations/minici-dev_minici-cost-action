@@ -150,7 +150,7 @@ impl ExpandedJobCost {
         let ls = self.line_start.max(1);
         let le = self.line_end.max(ls);
         format!(
-            "{{\"workflow_file\":\"{}\",\"job_id\":\"{}\",\"line_start\":{},\"line_end\":{},\"matrix_combination_count\":{},\"runner_label\":\"{}\",\"provider\":\"{}\",\"os\":\"{}\",\"vcpus\":{},\"est_raw_duration_mins_per_job\":{:.2},\"billed_mins_per_job\":{:.2},\"total_billed_mins_all_matrix\":{:.2},\"rate_per_min_usd\":{:.4},\"run_compute_cost_usd\":{:.4},\"monthly_runs_for_job\":{},\"monthly_compute_cost_usd\":{},\"high_speed_microvm_run_cost_usd\":{:.4},\"self_hosted_spot_run_cost_usd\":{:.4},\"has_concurrency_cancel\":{},\"has_timeout_minutes\":{},\"has_sparse_or_shallow_clone\":{},\"uses_cache\":{},\"uploads_artifacts\":{},\"artifact_retention_days\":{}}}",
+            "{{\"workflow_file\":\"{}\",\"job_id\":\"{}\",\"line_start\":{},\"line_end\":{},\"matrix_combination_count\":{},\"runner_label\":\"{}\",\"provider\":\"{}\",\"os\":\"{}\",\"vcpus\":{},\"est_raw_duration_mins_per_job\":{:.2},\"billed_mins_per_job\":{:.2},\"total_billed_mins_all_matrix\":{:.2},\"rate_per_min_usd\":{:.6},\"run_compute_cost_usd\":{:.4},\"monthly_runs_for_job\":{},\"monthly_compute_cost_usd\":{},\"high_speed_microvm_run_cost_usd\":{:.4},\"self_hosted_spot_run_cost_usd\":{:.4},\"has_concurrency_cancel\":{},\"has_timeout_minutes\":{},\"has_sparse_or_shallow_clone\":{},\"uses_cache\":{},\"uploads_artifacts\":{},\"artifact_retention_days\":{}}}",
             json_escape(&norm_wf),
             json_escape(&self.job_id),
             ls,
@@ -1799,6 +1799,7 @@ fn analyze_github_job_block(
             raw_mins = raw_mins.min(tm.max(0.2));
         }
     }
+    raw_mins = (raw_mins * 100.0).round() / 100.0;
 
     let non_empty_axis_defs: Vec<&(String, Vec<String>)> = axis_counts
         .iter()
@@ -1946,9 +1947,12 @@ fn analyze_github_job_block(
                 .trim_matches('"')
                 .trim_matches('\'')
                 .to_string();
-            let billed_per_job = select_provider_plugin(sku.provider)
-                .round_job_minutes(raw_mins, sku.ceil_to_whole_minute);
-            let total_billed = billed_per_job * (per_os_jobs as f64);
+            let billed_per_job = (select_provider_plugin(sku.provider)
+                .round_job_minutes(raw_mins, sku.ceil_to_whole_minute)
+                * 100.0)
+                .round()
+                / 100.0;
+            let total_billed = (billed_per_job * (per_os_jobs as f64) * 100.0).round() / 100.0;
             out_jobs.push(ExpandedJobCost {
                 workflow_file: normalize_ci_path(wf_rel),
                 job_id: format!("{} [{}]", job_id, clean_os_lbl),
@@ -1988,9 +1992,12 @@ fn analyze_github_job_block(
         }
     } else {
         let sku = resolve_runner_sku(&raw_runs_on);
-        let billed_per_job = select_provider_plugin(sku.provider)
-            .round_job_minutes(raw_mins, sku.ceil_to_whole_minute);
-        let total_billed = billed_per_job * (matrix_count as f64);
+        let billed_per_job = (select_provider_plugin(sku.provider)
+            .round_job_minutes(raw_mins, sku.ceil_to_whole_minute)
+            * 100.0)
+            .round()
+            / 100.0;
+        let total_billed = (billed_per_job * (matrix_count as f64) * 100.0).round() / 100.0;
         let display_runner = if raw_runs_on.contains("${{") {
             sku.sku_label.to_string()
         } else {
@@ -2772,13 +2779,15 @@ fn parse_gitlab_or_other_ci(
     let mut stage_max_dur: Vec<(String, f64)> = Vec::new();
     let mut stage_widths: Vec<(String, usize)> = Vec::new();
     for pj in jobs_list {
-        let raw_mins = pj.explicit_mins.unwrap_or_else(|| {
+        let raw_mins = (pj.explicit_mins.unwrap_or_else(|| {
             if pj.saw_script_steps {
                 pj.step_mins.max(0.5)
             } else {
                 4.0
             }
-        });
+        }) * 100.0)
+            .round()
+            / 100.0;
         if let Some(sm) = stage_max_dur.iter_mut().find(|(s, _)| *s == pj.stage) {
             sm.1 = sm.1.max(raw_mins);
         } else {
@@ -2790,9 +2799,12 @@ fn parse_gitlab_or_other_ci(
             stage_widths.push((pj.stage.clone(), pj.parallel_count));
         }
         let sku = resolve_runner_sku(&pj.sku_label);
-        let billed_per_job = select_provider_plugin(sku.provider)
-            .round_job_minutes(raw_mins, sku.ceil_to_whole_minute);
-        let total_billed = billed_per_job * (pj.parallel_count as f64);
+        let billed_per_job = (select_provider_plugin(sku.provider)
+            .round_job_minutes(raw_mins, sku.ceil_to_whole_minute)
+            * 100.0)
+            .round()
+            / 100.0;
+        let total_billed = (billed_per_job * (pj.parallel_count as f64) * 100.0).round() / 100.0;
         // CircleCI Docker Layer Caching (`DLC`) adds 200 credits = $0.12 per job run!
         let dlc_fee = if pj.has_dlc && sku.provider == "circleci" {
             0.12 * (pj.parallel_count as f64)
@@ -3011,9 +3023,15 @@ fn parse_gcp_cloudbuild_file(
     }
 
     let total_cb_lines = content.lines().count().max(1);
-    let raw_mins = explicit_mins.unwrap_or(if saw_steps { step_mins.max(0.5) } else { 3.5 });
-    let billed_per_job =
-        select_provider_plugin("gcp-cloud-build").round_job_minutes(raw_mins, false);
+    let raw_mins = (explicit_mins.unwrap_or(if saw_steps { step_mins.max(0.5) } else { 3.5 })
+        * 100.0)
+        .round()
+        / 100.0;
+    let billed_per_job = (select_provider_plugin("gcp-cloud-build")
+        .round_job_minutes(raw_mins, false)
+        * 100.0)
+        .round()
+        / 100.0;
     out_jobs.push(ExpandedJobCost {
         workflow_file: normalize_ci_path(rel_name),
         job_id: "cloud-build".to_string(),
@@ -3381,11 +3399,13 @@ fn parse_azure_pipelines_file(
             1
         };
         let matrix_count = base_legs.saturating_mul(list_prod).max(1);
-        let raw_mins = aj.explicit_mins.unwrap_or(if aj.saw_steps {
+        let raw_mins = (aj.explicit_mins.unwrap_or(if aj.saw_steps {
             aj.step_mins.max(0.5)
         } else {
             3.5
-        });
+        }) * 100.0)
+            .round()
+            / 100.0;
         max_raw = max_raw.max(raw_mins);
         total_width += matrix_count;
 
@@ -5011,11 +5031,25 @@ pub fn analyze_path_with_telemetry(
         }
     }
 
-    fn split_base_jid(jid: &str) -> (&str, Option<&str>) {
+    fn split_base_jid(jid: &str) -> (&str, Option<&'static str>) {
         if let Some(idx) = jid.rfind(" [") {
-            let tag = jid[idx + 2..].trim_end_matches(']');
-            if matches!(tag, "linux" | "windows" | "macos") {
-                return (&jid[..idx], Some(tag));
+            if jid.ends_with(']') {
+                let tag = jid[idx + 2..jid.len() - 1].trim();
+                if !tag.is_empty() {
+                    let low = tag.to_ascii_lowercase();
+                    let os_kind = if low == "macos"
+                        || low.contains("macos")
+                        || low.contains("darwin")
+                        || low.contains("osx")
+                    {
+                        "macos"
+                    } else if low == "windows" || low.contains("windows") || low.contains("win") {
+                        "windows"
+                    } else {
+                        "linux"
+                    };
+                    return (&jid[..idx], Some(os_kind));
+                }
             }
         }
         (jid, None)
@@ -5910,11 +5944,11 @@ pub fn analyze_path_with_telemetry(
     };
     let monthly_transfer_gb = if total_expanded_matrix_jobs == 0 || !has_cloud_vpc_egress {
         0.0
-    } else if has_live_wf_runs {
+    } else {
         let g: f64 = jobs
             .iter()
             .map(|j| {
-                let r = lookup_live_wf_runs(&j.workflow_file).unwrap_or(0.0);
+                let r = j.effective_monthly_runs(monthly_runs);
                 let art_c = if j.uploads_artifacts {
                     j.matrix_combination_count as f64
                 } else {
@@ -5924,8 +5958,6 @@ pub fn analyze_path_with_telemetry(
             })
             .sum();
         (g * 100.0).round() / 100.0
-    } else {
-        ((est_transfer_gb_per_run * monthly_runs) * 100.0).round() / 100.0
     };
     let worst_case_rate_per_gb = 0.80 * infracost_aws_nat_gateway_per_gb_usd
         + 0.20 * (infracost_aws_nat_gateway_per_gb_usd + AWS_INTERNET_EGRESS_USD_PER_GB);
@@ -5970,7 +6002,11 @@ pub fn analyze_path_with_telemetry(
         "severe-context-switch-drag (>30m)".to_string()
     };
 
-    // 8. Failed Build Rerun Cost (Live SHA-verified `observed_flake_rate_pct` or static E2E/retry heuristic)
+    // 8. Failed Build Rerun Cost (Live SHA-verified `observed_flake_rate_pct` or static E2E/retry heuristic, `G5`)
+    let has_live_observed_flake = active_telemetry
+        .as_ref()
+        .and_then(|t| t.observed_flake_rate_pct)
+        .is_some();
     let estimated_flake_rate_pct = if jobs.is_empty() {
         0.0
     } else if let Some(obs_f) = active_telemetry
@@ -5983,10 +6019,15 @@ pub fn analyze_path_with_telemetry(
     } else {
         5.0
     };
-    // 10% flake rate causes ~1/(1-0.10) - 1 = 11.11% extra rerun executions due to retry compounding
+    // In Static mode, `p/(1-p)` models extra reruns on top of baseline runs; in Live mode, `gross` ALREADY includes
+    // observed reruns, so `flake_rate_frac` is the rerun share without double-counting (`G5`)!
     let flake_rate_frac = estimated_flake_rate_pct / 100.0;
     let rerun_amplification = if flake_rate_frac > 0.0 && flake_rate_frac < 0.9 {
-        flake_rate_frac / (1.0 - flake_rate_frac)
+        if has_live_observed_flake {
+            flake_rate_frac
+        } else {
+            flake_rate_frac / (1.0 - flake_rate_frac)
+        }
     } else {
         0.0
     };
@@ -6003,17 +6044,27 @@ pub fn analyze_path_with_telemetry(
         ((monthly_rerun_compute_cost_usd + monthly_flake_investigation_payroll_usd) * 100.0)
             .round()
             / 100.0;
-    let monthly_savings_at_1pct_target_usd = if estimated_flake_rate_pct > 1.0 {
-        ((monthly_total_immediate_flake_cost_usd
-            * ((estimated_flake_rate_pct - 1.0) / estimated_flake_rate_pct))
-            * 100.0)
-            .round()
-            / 100.0
+    let target_1pct_amp = if has_live_observed_flake {
+        0.01
+    } else {
+        0.01 / 0.99
+    };
+    let compute_sav_at_1pct = if estimated_flake_rate_pct > 1.0 && rerun_amplification > 0.0 {
+        monthly_rerun_compute_cost_usd
+            * ((rerun_amplification - target_1pct_amp).max(0.0) / rerun_amplification)
     } else {
         0.0
     };
+    let payroll_sav_at_1pct = if estimated_flake_rate_pct > 1.0 {
+        monthly_flake_investigation_payroll_usd
+            * ((estimated_flake_rate_pct - 1.0) / estimated_flake_rate_pct)
+    } else {
+        0.0
+    };
+    let monthly_savings_at_1pct_target_usd =
+        ((compute_sav_at_1pct + payroll_sav_at_1pct) * 100.0).round() / 100.0;
 
-    // 9. Build Cache Savings (Per-Stack Realistic Savings & Cache Hit-Rate KPI)
+    // 9. Build Cache Savings (Per-Stack Realistic Savings & Per-Workflow Cadence `C1`)
     let (stack_cache_label, realistic_saving_pct_min, realistic_saving_pct_max, cache_mid_ratio) =
         stack_cache_savings_profile(
             &detected_log_language_profile,
@@ -6022,18 +6073,14 @@ pub fn analyze_path_with_telemetry(
         );
     let mut jobs_with_cache = 0_usize;
     let mut jobs_missing_cache = 0_usize;
-    let mut uncached_run_cost_usd = 0.0_f64;
-    let mut live_monthly_uncached_cost_usd = 0.0_f64;
+    let mut uncached_monthly_cost_raw = 0.0_f64;
     for j in &jobs {
         if j.uses_cache {
             jobs_with_cache += j.matrix_combination_count;
         } else if j.est_raw_duration_mins_per_job > 2.0 {
             jobs_missing_cache += j.matrix_combination_count;
-            uncached_run_cost_usd += j.run_compute_cost_usd;
-            if has_live_wf_runs {
-                live_monthly_uncached_cost_usd +=
-                    j.run_compute_cost_usd * lookup_live_wf_runs(&j.workflow_file).unwrap_or(0.0);
-            }
+            uncached_monthly_cost_raw +=
+                j.run_compute_cost_usd * j.effective_monthly_runs(monthly_runs);
         }
     }
     let estimated_cache_hit_rate_pct = if jobs_with_cache == 0 {
@@ -6043,24 +6090,8 @@ pub fn analyze_path_with_telemetry(
     } else {
         75.0
     };
-    let primary_provider = if providers.iter().any(|s| s == "github-actions")
-        || jobs
-            .iter()
-            .any(|j| j.workflow_file.contains(".github/workflows"))
-    {
-        "github-actions"
-    } else {
-        providers
-            .first()
-            .map(|s| s.as_str())
-            .unwrap_or("github-actions")
-    };
     let (vendor_cache_limit, vendor_cache_eviction) = vendor_cache_mechanics(primary_provider);
-    let monthly_uncached_compute_usd = if has_live_wf_runs {
-        (live_monthly_uncached_cost_usd * 100.0).round() / 100.0
-    } else {
-        ((uncached_run_cost_usd * monthly_runs) * 100.0).round() / 100.0
-    };
+    let monthly_uncached_compute_usd = (uncached_monthly_cost_raw * 100.0).round() / 100.0;
     let monthly_unrealized_cache_savings_usd =
         ((monthly_uncached_compute_usd * cache_mid_ratio) * 100.0).round() / 100.0;
 
@@ -6107,14 +6138,20 @@ pub fn analyze_path_with_telemetry(
             / 100.0
     };
 
-    // Matrix Build Cost Strategy (Library vs Application & Conditional PR Matrix 80% Savings)
-    let matrix_jobs_count = jobs
-        .iter()
-        .filter(|j| j.matrix_combination_count > 1)
-        .count();
+    // Matrix Build Cost Strategy (Library vs Application & Conditional PR Matrix 80% Savings, `D5`)
+    let mut distinct_matrix_jobs: Vec<(&str, &str)> = Vec::new();
+    for j in &jobs {
+        let (bjid, os_tag) = split_base_jid(&j.job_id);
+        if j.matrix_combination_count > 1 || os_tag.is_some() {
+            let pair = (j.workflow_file.as_str(), bjid);
+            if !distinct_matrix_jobs.contains(&pair) {
+                distinct_matrix_jobs.push(pair);
+            }
+        }
+    }
+    let matrix_jobs_count = distinct_matrix_jobs.len();
     let mut pr_unconditional_matrix_cells = 0_usize;
-    let mut pr_excess_matrix_run_cost_usd = 0.0_f64;
-    let mut live_pr_excess_matrix_monthly_usd = 0.0_f64;
+    let mut pr_excess_matrix_monthly_usd = 0.0_f64;
     for j in &jobs {
         if j.matrix_combination_count > 1
             && hygiene
@@ -6125,19 +6162,12 @@ pub fn analyze_path_with_telemetry(
             pr_unconditional_matrix_cells += j.matrix_combination_count;
             let single_cell_cost = j.run_compute_cost_usd / (j.matrix_combination_count as f64);
             let excess = (j.run_compute_cost_usd - single_cell_cost).max(0.0);
-            pr_excess_matrix_run_cost_usd += excess;
-            if has_live_wf_runs {
-                live_pr_excess_matrix_monthly_usd +=
-                    excess * lookup_live_wf_runs(&j.workflow_file).unwrap_or(0.0);
-            }
+            pr_excess_matrix_monthly_usd += excess * j.effective_monthly_runs(monthly_runs);
         }
     }
     // Running 1 primary cell on PR (~80% of monthly volume) and full N cells on main/nightly saves ~80% of excess matrix cells
-    let conditional_pr_matrix_monthly_savings_usd = if has_live_wf_runs {
-        ((live_pr_excess_matrix_monthly_usd * 0.80) * 100.0).round() / 100.0
-    } else {
-        ((pr_excess_matrix_run_cost_usd * monthly_runs * 0.80) * 100.0).round() / 100.0
-    };
+    let conditional_pr_matrix_monthly_savings_usd =
+        ((pr_excess_matrix_monthly_usd * 0.80) * 100.0).round() / 100.0;
     let is_library_or_sdk = hygiene.has_library_release_signals
         || (hygiene.pr_push_runs_multi_os_all_three && !hygiene.has_deploy_or_release_steps)
         || (pr_unconditional_matrix_cells >= 6
@@ -6246,39 +6276,33 @@ pub fn analyze_path_with_telemetry(
 
     // 11. Branch Protection Cost (Required-Check Multiplication, Concurrency Cancel & Path Filters)
     let required_checks_count = total_expanded_matrix_jobs;
-    let monthly_required_check_executions =
-        ((required_checks_count as f64) * monthly_runs).round() as usize;
+    let monthly_required_check_executions = jobs
+        .iter()
+        .map(|j| (j.matrix_combination_count as f64) * j.effective_monthly_runs(monthly_runs))
+        .sum::<f64>()
+        .round() as usize;
     let slow_blocking_checks_over_10m = jobs
         .iter()
         .filter(|j| j.est_raw_duration_mins_per_job > 10.0)
         .map(|j| j.matrix_combination_count)
         .sum();
-    let mut uncancelled_run_cost_usd = 0.0_f64;
-    let mut unfiltered_run_cost_usd = 0.0_f64;
-    let mut live_uncancelled_monthly_usd = 0.0_f64;
-    let mut live_unfiltered_monthly_usd = 0.0_f64;
+    let mut uncancelled_monthly_usd = 0.0_f64;
+    let mut unfiltered_monthly_usd = 0.0_f64;
     for j in &jobs {
+        let jr = j.effective_monthly_runs(monthly_runs);
         if hygiene
             .uncancelled_workflow_files
             .iter()
             .any(|wf| wf == &j.workflow_file)
         {
-            uncancelled_run_cost_usd += j.run_compute_cost_usd;
-            if has_live_wf_runs {
-                live_uncancelled_monthly_usd +=
-                    j.run_compute_cost_usd * lookup_live_wf_runs(&j.workflow_file).unwrap_or(0.0);
-            }
+            uncancelled_monthly_usd += j.run_compute_cost_usd * jr;
         }
         if hygiene
             .unfiltered_workflow_files
             .iter()
             .any(|wf| wf == &j.workflow_file)
         {
-            unfiltered_run_cost_usd += j.run_compute_cost_usd;
-            if has_live_wf_runs {
-                live_unfiltered_monthly_usd +=
-                    j.run_compute_cost_usd * lookup_live_wf_runs(&j.workflow_file).unwrap_or(0.0);
-            }
+            unfiltered_monthly_usd += j.run_compute_cost_usd * jr;
         }
     }
     // Cancelling superseded runs saves 10-25% (15% midpoint) on workflows without cancel-in-progress,
@@ -6299,21 +6323,16 @@ pub fn analyze_path_with_telemetry(
         };
         let monthly_wasted = wasted_mins * (30.0 / win_days) * eff_rate;
         ((monthly_wasted) * 100.0).round() / 100.0
-    } else if has_live_wf_runs {
-        ((live_uncancelled_monthly_usd * 0.15) * 100.0).round() / 100.0
     } else {
-        ((uncancelled_run_cost_usd * monthly_runs * 0.15) * 100.0).round() / 100.0
+        ((uncancelled_monthly_usd * 0.15) * 100.0).round() / 100.0
     };
     // Path filtering saves 30-50% (40% midpoint) on multi-workflow PR checks missing path filters
-    let monthly_unfiltered_check_savings_usd = if workflow_count > 1 || total_expanded_matrix_jobs > 3 {
-        if has_live_wf_runs {
-            ((live_unfiltered_monthly_usd * 0.40) * 100.0).round() / 100.0
+    let monthly_unfiltered_check_savings_usd =
+        if workflow_count > 1 || total_expanded_matrix_jobs > 3 {
+            ((unfiltered_monthly_usd * 0.40) * 100.0).round() / 100.0
         } else {
-            ((unfiltered_run_cost_usd * monthly_runs * 0.40) * 100.0).round() / 100.0
-        }
-    } else {
-        0.0
-    };
+            0.0
+        };
 
     // 12. Startup Stage Cost (1-15 Devs, Free-Tier Burn, Upgrade Triggers & Early Traps)
     let free_tier_burn_pct = free_tier_quota_burn_pct;
@@ -6353,33 +6372,30 @@ pub fn analyze_path_with_telemetry(
         && linux_mins_per_run > 0.0
         && windows_mins_per_run > 0.0
         && macos_mins_per_run > 0.0;
-    let mut pr_non_linux_run_cost_usd = 0.0_f64;
+    let mut pr_non_linux_monthly_usd = 0.0_f64;
     if premature_multi_os_pr_matrix_trap {
         for j in &jobs {
             let os_low = j.os.to_ascii_lowercase();
+            let jr = j.effective_monthly_runs(monthly_runs);
             if (os_low.contains("win") || os_low.contains("mac"))
                 && !j.provider.starts_with("self-hosted")
                 && !j.runner_label.to_ascii_lowercase().contains("self-hosted")
+                && jr > 30.0
             {
-                pr_non_linux_run_cost_usd += j.run_compute_cost_usd;
+                pr_non_linux_monthly_usd += j.run_compute_cost_usd * (jr - 30.0);
             }
         }
     }
-    let nightly_runs_per_month = 30.0_f64;
-    let shift_ratio = if monthly_runs > nightly_runs_per_month {
-        (monthly_runs - nightly_runs_per_month) / monthly_runs
-    } else {
-        0.0
-    };
     let monthly_multi_os_pr_to_nightly_savings_usd =
-        ((pr_non_linux_run_cost_usd * monthly_runs * shift_ratio) * 100.0).round() / 100.0;
+        (pr_non_linux_monthly_usd * 100.0).round() / 100.0;
     let mut monthly_macos_hosted_usd = 0.0_f64;
     for j in &jobs {
         if j.os.eq_ignore_ascii_case("macos")
             && !j.provider.starts_with("self-hosted")
             && !j.runner_label.to_ascii_lowercase().contains("self-hosted")
         {
-            monthly_macos_hosted_usd += j.run_compute_cost_usd * monthly_runs;
+            monthly_macos_hosted_usd +=
+                j.run_compute_cost_usd * j.effective_monthly_runs(monthly_runs);
         }
     }
     // $700 Mac mini + $5/mo power replaces ~90% of hosted macOS CI spend
@@ -6544,8 +6560,18 @@ pub fn analyze_path_with_telemetry(
     let setup_mins_per_run =
         ((est_setup_overhead_sec_per_job / 60.0) * (total_expanded_matrix_jobs as f64))
             .min(raw_duration_mins_per_run * 0.45);
-    let monthly_setup_overhead_hours =
-        (((setup_mins_per_run * monthly_runs) / 60.0) * 100.0).round() / 100.0;
+    let monthly_setup_mins: f64 = jobs
+        .iter()
+        .map(|j| {
+            let jr = j.effective_monthly_runs(monthly_runs);
+            let job_raw = j.est_raw_duration_mins_per_job * (j.matrix_combination_count as f64);
+            let job_setup = ((est_setup_overhead_sec_per_job / 60.0)
+                * (j.matrix_combination_count as f64))
+                .min(job_raw * 0.45);
+            job_setup * jr
+        })
+        .sum();
+    let monthly_setup_overhead_hours = ((monthly_setup_mins / 60.0) * 100.0).round() / 100.0;
     let setup_overhead_share_pct = if raw_duration_mins_per_run > 0.0 {
         (((setup_mins_per_run / raw_duration_mins_per_run) * 100.0) * 100.0).round() / 100.0
     } else {
@@ -6570,22 +6596,30 @@ pub fn analyze_path_with_telemetry(
     };
     let exceeds_10gb_repo_cache_limit = est_aggregate_cache_gb > 10.0;
 
-    // 17. Multi-Vendor TCO & Migration Comparison Engine (Seats + Included Quota + vCPU-Scaled Overage + 5-Layer Migration Payback)
+    // 17. Multi-Vendor TCO & Migration Comparison Engine (Seats + Included Quota + vCPU-Scaled Overage + 5-Layer Migration Payback, `C1, G6`)
     let seats_f = implied_active_devs as f64;
-    let monthly_win_mins = windows_mins_per_run * monthly_runs;
-    let monthly_mac_mins = macos_mins_per_run * monthly_runs;
+    let mut monthly_win_mins = 0.0_f64;
+    let mut monthly_mac_mins = 0.0_f64;
     let mut larger_runners_detected_count = 0_usize;
     let mut larger_runner_monthly_usd = 0.0_f64;
     let mut larger_x86_linux_non_gpu_monthly_usd = 0.0_f64;
-    let mut standard_linux_mins_per_run = 0.0_f64;
-    let mut vcpu_scaled_linux_mins_per_run = 0.0_f64;
-    let mut standard_win_mins_per_run = 0.0_f64;
-    let mut standard_mac_mins_per_run = 0.0_f64;
-    let mut non_arm_linux_2core_mins_per_run = 0.0_f64;
-    let mut cci_linux_credits_per_run = 0.0_f64;
+    let mut monthly_std_linux_mins = 0.0_f64;
+    let mut monthly_vcpu_scaled_linux_mins = 0.0_f64;
+    let mut monthly_std_win_mins = 0.0_f64;
+    let mut monthly_std_mac_mins = 0.0_f64;
+    let mut monthly_non_arm_linux_2core_mins = 0.0_f64;
+    let mut monthly_cci_linux_credits = 0.0_f64;
+    let mut hosted_linux_mins_per_run = 0.0_f64;
 
     for j in &jobs {
+        let jr = j.effective_monthly_runs(monthly_runs);
         let rl = j.runner_label.to_ascii_lowercase();
+        let os_low = j.os.to_ascii_lowercase();
+        if os_low.contains("mac") {
+            monthly_mac_mins += j.total_billed_mins_all_matrix * jr;
+        } else if os_low.contains("win") {
+            monthly_win_mins += j.total_billed_mins_all_matrix * jr;
+        }
         let is_self_or_3p = j.provider.starts_with("self-hosted")
             || j.provider == "blacksmith"
             || j.provider == "third-party-microvm"
@@ -6597,45 +6631,44 @@ pub fn analyze_path_with_telemetry(
             || rl.contains("self-hosted");
         let is_gh_larger = is_github_larger_runner_job(j);
 
+        if j.os.eq_ignore_ascii_case("linux") && !is_self_or_3p {
+            hosted_linux_mins_per_run += j.total_billed_mins_all_matrix;
+        }
+
         if is_gh_larger {
             larger_runners_detected_count += j.matrix_combination_count;
-            larger_runner_monthly_usd += j.run_compute_cost_usd * monthly_runs;
+            larger_runner_monthly_usd += j.run_compute_cost_usd * jr;
             if j.os.eq_ignore_ascii_case("linux")
                 && !rl.contains("arm")
                 && !rl.contains("aarch64")
                 && !rl.contains("gpu")
                 && resolve_runner_sku(&j.runner_label).arch != "arm64"
             {
-                larger_x86_linux_non_gpu_monthly_usd += j.run_compute_cost_usd * monthly_runs;
+                larger_x86_linux_non_gpu_monthly_usd += j.run_compute_cost_usd * jr;
             }
-        } else if j.os.eq_ignore_ascii_case("linux") {
-            standard_linux_mins_per_run += j.total_billed_mins_all_matrix;
+        } else if j.os.eq_ignore_ascii_case("linux") && !is_self_or_3p {
+            monthly_std_linux_mins += j.total_billed_mins_all_matrix * jr;
             if j.vcpus <= 2
                 && !rl.contains("arm")
                 && !rl.contains("aarch64")
                 && resolve_runner_sku(&j.runner_label).arch != "arm64"
-                && !is_self_or_3p
             {
-                non_arm_linux_2core_mins_per_run += j.total_billed_mins_all_matrix;
+                monthly_non_arm_linux_2core_mins += j.total_billed_mins_all_matrix * jr;
             }
         } else if j.os.eq_ignore_ascii_case("windows") && !is_self_or_3p {
-            standard_win_mins_per_run += j.total_billed_mins_all_matrix;
+            monthly_std_win_mins += j.total_billed_mins_all_matrix * jr;
         } else if j.os.eq_ignore_ascii_case("macos") && !is_self_or_3p {
-            standard_mac_mins_per_run += j.total_billed_mins_all_matrix;
+            monthly_std_mac_mins += j.total_billed_mins_all_matrix * jr;
         }
 
         if j.os.eq_ignore_ascii_case("linux") {
             let vcpu_scale = ((j.vcpus.max(2) as f64) / 2.0).max(1.0);
-            vcpu_scaled_linux_mins_per_run += j.total_billed_mins_all_matrix * vcpu_scale;
-            cci_linux_credits_per_run += j.total_billed_mins_all_matrix * (10.0 * vcpu_scale);
+            monthly_vcpu_scaled_linux_mins += j.total_billed_mins_all_matrix * vcpu_scale * jr;
+            monthly_cci_linux_credits += j.total_billed_mins_all_matrix * (10.0 * vcpu_scale) * jr;
         }
     }
     let larger_runners_bypass_free_minutes_tax_usd =
         (larger_runner_monthly_usd * 100.0).round() / 100.0;
-    let monthly_std_linux_mins = standard_linux_mins_per_run * monthly_runs;
-    let monthly_vcpu_scaled_linux_mins = vcpu_scaled_linux_mins_per_run * monthly_runs;
-    let monthly_std_win_mins = standard_win_mins_per_run * monthly_runs;
-    let monthly_std_mac_mins = standard_mac_mins_per_run * monthly_runs;
 
     let (
         cheapest_vendor_platform,
@@ -6694,7 +6727,7 @@ pub fn analyze_path_with_telemetry(
             .round()
             / 100.0;
         // CircleCI Performance: $15 base (5 users + 30k credits) + $15 per extra user + credits @ $0.0006 (vCPU-scaled Linux, 40/m Win, 150/m Mac M2 Pro)
-        let cci_credits = cci_linux_credits_per_run * monthly_runs
+        let cci_credits = monthly_cci_linux_credits
             + monthly_win_mins * 40.0
             + monthly_mac_mins * 150.0;
         let cci_tco = ((15.0
@@ -6743,20 +6776,21 @@ pub fn analyze_path_with_telemetry(
             * 100.0)
             .round()
             / 100.0;
-        // GCP Cloud Build: $0 seats + 1,250 free e2-standard-2 equiv mins + vCPU-scaled $0.006/2vCPU-min Linux
-        let gcp_tco = (((monthly_vcpu_scaled_linux_mins - 1250.0).max(0.0) * 0.006
+        // GCP Cloud Build: $0 seats + 2,500 free e2-medium build-mins ($0.006/min overage, `G6`)
+        let gcp_tco = (((monthly_vcpu_scaled_linux_mins - 2500.0).max(0.0) * 0.006
             + monthly_win_mins * 0.010
             + monthly_mac_mins * 0.062)
             * 100.0)
             .round()
             / 100.0;
-        // Azure Pipelines: 1 free hosted job (1,800 mins) + $40/mo per extra parallel hosted lane needed
-        let az_lanes = ((monthly_billed_mins / 7500.0).ceil() as usize)
-            .max(if peak_concurrent_jobs_per_run > 1 { 2 } else { 1 });
+        // Azure Pipelines: 1 free hosted job (<=1,800 mins & 1 lane = $0); buying >=1 paid $40/mo parallel job removes the 1,800m cap on ALL lanes (`G6`)
+        let az_paid_lanes = ((monthly_billed_mins / 7500.0).ceil() as usize)
+            .max(peak_concurrent_jobs_per_run.min(4))
+            .max(1);
         let az_tco = if monthly_billed_mins <= 1800.0 && peak_concurrent_jobs_per_run <= 1 {
             0.0
         } else {
-            (((az_lanes.saturating_sub(1)) as f64) * 40.0 * 100.0).round() / 100.0
+            ((az_paid_lanes as f64) * 40.0 * 100.0).round() / 100.0
         };
 
         let candidates = [
@@ -7013,10 +7047,18 @@ pub fn analyze_path_with_telemetry(
         } else {
             ("balanced-web-backend", 1.33_f64, 1.56_f64, 1.75_f64, 1.84_f64, 1.89_f64)
         };
-        // Isolate Linux CPU-scalable jobs from fixed non-Linux (macOS / Windows / GPU / 3P) jobs
-        let mut linux_scalable_2c_run_usd = 0.0_f64;
-        let mut fixed_non_linux_run_usd = 0.0_f64;
+        // Isolate Linux CPU-scalable hosted jobs from fixed non-Linux (macOS / Windows / GPU / 3P) jobs,
+        // respecting GitHub's 1-minute per-job billing ceiling on Larger Runners (`G7`)!
+        let mut linux_2c_mo = 0.0_f64;
+        let mut fixed_non_linux_mo = 0.0_f64;
+        let mut l4_linux_mo = 0.0_f64;
+        let mut l8_linux_mo = 0.0_f64;
+        let mut l16_linux_mo = 0.0_f64;
+        let mut l32_linux_mo = 0.0_f64;
+        let mut l64_linux_mo = 0.0_f64;
         for j in &jobs {
+            let jr = j.effective_monthly_runs(monthly_runs);
+            let mat_f = j.matrix_combination_count as f64;
             let rl = j.runner_label.to_ascii_lowercase();
             let is_gpu = rl.contains("gpu");
             let is_self_or_3p = j.provider.starts_with("self-hosted")
@@ -7029,7 +7071,7 @@ pub fn analyze_path_with_telemetry(
                 || rl.contains("namespace")
                 || rl.contains("self-hosted");
             if j.os.eq_ignore_ascii_case("linux") && !is_gpu && !is_self_or_3p {
-                if j.vcpus > 2 && j.rate_per_min_usd > 0.006 {
+                let raw_2c_equiv = if j.vcpus > 2 && j.rate_per_min_usd > 0.006 {
                     let job_speedup = match j.vcpus {
                         4 => s4,
                         8 => s8,
@@ -7038,31 +7080,35 @@ pub fn analyze_path_with_telemetry(
                         64..=u32::MAX => s64,
                         _ => 1.0,
                     };
-                    linux_scalable_2c_run_usd += j.total_billed_mins_all_matrix * job_speedup * 0.006;
+                    j.est_raw_duration_mins_per_job * job_speedup
                 } else {
-                    linux_scalable_2c_run_usd += j.run_compute_cost_usd;
-                }
+                    j.est_raw_duration_mins_per_job
+                };
+                let ceil_m = |d: f64| -> f64 { (d - 1e-9).ceil().max(1.0) };
+                linux_2c_mo += ceil_m(raw_2c_equiv) * mat_f * 0.006 * jr;
+                l4_linux_mo += ceil_m(raw_2c_equiv / s4) * mat_f * 0.012 * jr;
+                l8_linux_mo += ceil_m(raw_2c_equiv / s8) * mat_f * 0.022 * jr;
+                l16_linux_mo += ceil_m(raw_2c_equiv / s16) * mat_f * 0.042 * jr;
+                l32_linux_mo += ceil_m(raw_2c_equiv / s32) * mat_f * 0.082 * jr;
+                l64_linux_mo += ceil_m(raw_2c_equiv / s64) * mat_f * 0.162 * jr;
             } else {
-                fixed_non_linux_run_usd += j.run_compute_cost_usd;
+                fixed_non_linux_mo += j.run_compute_cost_usd * jr;
             }
         }
-        let linux_2c_mo = linux_scalable_2c_run_usd * monthly_runs;
-        let fixed_non_linux_mo = fixed_non_linux_run_usd * monthly_runs;
         let std_2c_mo = ((linux_2c_mo + fixed_non_linux_mo) * 100.0).round() / 100.0;
         // Linux arm64 2-core ($0.005/min) vs standard x64 2-core ($0.006/min) saves 16.7%, and x86 4-core+ Linux -> arm64 saves ~36%
-        let arm_sav = ((non_arm_linux_2core_mins_per_run * monthly_runs * (0.006 - 0.005)
+        let arm_sav = ((monthly_non_arm_linux_2core_mins * (0.006 - 0.005)
             + larger_x86_linux_non_gpu_monthly_usd * 0.36)
             * 100.0)
             .round()
             / 100.0;
         let arm_2c_mo = ((gross_monthly_compute_cost_usd - arm_sav).max(0.0) * 100.0).round() / 100.0;
 
-        // Scale ONLY Linux CPU-scalable portion by (rate_ratio / realised_speedup); keep macOS/Windows/GPU unchanged
-        let l4_mo = ((fixed_non_linux_mo + linux_2c_mo * (2.0 / s4)) * 100.0).round() / 100.0;
-        let l8_mo = ((fixed_non_linux_mo + linux_2c_mo * (3.6667 / s8)) * 100.0).round() / 100.0;
-        let l16_mo = ((fixed_non_linux_mo + linux_2c_mo * (7.0 / s16)) * 100.0).round() / 100.0;
-        let l32_mo = ((fixed_non_linux_mo + linux_2c_mo * (13.6667 / s32)) * 100.0).round() / 100.0;
-        let l64_mo = ((fixed_non_linux_mo + linux_2c_mo * (27.0 / s64)) * 100.0).round() / 100.0;
+        let l4_mo = ((fixed_non_linux_mo + l4_linux_mo) * 100.0).round() / 100.0;
+        let l8_mo = ((fixed_non_linux_mo + l8_linux_mo) * 100.0).round() / 100.0;
+        let l16_mo = ((fixed_non_linux_mo + l16_linux_mo) * 100.0).round() / 100.0;
+        let l32_mo = ((fixed_non_linux_mo + l32_linux_mo) * 100.0).round() / 100.0;
+        let l64_mo = ((fixed_non_linux_mo + l64_linux_mo) * 100.0).round() / 100.0;
 
         // Larger runners never draw free minutes: if within Free tier, standard 2-core costs $0 out-of-pocket
         let baseline_billed_mo = if effective_tier.starts_with("free") {
@@ -7071,7 +7117,7 @@ pub fn analyze_path_with_telemetry(
             std_2c_mo
         };
         let linux_wait_share = if billed_mins_per_run > 0.0 {
-            (linux_mins_per_run / billed_mins_per_run).clamp(0.0, 1.0)
+            (hosted_linux_mins_per_run / billed_mins_per_run).clamp(0.0, 1.0)
         } else {
             0.0
         };
@@ -7373,21 +7419,7 @@ pub fn analyze_path_with_telemetry(
     let mut cadence_weighted_monthly_compute_usd = 0.0_f64;
     let mut wf_cost_totals: Vec<(String, f64)> = Vec::new();
     for j in &jobs {
-        let wf_runs = if let Some(live_r) = lookup_live_wf_runs(&j.workflow_file) {
-            live_r
-        } else {
-            let wf_weight = hygiene
-                .workflow_trigger_weights
-                .iter()
-                .find(|(wf, _)| wf == &j.workflow_file)
-                .map(|(_, w)| *w)
-                .unwrap_or(1.0);
-            if wf_weight < 0.25 {
-                (monthly_runs * wf_weight).max(1.0)
-            } else {
-                monthly_runs * wf_weight
-            }
-        };
+        let wf_runs = j.effective_monthly_runs(monthly_runs);
         let j_mo = j.run_compute_cost_usd * wf_runs;
         cadence_weighted_monthly_compute_usd += j_mo;
         if let Some(entry) = wf_cost_totals.iter_mut().find(|(wf, _)| wf == &j.workflow_file) {
@@ -7457,29 +7489,64 @@ pub fn analyze_path_with_telemetry(
     } else {
         1.0
     };
-    let spend_anomaly_alert_active = burn_velocity_7d_vs_30d_ratio >= 1.50;
+    let eff_sample_runs = active_telemetry
+        .as_ref()
+        .and_then(|t| {
+            t.observed_runs_in_window
+                .map(|n| n as f64)
+                .or(t.observed_runs_last_7d)
+        })
+        .unwrap_or(monthly_runs);
+    let spend_anomaly_alert_active =
+        burn_velocity_7d_vs_30d_ratio >= 1.50 && eff_sample_runs >= 5.0;
+    let eom_vel_mult = if burn_velocity_7d_vs_30d_ratio <= 0.0 && !jobs.is_empty() {
+        0.0
+    } else {
+        let v = burn_velocity_7d_vs_30d_ratio.max(0.0);
+        (30.0 * v) / (7.0 * v + 23.0)
+    };
     let projected_eom_compute_usd =
-        ((gross_monthly_compute_cost_usd * burn_velocity_7d_vs_30d_ratio.max(0.5)) * 100.0).round()
-            / 100.0;
-    let projected_quota_exhaustion_day =
-        if free_tier_quota_burn_pct <= 100.0 || monthly_os_weighted_free_tier_mins <= 0.0 {
-            0_u32
-        } else {
-            let frac_of_month = (free_tier_included_mins
-                / (monthly_os_weighted_free_tier_mins * burn_velocity_7d_vs_30d_ratio.max(1.0)))
-            .clamp(0.03, 1.0);
-            ((frac_of_month * 30.0).ceil() as u32).clamp(1, 30)
-        };
+        norm_zero(((gross_monthly_compute_cost_usd * eom_vel_mult) * 100.0).round() / 100.0);
+    let projected_eom_pool_mins = monthly_os_weighted_free_tier_mins * eom_vel_mult.max(1.0);
+    let projected_quota_exhaustion_day = if free_tier_included_mins <= 0.0
+        || free_tier_included_mins.is_infinite()
+        || projected_eom_pool_mins <= free_tier_included_mins
+    {
+        0_u32
+    } else {
+        let frac_of_month = (free_tier_included_mins / projected_eom_pool_mins).clamp(0.03, 1.0);
+        ((frac_of_month * 30.0).ceil() as u32).clamp(1, 30)
+    };
     // Exact per-job `timeout-minutes` scan & per-job runner rate × matrix count (Fixes Bug #30.1 & #30.2)
-    let jobs_missing_timeout_minutes_count = jobs.iter().filter(|j| !j.has_timeout_minutes).count();
-    let hung_job_360m_worst_case_exposure_usd = ((jobs
-        .iter()
-        .filter(|j| !j.has_timeout_minutes)
-        .map(|j| 360.0 * j.rate_per_min_usd * (j.matrix_combination_count as f64))
-        .sum::<f64>())
-        * 100.0)
-        .round()
-        / 100.0;
+    let mut distinct_missing_timeout: Vec<(&str, &str)> = Vec::new();
+    for j in &jobs {
+        if !j.has_timeout_minutes {
+            let pair = (j.workflow_file.as_str(), split_base_jid(&j.job_id).0);
+            if !distinct_missing_timeout.contains(&pair) {
+                distinct_missing_timeout.push(pair);
+            }
+        }
+    }
+    let jobs_missing_timeout_minutes_count = distinct_missing_timeout.len();
+    let hung_job_360m_worst_case_exposure_usd = norm_zero(
+        ((jobs
+            .iter()
+            .filter(|j| !j.has_timeout_minutes)
+            .map(|j| {
+                let default_timeout_m = match j.provider.as_str() {
+                    "gcp-cloud-build" => 10.0,
+                    "gitlab-ci" | "azure-pipelines" => 60.0,
+                    "bitbucket" => 120.0,
+                    "circleci" => 300.0,
+                    _ => 360.0,
+                };
+                default_timeout_m * j.rate_per_min_usd * (j.matrix_combination_count as f64)
+            })
+            .sum::<f64>())
+            * 100.0)
+            .round()
+            / 100.0,
+    );
 
     // 23. Container Registry Economics (Live `observed_ghcr_storage_gb` or GHCR / ECR / GCR Image Layer Delta)
     let container_images_built_count = if hygiene.container_images_built_count > 0 {
@@ -7534,16 +7601,17 @@ pub fn analyze_path_with_telemetry(
     ) = if jobs.is_empty() {
         (0.0, 0.0, 0.0, false)
     } else {
-        let base_idle = (100.0 - always_on_runner_utilization_pct).clamp(0.0, 99.5);
+        let max_idle_possible = (100.0 - always_on_runner_utilization_pct).clamp(0.0, 99.5);
         let idle_pct = if let Some(obs_off_share) = active_telemetry
             .as_ref()
             .and_then(|t| t.observed_off_hours_run_share_pct)
         {
-            // Nights + weekends represent 128/168 = 76.2% of wall-clock hours; if off-hours run share is tiny, idle floor rises
-            let off_hours_idle_floor = (76.2 * (1.0 - (obs_off_share / 100.0).clamp(0.0, 1.0))).clamp(0.0, 76.2);
-            (base_idle.max(off_hours_idle_floor) * 10.0).round() / 10.0
+            // Nights + weekends represent 128/168 = 76.2% of wall-clock hours, strictly bounded by `100% - active%` (`G3`)!
+            let off_hours_idle_floor = (76.2 * (1.0 - (obs_off_share / 100.0).clamp(0.0, 1.0)))
+                .clamp(0.0, max_idle_possible);
+            (max_idle_possible.max(off_hours_idle_floor) * 10.0).round() / 10.0
         } else {
-            (base_idle * 10.0).round() / 10.0
+            (max_idle_possible * 10.0).round() / 10.0
         };
         let idle_waste_usd = if true_self_hosted_jobs_per_run > 0 {
             (((fleet_nodes as f64) * ec2_od_mo * (idle_pct / 100.0)) * 100.0).round() / 100.0
@@ -7863,17 +7931,31 @@ pub fn compute_diff(base: &BreakdownReport, head: &BreakdownReport) -> DiffRepor
         ((head.monthly_dev_wait_cost_usd - base.monthly_dev_wait_cost_usd) * 100.0).round() / 100.0,
     );
 
+    // When diffing two standalone single-workflow files (`minici diff /tmp/a.yml /tmp/b.yml`),
+    // match jobs by `job_id` even when filenames differ (`H4`)!
+    let single_wf_diff = base.total_workflows == 1 && head.total_workflows == 1;
+    let jobs_match = |a: &ExpandedJobCost, b: &ExpandedJobCost| -> bool {
+        if a.job_id != b.job_id {
+            return false;
+        }
+        if a.workflow_file == b.workflow_file || single_wf_diff {
+            return true;
+        }
+        let ab = a.workflow_file.rsplit('/').next().unwrap_or(&a.workflow_file);
+        let bb = b.workflow_file.rsplit('/').next().unwrap_or(&b.workflow_file);
+        ab == bb
+    };
+
     let mut changes: Vec<String> = Vec::new();
     for hj in &head.jobs {
-        if let Some(bj) = base
-            .jobs
-            .iter()
-            .find(|x| x.workflow_file == hj.workflow_file && x.job_id == hj.job_id)
-        {
+        if let Some(bj) = base.jobs.iter().find(|x| jobs_match(x, hj)) {
+            let bj_mo = bj.monthly_compute_cost(base.monthly_runs);
+            let hj_mo = hj.monthly_compute_cost(head.monthly_runs);
             if bj.matrix_combination_count != hj.matrix_combination_count
                 || bj.runner_label != hj.runner_label
                 || (bj.billed_mins_per_job - hj.billed_mins_per_job).abs() > 0.01
                 || (bj.run_compute_cost_usd - hj.run_compute_cost_usd).abs() > 0.0001
+                || (bj_mo - hj_mo).abs() > 0.01
             {
                 changes.push(format!(
                     "Modified `{}` (`{}`): `{}x {}` ({:.1}m • ${:.3}/run) -> `{}x {}` ({:.1}m • ${:.3}/run)",
@@ -7888,6 +7970,21 @@ pub fn compute_diff(base: &BreakdownReport, head: &BreakdownReport) -> DiffRepor
                     hj.total_billed_mins_all_matrix,
                     hj.run_compute_cost_usd
                 ));
+            } else if bj.artifact_retention_days != hj.artifact_retention_days
+                || bj.has_timeout_minutes != hj.has_timeout_minutes
+                || bj.has_concurrency_cancel != hj.has_concurrency_cancel
+            {
+                changes.push(format!(
+                    "Updated guardrails on `{}` (`{}`): retention {:?}d -> {:?}d, timeout {} -> {}, cancel-in-progress {} -> {}",
+                    hj.job_id,
+                    hj.workflow_file,
+                    bj.artifact_retention_days,
+                    hj.artifact_retention_days,
+                    bj.has_timeout_minutes,
+                    hj.has_timeout_minutes,
+                    bj.has_concurrency_cancel,
+                    hj.has_concurrency_cancel
+                ));
             }
         } else {
             changes.push(format!(
@@ -7901,11 +7998,7 @@ pub fn compute_diff(base: &BreakdownReport, head: &BreakdownReport) -> DiffRepor
         }
     }
     for bj in &base.jobs {
-        if !head
-            .jobs
-            .iter()
-            .any(|x| x.workflow_file == bj.workflow_file && x.job_id == bj.job_id)
-        {
+        if !head.jobs.iter().any(|x| jobs_match(bj, x)) {
             changes.push(format!(
                 "Removed job `{}` (`{}`): `{}x {}` (-${:.3}/run)",
                 bj.job_id,
@@ -7915,6 +8008,36 @@ pub fn compute_diff(base: &BreakdownReport, head: &BreakdownReport) -> DiffRepor
                 bj.run_compute_cost_usd
             ));
         }
+    }
+    let delta_net = norm_zero(
+        ((head.net_billed_monthly_compute_cost_usd - base.net_billed_monthly_compute_cost_usd)
+            * 100.0)
+            .round()
+            / 100.0,
+    );
+    let delta_storage = norm_zero(
+        ((head.monthly_artifact_storage_vendor_usd - base.monthly_artifact_storage_vendor_usd)
+            * 100.0)
+            .round()
+            / 100.0,
+    );
+    if delta_net.abs() >= 0.01 && (delta_net - delta_compute).abs() >= 0.01 {
+        changes.push(format!(
+            "Net billed compute delta: ${:.2}/mo -> ${:.2}/mo ({}{:.2}/mo)",
+            base.net_billed_monthly_compute_cost_usd,
+            head.net_billed_monthly_compute_cost_usd,
+            if delta_net >= 0.0 { "+" } else { "" },
+            delta_net
+        ));
+    }
+    if delta_storage.abs() >= 0.01 {
+        changes.push(format!(
+            "Artifact storage delta: ${:.2}/mo -> ${:.2}/mo ({}{:.2}/mo)",
+            base.monthly_artifact_storage_vendor_usd,
+            head.monthly_artifact_storage_vendor_usd,
+            if delta_storage >= 0.0 { "+" } else { "" },
+            delta_storage
+        ));
     }
 
     DiffReport {

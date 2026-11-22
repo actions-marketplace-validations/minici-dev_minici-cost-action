@@ -177,8 +177,12 @@ def verify_official_math_and_edge_cases(breakdown_json: dict) -> dict:
     canonical_drifts = []
     custom_label_warnings = []
 
+    prov_mode = breakdown_json.get("provenance_mode", "static_heuristic")
+    monthly_runs = float(breakdown_json.get("monthly_runs", 433.0))
     recomputed_run_billed_mins = 0.0
     recomputed_run_cost_usd = 0.0
+    recomputed_monthly_raw_usd = 0.0
+    apportioned_row_sum_usd = 0.0
 
     for j in jobs:
         label = j.get("runner_label", "")
@@ -186,17 +190,29 @@ def verify_official_math_and_edge_cases(breakdown_json: dict) -> dict:
         raw_dur = float(j.get("est_raw_duration_mins_per_job", 0.0))
         billed_per_job = float(j.get("billed_mins_per_job", 0.0))
         total_billed = float(j.get("total_billed_mins_all_matrix", 0.0))
+        j_runs_raw = j.get("monthly_runs_for_job")
+        j_runs = float(j_runs_raw) if j_runs_raw is not None else monthly_runs
 
-        # Check 1-minute ceiling rule for GitHub Actions standard SaaS runners
+        # Check 1-minute ceiling rule in static mode, and Jensen's inequality E[ceil(X)] >= max(1, E[X]) in live mode
         if j.get("provider") == "github-actions":
-            expected_ceil = max(1.0, float(math.ceil(raw_dur - 1e-9)))
-            if abs(billed_per_job - expected_ceil) > 0.01:
-                canonical_drifts.append(
-                    f"Job {j.get('job_id')}: billed_mins_per_job={billed_per_job} != ceil({raw_dur})={expected_ceil}"
-                )
+            if prov_mode == "static_heuristic":
+                expected_ceil = max(1.0, float(math.ceil(raw_dur - 1e-9)))
+                if abs(billed_per_job - expected_ceil) > 0.01:
+                    canonical_drifts.append(
+                        f"Job {j.get('job_id')}: billed_mins_per_job={billed_per_job} != ceil({raw_dur})={expected_ceil}"
+                    )
+            else:
+                if billed_per_job + 0.01 < max(1.0, raw_dur):
+                    canonical_drifts.append(
+                        f"Job {j.get('job_id')}: live billed_mins_per_job={billed_per_job} violates Jensen floor max(1, {raw_dur})"
+                    )
 
         recomputed_run_billed_mins += total_billed
-        recomputed_run_cost_usd += total_billed * rate
+        run_c = math.floor(total_billed * rate * 10000.0 + 0.5) / 10000.0
+        recomputed_run_cost_usd += run_c
+        recomputed_monthly_raw_usd += run_c * j_runs
+        if j.get("monthly_compute_cost_usd") is not None:
+            apportioned_row_sum_usd += float(j["monthly_compute_cost_usd"])
 
         if label in OFFICIAL_2026_RATES:
             expected_rate = OFFICIAL_2026_RATES[label]
@@ -209,15 +225,36 @@ def verify_official_math_and_edge_cases(breakdown_json: dict) -> dict:
 
     reported_run_cost = float(breakdown_json.get("gross_compute_cost_per_run_usd", 0.0))
     reported_monthly_cost = float(breakdown_json.get("gross_monthly_compute_cost_usd", 0.0))
-    monthly_runs = float(breakdown_json.get("monthly_runs", 433.0))
-    expected_monthly_cost = round(recomputed_run_cost_usd * monthly_runs, 2)
+    reported_discount = float(breakdown_json.get("discount_allowance_monthly_usd", 0.0))
+    reported_net = float(breakdown_json.get("net_billed_monthly_compute_cost_usd", 0.0))
+    expected_monthly_cost = (
+        reported_monthly_cost
+        if prov_mode == "invoice_reconciled"
+        else round(recomputed_monthly_raw_usd, 2)
+    )
 
     cost_delta_pct = 0.0
     if expected_monthly_cost > 0:
         cost_delta_pct = abs(reported_monthly_cost - expected_monthly_cost) / expected_monthly_cost * 100.0
 
+    # Universal Accounting Invariants (Exact Row-Sum, Gross - Discount == Net, Active + Idle <= 100%)
+    if jobs and abs(apportioned_row_sum_usd - reported_monthly_cost) > 0.005:
+        canonical_drifts.append(
+            f"Row-sum drift: sum(monthly_compute_cost_usd)=${apportioned_row_sum_usd:.2f} != gross=${reported_monthly_cost:.2f}"
+        )
+    if abs((reported_gross_minus_disc := (reported_monthly_cost - reported_discount)) - reported_net) > 0.005:
+        canonical_drifts.append(
+            f"Ledger drift: gross(${reported_monthly_cost:.2f}) - discount(${reported_discount:.2f}) = ${reported_gross_minus_disc:.2f} != net(${reported_net:.2f})"
+        )
+
     # Verify all 24 MiniCI cost_components (6 invoice + 5 hidden payroll/pipeline + 5 team-stage/pipeline-shape + 4 calculator/stack + 4 FinOps telemetry/anomaly/registry/fleet models)
     cc = breakdown_json.get("cost_components", {})
+    active_pct = float(cc.get("runner_cost", {}).get("always_on_runner_utilization_pct", 0.0))
+    idle_pct = float(cc.get("self_hosted_fleet_idle_and_sla", {}).get("off_hours_idle_capacity_pct", 0.0))
+    if active_pct + idle_pct > 100.05:
+        canonical_drifts.append(
+            f"Fleet capacity > 100%: active={active_pct}% + idle={idle_pct}% = {active_pct + idle_pct:.1f}%"
+        )
     for comp_key in (
         "build_minutes_cost",
         "runner_cost",

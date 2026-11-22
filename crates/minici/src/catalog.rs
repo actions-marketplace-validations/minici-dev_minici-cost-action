@@ -34,7 +34,7 @@ pub struct RunnerSkuSpec {
 impl RunnerSkuSpec {
     pub fn to_json(&self) -> String {
         format!(
-            "{{\"provider\":\"{}\",\"sku_label\":\"{}\",\"os\":\"{}\",\"arch\":\"{}\",\"vcpus\":{},\"ram_gb\":{:.1},\"rate_per_min_usd\":{:.4},\"ceil_to_whole_minute\":{},\"free_tier_mins_per_month\":{:.1},\"paid_team_included_mins\":{:.1},\"high_speed_microvm_equiv_rate_usd\":{:.4},\"self_hosted_spot_rate_usd\":{:.4}}}",
+            "{{\"provider\":\"{}\",\"sku_label\":\"{}\",\"os\":\"{}\",\"arch\":\"{}\",\"vcpus\":{},\"ram_gb\":{:.1},\"rate_per_min_usd\":{:.6},\"ceil_to_whole_minute\":{},\"free_tier_mins_per_month\":{:.1},\"paid_team_included_mins\":{:.1},\"high_speed_microvm_equiv_rate_usd\":{:.6},\"self_hosted_spot_rate_usd\":{:.6}}}",
             self.provider,
             self.sku_label,
             self.os,

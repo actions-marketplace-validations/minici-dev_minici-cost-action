@@ -286,6 +286,7 @@ runs:
         fi
         EXTRA_BD_ARGS=()
         if [ "$INPUT_LIVE_TELEMETRY" = "true" ]; then
+          "$BIN_PATH" telemetry sync --path "$INPUT_PATH" --quiet >/dev/null 2>&1 || true
           EXTRA_BD_ARGS+=(--live)
         fi
         if [ -n "$INPUT_BILLING_CSV" ]; then
