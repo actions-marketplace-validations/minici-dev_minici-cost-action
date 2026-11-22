@@ -4222,7 +4222,7 @@ fn main() {
                 println!(
                     "MiniCI Local CLI, MCP & GitHub Action are 100% Free ($0) with no login required.\n\
                      To enable optional Cloud Sync (`minici share`, 30d/365d trend badges, Friday Slack digests):\n\
-                     1. Get a $1 Starter, $10 Pro, or Team Flex key at https://polar.sh/minici\n\
+                     1. Get a $1 Starter, $10 Pro, or Team Flex key at https://buy.polar.sh/polar_cl_SCcWdjeIJvtwoa3JKBo5ouVXBL0yBv40bzuZr36iPMm\n\
                      2. Run: minici login <MINICI_KEY>"
                 );
                 return;
@@ -4303,7 +4303,7 @@ fn main() {
                 eprintln!(
                     "ℹ️ `minici share` uploads an unlisted cloud permalink (Starter $1/mo+).\n\
                      For $0 offline sharing, run: `minici breakdown --path {} --report report.html`\n\
-                     Or connect a key via: `minici login <MINICI_KEY>` (https://polar.sh/minici)",
+                     Or connect a key via: `minici login <MINICI_KEY>` (https://buy.polar.sh/polar_cl_SCcWdjeIJvtwoa3JKBo5ouVXBL0yBv40bzuZr36iPMm)",
                     path.display()
                 );
                 return;

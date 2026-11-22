@@ -1360,10 +1360,9 @@ async function resolveCloudEntitlement(rawKey, env) {
   }
 
   // Live fallback: Validate Polar.sh `MINICI-...` License Key directly via Polar Customer Portal API
-  const polarOrgId = (env && env.POLAR_ORGANIZATION_ID) || "";
-  if (polarOrgId || rawKey.toUpperCase().startsWith("MINICI")) {
-    const validateBody = { key: rawKey };
-    if (polarOrgId) validateBody.organization_id = polarOrgId;
+  const polarOrgId = (env && env.POLAR_ORGANIZATION_ID) || "6630821f-1f9d-4cb9-a5cd-a89a6bdca66b";
+  if (rawKey.toUpperCase().startsWith("MINICI") || (env && env.POLAR_ORGANIZATION_ID)) {
+    const validateBody = { key: rawKey, organization_id: polarOrgId };
     const polarResp = await fetch(
       "https://api.polar.sh/v1/customer-portal/license-keys/validate",
       {
@@ -2177,7 +2176,7 @@ export default {
     // 1. Smart Polar.sh Checkout Redirects (`/v1/checkout/starter` -> $1, `/pro` -> $10, `/custom` -> Team Flex)
     if (url.pathname.startsWith("/v1/checkout/") && (request.method === "GET" || request.method === "HEAD")) {
       const planSlug = url.pathname.slice("/v1/checkout/".length).trim().toLowerCase();
-      let dest = "https://polar.sh/minici";
+      let dest = "https://buy.polar.sh/polar_cl_SCcWdjeIJvtwoa3JKBo5ouVXBL0yBv40bzuZr36iPMm";
       if (planSlug === "starter") {
         dest =
           (env && env.POLAR_CHECKOUT_STARTER_URL) ||
@@ -2381,7 +2380,7 @@ export default {
           JSON.stringify({
             error: "cloud_key_required_or_invalid",
             message:
-              "Local CLI, MCP & GitHub Action remain 100% Free ($0). To use hosted Cloud Sync, `minici share`, or Friday Slack digests, get a $1 Starter or $10 Pro key at https://polar.sh/minici and run `minici login <KEY>`."
+              "Local CLI, MCP & GitHub Action remain 100% Free ($0). To use hosted Cloud Sync, `minici share`, or Friday Slack digests, get a $1 Starter or $10 Pro key at https://buy.polar.sh/polar_cl_SCcWdjeIJvtwoa3JKBo5ouVXBL0yBv40bzuZr36iPMm and run `minici login <KEY>`."
           }),
           {
             status: 401,
