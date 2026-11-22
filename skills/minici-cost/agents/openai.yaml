@@ -1,0 +1,8 @@
+interface:
+  display_name: "MiniCI Cost & Workflow Optimizer"
+  short_description: "Deterministic CI/CD cost audit, PR cost diff, ARM64 right-sizing, and YAML fixes"
+  default_prompt: "Use $minici-cost to audit our CI/CD workflows, calculate monthly compute and wait-time costs, and preview verified YAML optimizations."
+  brand_color: "#0EA5E9"
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,16 @@
+{
+  "name": "minici-cost",
+  "displayName": "MiniCI Cost & Workflow Optimizer",
+  "version": "0.9.1",
+  "description": "Deterministic sub-millisecond CI/CD cost breakdown, Pull Request cost diff, ARM64 runner right-sizing, and comment-preserving YAML optimization across 7 CI platforms.",
+  "logo": "web/minici-icon.svg",
+  "author": {
+    "name": "MiniCI",
+    "url": "https://github.com/minici-dev"
+  },
+  "homepage": "https://minici-cost-action.raza-aamir01.workers.dev",
+  "repository": "https://github.com/minici-dev/minici-cost-action",
+  "license": "Apache-2.0",
+  "skills": "./skills",
+  "mcpServers": "./.mcp.json"
+}

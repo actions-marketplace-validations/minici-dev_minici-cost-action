@@ -83,10 +83,16 @@ impl UsageConfig {
     }
 }
 
+pub fn normalize_ci_path(raw: &str) -> String {
+    raw.replace('\\', "/")
+}
+
 #[derive(Debug, Clone)]
 pub struct ExpandedJobCost {
     pub workflow_file: String,
     pub job_id: String,
+    pub line_start: usize,
+    pub line_end: usize,
     pub matrix_combination_count: usize,
     pub runner_label: String,
     pub provider: String,
@@ -105,18 +111,50 @@ pub struct ExpandedJobCost {
     pub uses_cache: bool,
     pub uploads_artifacts: bool,
     pub artifact_retention_days: Option<u32>,
+    pub monthly_runs_for_job: Option<f64>,
 }
 
 impl ExpandedJobCost {
-    pub fn to_json(&self) -> String {
+    pub fn effective_monthly_runs(&self, fallback_monthly_runs: f64) -> f64 {
+        self.monthly_runs_for_job
+            .unwrap_or(fallback_monthly_runs)
+            .max(0.0)
+    }
+
+    pub fn monthly_compute_cost(&self, fallback_monthly_runs: f64) -> f64 {
+        norm_zero(
+            ((self.run_compute_cost_usd * self.effective_monthly_runs(fallback_monthly_runs))
+                * 100.0)
+                .round()
+                / 100.0,
+        )
+    }
+
+    pub fn to_json_with_monthly(&self, apportioned_monthly_usd: Option<f64>) -> String {
         let ret_json = self
             .artifact_retention_days
             .map(|d| d.to_string())
             .unwrap_or_else(|| "null".to_string());
+        let runs_json = self
+            .monthly_runs_for_job
+            .map(|r| format!("{:.2}", r))
+            .unwrap_or_else(|| "null".to_string());
+        let mo_cost_json = apportioned_monthly_usd
+            .or_else(|| {
+                self.monthly_runs_for_job
+                    .map(|r| norm_zero(((self.run_compute_cost_usd * r.max(0.0)) * 100.0).round() / 100.0))
+            })
+            .map(|v| format!("{:.2}", norm_zero(v)))
+            .unwrap_or_else(|| "null".to_string());
+        let norm_wf = normalize_ci_path(&self.workflow_file);
+        let ls = self.line_start.max(1);
+        let le = self.line_end.max(ls);
         format!(
-            "{{\"workflow_file\":\"{}\",\"job_id\":\"{}\",\"matrix_combination_count\":{},\"runner_label\":\"{}\",\"provider\":\"{}\",\"os\":\"{}\",\"vcpus\":{},\"est_raw_duration_mins_per_job\":{:.2},\"billed_mins_per_job\":{:.2},\"total_billed_mins_all_matrix\":{:.2},\"rate_per_min_usd\":{:.4},\"run_compute_cost_usd\":{:.4},\"high_speed_microvm_run_cost_usd\":{:.4},\"self_hosted_spot_run_cost_usd\":{:.4},\"has_concurrency_cancel\":{},\"has_timeout_minutes\":{},\"has_sparse_or_shallow_clone\":{},\"uses_cache\":{},\"uploads_artifacts\":{},\"artifact_retention_days\":{}}}",
-            json_escape(&self.workflow_file),
+            "{{\"workflow_file\":\"{}\",\"job_id\":\"{}\",\"line_start\":{},\"line_end\":{},\"matrix_combination_count\":{},\"runner_label\":\"{}\",\"provider\":\"{}\",\"os\":\"{}\",\"vcpus\":{},\"est_raw_duration_mins_per_job\":{:.2},\"billed_mins_per_job\":{:.2},\"total_billed_mins_all_matrix\":{:.2},\"rate_per_min_usd\":{:.4},\"run_compute_cost_usd\":{:.4},\"monthly_runs_for_job\":{},\"monthly_compute_cost_usd\":{},\"high_speed_microvm_run_cost_usd\":{:.4},\"self_hosted_spot_run_cost_usd\":{:.4},\"has_concurrency_cancel\":{},\"has_timeout_minutes\":{},\"has_sparse_or_shallow_clone\":{},\"uses_cache\":{},\"uploads_artifacts\":{},\"artifact_retention_days\":{}}}",
+            json_escape(&norm_wf),
             json_escape(&self.job_id),
+            ls,
+            le,
             self.matrix_combination_count,
             json_escape(&self.runner_label),
             json_escape(&self.provider),
@@ -127,6 +165,8 @@ impl ExpandedJobCost {
             self.total_billed_mins_all_matrix,
             self.rate_per_min_usd,
             self.run_compute_cost_usd,
+            runs_json,
+            mo_cost_json,
             self.blacksmith_run_cost_usd,
             self.self_hosted_spot_run_cost_usd,
             self.has_concurrency_cancel,
@@ -136,6 +176,10 @@ impl ExpandedJobCost {
             self.uploads_artifacts,
             ret_json
         )
+    }
+
+    pub fn to_json(&self) -> String {
+        self.to_json_with_monthly(None)
     }
 }
 
@@ -682,15 +726,184 @@ pub struct BreakdownReport {
 }
 
 impl BreakdownReport {
+    /// Deterministic Hamilton (Largest-Remainder) cent apportionment of `gross_monthly_compute_cost_usd`
+    /// across `self.jobs` so every rendered CLI, Markdown, HTML, CSV, and JSON job table sums to
+    /// `gross_monthly_compute_cost_usd` with ZERO 1-cent rounding drift (`H1`).
+    pub fn apportioned_job_monthly_costs(&self) -> Vec<f64> {
+        let n = self.jobs.len();
+        if n == 0 {
+            return Vec::new();
+        }
+        let target_cents = (self.gross_monthly_compute_cost_usd.max(0.0) * 100.0).round() as i64;
+        if target_cents <= 0 {
+            return vec![0.0; n];
+        }
+        let weights: Vec<f64> = self
+            .jobs
+            .iter()
+            .map(|j| (j.run_compute_cost_usd * j.effective_monthly_runs(self.monthly_runs)).max(0.0))
+            .collect();
+        let total_w: f64 = weights.iter().sum();
+        if total_w <= 0.0 {
+            let base = target_cents / (n as i64);
+            let rem = (target_cents % (n as i64)) as usize;
+            return (0..n)
+                .map(|i| ((base + if i < rem { 1 } else { 0 }) as f64) / 100.0)
+                .collect();
+        }
+        let mut floors: Vec<i64> = Vec::with_capacity(n);
+        let mut remainders: Vec<(usize, f64, f64)> = Vec::with_capacity(n);
+        let mut floor_sum: i64 = 0;
+        for (i, &w) in weights.iter().enumerate() {
+            let exact_cents = (target_cents as f64) * (w / total_w);
+            let fl = (exact_cents + 1e-11).floor() as i64;
+            let rem = (exact_cents - (fl as f64)).max(0.0);
+            floors.push(fl);
+            floor_sum += fl;
+            remainders.push((i, rem, w));
+        }
+        let leftover = (target_cents - floor_sum).max(0) as usize;
+        remainders.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal))
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        for &(idx, _, _) in remainders.iter().take(leftover) {
+            floors[idx] += 1;
+        }
+        floors.into_iter().map(|c| norm_zero((c as f64) / 100.0)).collect()
+    }
+
+    pub fn agent_digest_json(&self) -> String {
+        let app_costs = self.apportioned_job_monthly_costs();
+        let mut ranked_indices: Vec<usize> = (0..self.jobs.len()).collect();
+        ranked_indices.sort_by(|&a, &b| {
+            app_costs[b]
+                .partial_cmp(&app_costs[a])
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.cmp(&b))
+        });
+
+        let top_jobs: Vec<String> = ranked_indices
+            .into_iter()
+            .take(5)
+            .map(|idx| {
+                let j = &self.jobs[idx];
+                let mut missing = Vec::new();
+                if !j.has_timeout_minutes {
+                    missing.push("\"timeout-minutes\"");
+                }
+                if !j.has_concurrency_cancel {
+                    missing.push("\"concurrency-cancel\"");
+                }
+                if !j.uses_cache {
+                    missing.push("\"cache\"");
+                }
+                let ls = j.line_start.max(1);
+                let le = j.line_end.max(ls);
+                format!(
+                    "{{\"workflow_file\":\"{}\",\"job_id\":\"{}\",\"line_start\":{},\"line_end\":{},\"runner_label\":\"{}\",\"monthly_cost_usd\":{:.2},\"missing_guardrails\":[{}]}}",
+                    json_escape(&normalize_ci_path(&j.workflow_file)),
+                    json_escape(&j.job_id),
+                    ls,
+                    le,
+                    json_escape(&j.runner_label),
+                    app_costs[idx],
+                    missing.join(",")
+                )
+            })
+            .collect();
+
+        let cc = &self.cost_components;
+        let mut actions: Vec<String> = Vec::new();
+        let compound_compute_sav = if self.gross_monthly_compute_cost_usd > 0.0 {
+            let r_cancel = (cc.monthly_superseded_run_waste_usd / self.gross_monthly_compute_cost_usd)
+                .clamp(0.0, 0.50);
+            let r_cache = (cc.monthly_unrealized_cache_savings_usd / self.gross_monthly_compute_cost_usd)
+                .clamp(0.0, 0.70);
+            (self.gross_monthly_compute_cost_usd * (1.0 - (1.0 - r_cancel) * (1.0 - r_cache)))
+                .min(self.gross_monthly_compute_cost_usd * 0.85)
+        } else {
+            0.0
+        };
+        let storage_sav = if cc.configured_retention_days > 14 {
+            (cc.monthly_vendor_storage_configured_usd - cc.monthly_vendor_storage_14d_usd).max(0.0)
+        } else {
+            0.0
+        };
+        let shrink_savings = ((compound_compute_sav + storage_sav) * 100.0).round() / 100.0;
+        if shrink_savings >= 1.0 || cc.jobs_missing_timeout_minutes_count > 0 {
+            actions.push(format!(
+                "{{\"mcp_tool\":\"minici_shrink\",\"cli_cmd\":\"minici shrink --path .\",\"est_monthly_savings_usd\":{:.2},\"fixes_missing_timeouts\":{}}}",
+                shrink_savings, cc.jobs_missing_timeout_minutes_count
+            ));
+        }
+        if cc.arm64_migration_monthly_savings_usd >= 1.0 {
+            actions.push(format!(
+                "{{\"mcp_tool\":\"minici_migrate\",\"cli_cmd\":\"minici migrate --path . --to github-arm64\",\"est_monthly_savings_usd\":{:.2}}}",
+                cc.arm64_migration_monthly_savings_usd
+            ));
+        }
+        if cc.monthly_unfiltered_check_savings_usd >= 5.0 {
+            actions.push(format!(
+                "{{\"lever\":\"path-filters\",\"workflows_affected\":{},\"est_monthly_savings_usd\":{:.2}}}",
+                cc.workflows_missing_path_filters, cc.monthly_unfiltered_check_savings_usd
+            ));
+        }
+
+        format!(
+            "{{\"top_optimization_phase\":\"{}\",\"reducible_monthly_usd\":{:.2},\"top_cost_jobs\":[{}],\"next_actions\":[{}]}}",
+            json_escape(&cc.best_first_optimization_phase),
+            cc.monthly_total_reducible_phase_savings_usd,
+            top_jobs.join(","),
+            actions.join(",")
+        )
+    }
+
+    pub fn to_compact_json(&self) -> String {
+        let provs: Vec<String> = self
+            .detected_providers
+            .iter()
+            .map(|p| format!("\"{}\"", json_escape(p)))
+            .collect();
+        format!(
+            "{{\n  \"schema\": \"minici.compact.v1\",\n  \"target_path\": \"{}\",\n  \"provenance_mode\": \"{}\",\n  \"execution_time_ms\": {:.3},\n  \"detected_providers\": [{}],\n  \"total_workflows\": {},\n  \"total_defined_jobs\": {},\n  \"total_expanded_matrix_jobs\": {},\n  \"billed_mins_per_run\": {:.2},\n  \"critical_path_wait_mins_per_run\": {:.2},\n  \"monthly_runs\": {:.1},\n  \"gross_monthly_compute_cost_usd\": {:.2},\n  \"net_billed_monthly_compute_cost_usd\": {:.2},\n  \"free_tier_quota_burn_pct\": {:.1},\n  \"monthly_dev_wait_cost_usd\": {:.2},\n  \"cost_per_merged_pr_usd\": {:.2},\n  \"spend_anomaly_alert_active\": {},\n  \"agent_digest\": {}\n}}",
+            json_escape(&normalize_ci_path(&self.target_path)),
+            json_escape(&self.provenance_mode),
+            self.execution_time_ms,
+            provs.join(", "),
+            self.total_workflows,
+            self.total_defined_jobs,
+            self.total_expanded_matrix_jobs,
+            self.billed_mins_per_run,
+            self.critical_path_wait_mins_per_run,
+            self.monthly_runs,
+            self.gross_monthly_compute_cost_usd,
+            self.net_billed_monthly_compute_cost_usd,
+            self.free_tier_quota_burn_pct,
+            self.monthly_dev_wait_cost_usd,
+            self.cost_components.cost_per_merged_pr_usd,
+            self.cost_components.spend_anomaly_alert_active,
+            self.agent_digest_json()
+        )
+    }
+
     pub fn to_json(&self) -> String {
         let provs: Vec<String> = self
             .detected_providers
             .iter()
             .map(|p| format!("\"{}\"", json_escape(p)))
             .collect();
-        let job_strs: Vec<String> = self.jobs.iter().map(|j| j.to_json()).collect();
+        let app_costs = self.apportioned_job_monthly_costs();
+        let job_strs: Vec<String> = self
+            .jobs
+            .iter()
+            .zip(app_costs.iter())
+            .map(|(j, &mc)| j.to_json_with_monthly(Some(mc)))
+            .collect();
         format!(
-            "{{\n  \"target_path\": \"{}\",\n  \"provenance_mode\": \"{}\",\n  \"execution_time_us\": {},\n  \"execution_time_ms\": {:.3},\n  \"detected_providers\": [{}],\n  \"usage\": {},\n  \"total_workflows\": {},\n  \"total_defined_jobs\": {},\n  \"total_expanded_matrix_jobs\": {},\n  \"raw_duration_mins_per_run\": {:.2},\n  \"critical_path_wait_mins_per_run\": {:.2},\n  \"billed_mins_per_run\": {:.2},\n  \"shard_setup_duplication_mins_per_run\": {:.2},\n  \"clones_per_ci_run\": {},\n  \"monthly_runs\": {:.1},\n  \"monthly_billed_mins\": {:.2},\n  \"free_tier_included_mins\": {:.1},\n  \"free_tier_quota_burn_pct\": {:.1},\n  \"effective_tier\": \"{}\",\n  \"gross_compute_cost_per_run_usd\": {:.4},\n  \"gross_monthly_compute_cost_usd\": {:.2},\n  \"discount_allowance_monthly_usd\": {:.2},\n  \"net_billed_monthly_compute_cost_usd\": {:.2},\n  \"third_party_runner_monthly_cost_usd\": {:.2},\n  \"dev_wait_cost_per_run_usd\": {:.2},\n  \"monthly_dev_wait_cost_usd\": {:.2},\n  \"monthly_artifact_storage_vendor_usd\": {:.2},\n  \"monthly_artifact_storage_s3_usd\": {:.2},\n  \"monthly_high_speed_microvm_cost_usd\": {:.2},\n  \"monthly_self_hosted_spot_cost_usd\": {:.2},\n  \"exceeds_5000m_self_hosted_breakeven\": {},\n  \"cost_components\": {},\n  \"jobs\": [\n    {}\n  ]\n}}",
+            "{{\n  \"target_path\": \"{}\",\n  \"provenance_mode\": \"{}\",\n  \"execution_time_us\": {},\n  \"execution_time_ms\": {:.3},\n  \"detected_providers\": [{}],\n  \"usage\": {},\n  \"total_workflows\": {},\n  \"total_defined_jobs\": {},\n  \"total_expanded_matrix_jobs\": {},\n  \"raw_duration_mins_per_run\": {:.2},\n  \"critical_path_wait_mins_per_run\": {:.2},\n  \"billed_mins_per_run\": {:.2},\n  \"shard_setup_duplication_mins_per_run\": {:.2},\n  \"clones_per_ci_run\": {},\n  \"monthly_runs\": {:.1},\n  \"monthly_billed_mins\": {:.2},\n  \"free_tier_included_mins\": {:.1},\n  \"free_tier_quota_burn_pct\": {:.1},\n  \"effective_tier\": \"{}\",\n  \"gross_compute_cost_per_run_usd\": {:.4},\n  \"gross_monthly_compute_cost_usd\": {:.2},\n  \"discount_allowance_monthly_usd\": {:.2},\n  \"net_billed_monthly_compute_cost_usd\": {:.2},\n  \"third_party_runner_monthly_cost_usd\": {:.2},\n  \"dev_wait_cost_per_run_usd\": {:.2},\n  \"monthly_dev_wait_cost_usd\": {:.2},\n  \"monthly_artifact_storage_vendor_usd\": {:.2},\n  \"monthly_artifact_storage_s3_usd\": {:.2},\n  \"monthly_high_speed_microvm_cost_usd\": {:.2},\n  \"monthly_self_hosted_spot_cost_usd\": {:.2},\n  \"exceeds_5000m_self_hosted_breakeven\": {},\n  \"agent_digest\": {},\n  \"cost_components\": {},\n  \"jobs\": [\n    {}\n  ]\n}}",
             json_escape(&self.target_path),
             json_escape(&self.provenance_mode),
             self.execution_time_us,
@@ -722,6 +935,7 @@ impl BreakdownReport {
             self.monthly_blacksmith_cost_usd,
             self.monthly_self_hosted_spot_cost_usd,
             self.exceeds_5000m_self_hosted_breakeven,
+            self.agent_digest_json(),
             self.cost_components.to_json(),
             job_strs.join(",\n    ")
         )
@@ -753,6 +967,34 @@ pub struct DiffReport {
 }
 
 impl DiffReport {
+    pub fn to_compact_json(&self) -> String {
+        let ch: Vec<String> = self
+            .job_changes
+            .iter()
+            .take(10)
+            .map(|c| format!("\"{}\"", json_escape(c)))
+            .collect();
+        let nz = |v: f64| if v.abs() < 0.0005 { 0.0 } else { v };
+        format!(
+            "{{\n  \"schema\": \"minici.diff.compact.v1\",\n  \"base_path\": \"{}\",\n  \"head_path\": \"{}\",\n  \"execution_time_us\": {},\n  \"base_expanded_jobs\": {},\n  \"head_expanded_jobs\": {},\n  \"delta_expanded_jobs\": {},\n  \"delta_billed_mins_per_run\": {:.2},\n  \"base_monthly_compute_usd\": {:.2},\n  \"head_monthly_compute_usd\": {:.2},\n  \"delta_monthly_compute_usd\": {:.2},\n  \"delta_monthly_compute_pct\": {:.1},\n  \"delta_monthly_dev_wait_usd\": {:.2},\n  \"total_job_changes\": {},\n  \"top_job_changes\": [{}],\n  \"head_agent_digest\": {}\n}}",
+            json_escape(&normalize_ci_path(&self.base_path)),
+            json_escape(&normalize_ci_path(&self.head_path)),
+            self.execution_time_us,
+            self.base_expanded_jobs,
+            self.head_expanded_jobs,
+            self.delta_expanded_jobs,
+            nz(self.delta_billed_mins_per_run),
+            nz(self.base_monthly_compute_usd),
+            nz(self.head_monthly_compute_usd),
+            nz(self.delta_monthly_compute_usd),
+            nz(self.delta_monthly_compute_pct),
+            nz(self.delta_monthly_dev_wait_usd),
+            self.job_changes.len(),
+            ch.join(", "),
+            self.head_report.agent_digest_json()
+        )
+    }
+
     pub fn to_json(&self) -> String {
         let ch: Vec<String> = self
             .job_changes
@@ -761,7 +1003,7 @@ impl DiffReport {
             .collect();
         let nz = |v: f64| if v.abs() < 0.0005 { 0.0 } else { v };
         format!(
-            "{{\n  \"base_path\": \"{}\",\n  \"head_path\": \"{}\",\n  \"execution_time_us\": {},\n  \"base_expanded_jobs\": {},\n  \"head_expanded_jobs\": {},\n  \"delta_expanded_jobs\": {},\n  \"base_billed_mins_per_run\": {:.2},\n  \"head_billed_mins_per_run\": {:.2},\n  \"delta_billed_mins_per_run\": {:.2},\n  \"base_monthly_compute_usd\": {:.2},\n  \"head_monthly_compute_usd\": {:.2},\n  \"delta_monthly_compute_usd\": {:.2},\n  \"delta_monthly_compute_pct\": {:.1},\n  \"base_monthly_dev_wait_usd\": {:.2},\n  \"head_monthly_dev_wait_usd\": {:.2},\n  \"delta_monthly_dev_wait_usd\": {:.2},\n  \"base_free_quota_burn_pct\": {:.1},\n  \"head_free_quota_burn_pct\": {:.1},\n  \"job_changes\": [{}],\n  \"cost_components\": {}\n}}",
+            "{{\n  \"base_path\": \"{}\",\n  \"head_path\": \"{}\",\n  \"execution_time_us\": {},\n  \"base_expanded_jobs\": {},\n  \"head_expanded_jobs\": {},\n  \"delta_expanded_jobs\": {},\n  \"base_billed_mins_per_run\": {:.2},\n  \"head_billed_mins_per_run\": {:.2},\n  \"delta_billed_mins_per_run\": {:.2},\n  \"base_monthly_compute_usd\": {:.2},\n  \"head_monthly_compute_usd\": {:.2},\n  \"delta_monthly_compute_usd\": {:.2},\n  \"delta_monthly_compute_pct\": {:.1},\n  \"base_monthly_dev_wait_usd\": {:.2},\n  \"head_monthly_dev_wait_usd\": {:.2},\n  \"delta_monthly_dev_wait_usd\": {:.2},\n  \"base_free_quota_burn_pct\": {:.1},\n  \"head_free_quota_burn_pct\": {:.1},\n  \"job_changes\": [{}],\n  \"agent_digest\": {},\n  \"cost_components\": {}\n}}",
             json_escape(&self.base_path),
             json_escape(&self.head_path),
             self.execution_time_us,
@@ -781,6 +1023,7 @@ impl DiffReport {
             nz(self.base_free_quota_burn_pct),
             nz(self.head_free_quota_burn_pct),
             ch.join(", "),
+            self.head_report.agent_digest_json(),
             self.head_report.cost_components.to_json()
         )
     }
@@ -855,17 +1098,24 @@ pub fn parse_retention_days_value(raw: &str) -> Option<u32> {
     if clean.is_empty() {
         return None;
     }
+    if clean == "never" {
+        return Some(400);
+    }
     if let Ok(days) = clean.parse::<u32>() {
         return Some(days.clamp(1, 400));
     }
     let num_part: String = clean.chars().take_while(|c| c.is_ascii_digit()).collect();
     if let Ok(n) = num_part.parse::<u32>() {
         let rest = clean[num_part.len()..].trim();
-        let days = if rest.starts_with("week") || rest == "w" {
+        let days = if rest.starts_with("sec") || rest == "s" {
+            1
+        } else if rest.starts_with("min") || rest == "m" || rest == "mins" {
+            1
+        } else if rest.starts_with("week") || rest == "w" || rest == "wks" {
             n.saturating_mul(7)
-        } else if rest.starts_with("month") || rest == "mo" {
+        } else if rest.starts_with("month") || rest == "mo" || rest == "mos" {
             n.saturating_mul(30)
-        } else if rest.starts_with("year") || rest == "y" || rest == "yr" {
+        } else if rest.starts_with("year") || rest == "y" || rest == "yr" || rest == "yrs" {
             n.saturating_mul(365)
         } else if rest.starts_with("hour") || rest.starts_with("hr") || rest == "h" {
             (n.saturating_add(23)) / 24
@@ -916,9 +1166,45 @@ fn indent_of(line: &str) -> usize {
     line.chars().take_while(|c| *c == ' ').count()
 }
 
+fn find_unquoted_comment_idx(line: &str) -> Option<usize> {
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut prev_backslash = false;
+    for (i, ch) in line.char_indices() {
+        if in_double {
+            if ch == '"' && !prev_backslash {
+                in_double = false;
+            }
+            prev_backslash = ch == '\\' && !prev_backslash;
+            continue;
+        }
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            }
+            continue;
+        }
+        if ch == '"' {
+            in_double = true;
+            prev_backslash = false;
+        } else if ch == '\'' {
+            in_single = true;
+        } else if ch == '#' {
+            if i == 0 || line.as_bytes()[i - 1].is_ascii_whitespace() {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
 fn strip_comment(line: &str) -> &str {
-    if let Some(idx) = line.find(" #") {
-        &line[..idx]
+    if let Some(idx) = find_unquoted_comment_idx(line) {
+        if idx == 0 {
+            line
+        } else {
+            line[..idx].trim_end()
+        }
     } else {
         line
     }
@@ -934,7 +1220,7 @@ fn norm_zero(x: f64) -> f64 {
 }
 
 fn extract_comment_est_minutes(raw_line: &str) -> Option<f64> {
-    let hash_idx = raw_line.find('#')?;
+    let hash_idx = find_unquoted_comment_idx(raw_line)?;
     let comment_body = raw_line[hash_idx + 1..].trim();
     let low = comment_body.to_ascii_lowercase();
     let rest = if let Some(r) = low.strip_prefix("est-minutes:") {
@@ -1031,17 +1317,27 @@ fn line_has_cache_signal(low_line: &str) -> bool {
                 || low_line.contains("go")))
 }
 
+#[derive(Default)]
+#[allow(dead_code)]
+struct WorkflowAstMeta {
+    dag_nodes: Vec<(String, f64, usize, Vec<String>)>,
+    job_display_names: Vec<(String, String)>, // (job_id, display_name)
+    matrix_job_ids: Vec<String>,
+}
+
 /// Fast zero-allocation scanner for a single GitHub Actions job block (`lines` belonging to one job).
-/// Returns `Some((raw_mins_per_job, expanded_matrix_count, needs_job_ids))` when the job allocates a runner VM.
+/// Returns `Some((raw_mins_per_job, expanded_matrix_count, needs_job_ids, display_name, is_matrix_job))` when the job allocates a runner VM.
 fn analyze_github_job_block(
     wf_rel: &str,
     job_id: &str,
     job_lines: &[&str],
+    line_start: usize,
+    line_end: usize,
     has_top_concurrency: bool,
     has_top_cache: bool,
     has_repo_gosum: bool,
     out_jobs: &mut Vec<ExpandedJobCost>,
-) -> Option<(f64, usize, Vec<String>)> {
+) -> Option<(f64, usize, Vec<String>, Option<String>, bool)> {
     let mut raw_runs_on = "ubuntu-latest".to_string();
     let mut saw_runs_on = false;
     let mut in_runs_on_list = false;
@@ -1049,31 +1345,43 @@ fn analyze_github_job_block(
     let mut runs_on_list_items: Vec<String> = Vec::new();
     let mut uses_local_reusable_workflow = false;
     let mut has_job_concurrency = has_top_concurrency;
+    let mut in_job_concurrency_block = false;
+    let mut job_conc_indent = 0usize;
     let mut has_timeout_minutes = false;
+    let mut timeout_minutes_val: Option<f64> = None;
+    let mut job_display_name: Option<String> = None;
     let mut uses_cache = has_top_cache;
     let mut explicit_cache_disabled = false;
     let mut explicit_est_mins: Option<f64> = None;
+    let mut step_est_mins_sum = 0.0_f64;
     let mut has_sparse = false;
     let mut uploads_artifacts = false;
     let mut artifact_retention_days: Option<u32> = None;
     let mut step_mins = 0.5_f64;
     let mut saw_steps = false;
+    let mut step_item_indent: Option<usize> = None;
+    let mut cur_step_counted_test = false;
+    let mut cur_step_counted_build = false;
     let mut needs_ids: Vec<String> = Vec::new();
     let mut in_needs_list = false;
     let mut needs_indent = 0usize;
 
-    // Matrix tracking (including key-value cell matching for `include:` per Bug #13!)
+    // Matrix tracking (including full Cartesian `exclude:` hyperplanes & `include:` cells per D4 & D5!)
     let mut in_matrix = false;
     let mut matrix_indent = 0usize;
     let mut current_matrix_axis = String::new();
     let mut axis_indent = 0usize;
     let mut axis_counts: Vec<(String, Vec<String>)> = Vec::new();
     let mut include_entries: Vec<Vec<(String, String)>> = Vec::new();
-    let mut exclude_items = 0usize;
+    let mut exclude_entries: Vec<Vec<(String, String)>> = Vec::new();
 
     for &raw_line in job_lines {
         if let Some(m) = extract_comment_est_minutes(raw_line) {
-            explicit_est_mins = Some(m);
+            if saw_steps {
+                step_est_mins_sum += m;
+            } else {
+                explicit_est_mins = Some(m);
+            }
         }
         let clean = strip_comment(raw_line);
         let trimmed = clean.trim();
@@ -1138,10 +1446,39 @@ fn analyze_github_job_block(
             }
         }
 
-        // Parse job-level `timeout-minutes:` & `needs:` BEFORE `steps:` (Fixes Model 22 step-timeout false positive & Bug #9)
+        if in_job_concurrency_block {
+            if ind > job_conc_indent {
+                if let Some(cip) = low_trimmed.strip_prefix("cancel-in-progress:") {
+                    let cv = cip.trim().trim_matches('"').trim_matches('\'');
+                    if cv == "true" || cv.contains("${{") {
+                        has_job_concurrency = true;
+                    }
+                }
+                continue;
+            } else {
+                in_job_concurrency_block = false;
+            }
+        }
+
+        // Parse job-level `name:`, `timeout-minutes:` & `needs:` BEFORE `steps:`
         if !saw_steps && !in_matrix {
+            if trimmed.starts_with("name:") {
+                if let Some(rhs) = trimmed.splitn(2, ':').nth(1) {
+                    let nm = rhs.trim().trim_matches('"').trim_matches('\'').trim();
+                    if !nm.is_empty() && !nm.contains("${{") {
+                        job_display_name = Some(nm.to_string());
+                    }
+                }
+            }
             if trimmed.starts_with("timeout-minutes:") {
                 has_timeout_minutes = true;
+                if let Some(rhs) = trimmed.splitn(2, ':').nth(1) {
+                    if let Ok(tm) = rhs.trim().trim_matches('"').trim_matches('\'').parse::<f64>() {
+                        if tm.is_finite() && tm > 0.0 {
+                            timeout_minutes_val = Some(tm);
+                        }
+                    }
+                }
             }
             if in_needs_list {
                 if ind > needs_indent && trimmed.starts_with('-') {
@@ -1178,8 +1515,16 @@ fn analyze_github_job_block(
             }
         }
 
-        if trimmed.starts_with("concurrency:") {
-            has_job_concurrency = true;
+        if !saw_steps && trimmed.starts_with("concurrency:") {
+            let rhs = trimmed.splitn(2, ':').nth(1).unwrap_or("").trim();
+            if rhs.is_empty() {
+                in_job_concurrency_block = true;
+                job_conc_indent = ind;
+            } else if low_trimmed.contains("cancel-in-progress: true")
+                || low_trimmed.contains("cancel-in-progress: ${{")
+            {
+                has_job_concurrency = true;
+            }
         }
         if trimmed.starts_with("est-minutes:") || trimmed.starts_with("estimated-minutes:") {
             if let Some(val) = trimmed.splitn(2, ':').nth(1) {
@@ -1237,7 +1582,7 @@ fn analyze_github_job_block(
                         .trim()
                         .trim_matches('"')
                         .trim_matches('\'');
-                    if current_matrix_axis == "include" {
+                    if current_matrix_axis == "include" || current_matrix_axis == "exclude" {
                         if ind <= axis_indent + 4 {
                             let mut pairs: Vec<(String, String)> = Vec::new();
                             if item_val.starts_with('{') && item_val.ends_with('}') {
@@ -1255,11 +1600,11 @@ fn analyze_github_job_block(
                                     v.trim().trim_matches('"').trim_matches('\'').to_string(),
                                 ));
                             }
-                            include_entries.push(pairs);
-                        }
-                    } else if current_matrix_axis == "exclude" {
-                        if ind <= axis_indent + 4 {
-                            exclude_items += 1;
+                            if current_matrix_axis == "include" {
+                                include_entries.push(pairs);
+                            } else {
+                                exclude_entries.push(pairs);
+                            }
                         }
                     } else if let Some(last) = axis_counts.last_mut() {
                         if last.0 == current_matrix_axis
@@ -1268,14 +1613,19 @@ fn analyze_github_job_block(
                             last.1.push(item_val.to_string());
                         }
                     }
-                } else if current_matrix_axis == "include"
+                } else if (current_matrix_axis == "include" || current_matrix_axis == "exclude")
                     && !trimmed.starts_with('-')
                     && ind > axis_indent + 2
                     && trimmed.contains(':')
                 {
-                    if let Some(last_inc) = include_entries.last_mut() {
+                    let target_vec = if current_matrix_axis == "include" {
+                        &mut include_entries
+                    } else {
+                        &mut exclude_entries
+                    };
+                    if let Some(last_ent) = target_vec.last_mut() {
                         if let Some((k, v)) = trimmed.split_once(':') {
-                            last_inc.push((
+                            last_ent.push((
                                 k.trim().trim_matches('"').trim_matches('\'').to_string(),
                                 v.trim().trim_matches('"').trim_matches('\'').to_string(),
                             ));
@@ -1301,12 +1651,20 @@ fn analyze_github_job_block(
             }
         }
 
-        // Steps & duration heuristics (Fixes Bug #11: all 10 ecosystems including `make -j`, `nx`, `turbo`, `bazel test`)
+        // Steps & duration heuristics (deduplicated per `- ` step boundary per D6 & H2!)
         if trimmed.starts_with("steps:") {
             saw_steps = true;
             continue;
         }
         if saw_steps {
+            if trimmed.starts_with('-') {
+                let s_ind = *step_item_indent.get_or_insert(ind);
+                if ind <= s_ind {
+                    step_item_indent = Some(ind);
+                    cur_step_counted_test = false;
+                    cur_step_counted_build = false;
+                }
+            }
             if trimmed.contains("actions/checkout") {
                 step_mins += 0.35;
             } else if trimmed.starts_with("filter:")
@@ -1329,65 +1687,83 @@ fn analyze_github_job_block(
                         artifact_retention_days = Some(days);
                     }
                 }
+            } else if low_trimmed.contains("swatinem/rust-cache")
+                || low_trimmed.contains("actions/cache")
+            {
+                // Dedicated cache actions do not add step duration penalty (they speed up warm builds!)
             } else {
-                let has_test_cmd = low_trimmed.contains("pytest")
-                    || low_trimmed.contains("cargo test")
-                    || low_trimmed.contains("cargo nextest")
-                    || low_trimmed.contains("npm test")
-                    || low_trimmed.contains("pnpm test")
-                    || low_trimmed.contains("yarn test")
-                    || low_trimmed.contains("bun test")
-                    || low_trimmed.contains("jest")
-                    || low_trimmed.contains("playwright test")
-                    || low_trimmed.contains("cypress run")
-                    || (low_trimmed.contains("vitest")
-                        && !low_trimmed.contains(".vitest-reports")
-                        && !low_trimmed.contains("--merge-reports")
-                        && !low_trimmed.starts_with("path:"))
-                    || low_trimmed.contains("go test")
-                    || low_trimmed.contains("mvn test")
-                    || low_trimmed.contains("gradlew test")
-                    || low_trimmed.contains("connectedandroidtest")
-                    || low_trimmed.contains("dotnet test")
-                    || low_trimmed.contains("swift test")
-                    || low_trimmed.contains("flutter test")
-                    || low_trimmed.contains("ctest")
-                    || low_trimmed.contains("bazel test")
-                    || low_trimmed.contains("nx test")
-                    || low_trimmed.contains("nx affected -t test")
-                    || low_trimmed.contains("turbo test")
-                    || low_trimmed.contains("turbo run test")
-                    || (low_trimmed.contains("xcodebuild") && low_trimmed.contains("test"));
+                let is_name_line = trimmed.starts_with("- name:") || trimmed.starts_with("name:");
+                let has_test_cmd = !is_name_line
+                    && (low_trimmed.contains("pytest")
+                        || low_trimmed.contains("cargo test")
+                        || low_trimmed.contains("cargo nextest")
+                        || low_trimmed.contains("npm test")
+                        || low_trimmed.contains("pnpm test")
+                        || low_trimmed.contains("yarn test")
+                        || low_trimmed.contains("bun test")
+                        || low_trimmed.contains("jest")
+                        || low_trimmed.contains("playwright test")
+                        || low_trimmed.contains("cypress run")
+                        || (low_trimmed.contains("vitest")
+                            && !low_trimmed.contains(".vitest-reports")
+                            && !low_trimmed.contains("--merge-reports")
+                            && !low_trimmed.starts_with("path:"))
+                        || low_trimmed.contains("go test")
+                        || low_trimmed.contains("mvn test")
+                        || low_trimmed.contains("gradlew test")
+                        || low_trimmed.contains("connectedandroidtest")
+                        || low_trimmed.contains("dotnet test")
+                        || low_trimmed.contains("swift test")
+                        || low_trimmed.contains("flutter test")
+                        || low_trimmed.contains("ctest")
+                        || low_trimmed.contains("bazel test")
+                        || low_trimmed.contains("nx test")
+                        || low_trimmed.contains("nx affected -t test")
+                        || low_trimmed.contains("turbo test")
+                        || low_trimmed.contains("turbo run test")
+                        || (low_trimmed.contains("xcodebuild") && low_trimmed.contains("test")));
 
-                let has_build_cmd = low_trimmed.contains("docker build")
-                    || low_trimmed.contains("docker compose build")
-                    || low_trimmed.contains("buildx build")
-                    || low_trimmed.contains("cargo build --release")
-                    || low_trimmed.contains("npm run build")
-                    || low_trimmed.contains("pnpm build")
-                    || low_trimmed.contains("pnpm run build")
-                    || low_trimmed.contains("yarn build")
-                    || low_trimmed.contains("bun run build")
-                    || low_trimmed.contains("gradlew assemble")
-                    || low_trimmed.contains("gradlew build")
-                    || low_trimmed.contains("dotnet build")
-                    || low_trimmed.contains("swift build")
-                    || low_trimmed.contains("flutter build")
-                    || low_trimmed.contains("cmake --build")
-                    || low_trimmed.contains("make -j")
-                    || low_trimmed.contains("bazel build")
-                    || low_trimmed.contains("nx affected")
-                    || low_trimmed.contains("nx run-many")
-                    || low_trimmed.contains("turbo build")
-                    || low_trimmed.contains("turbo run build")
-                    || (low_trimmed.contains("xcodebuild") && !low_trimmed.contains("test"));
+                let has_build_cmd = !is_name_line
+                    && (low_trimmed.contains("docker build")
+                        || low_trimmed.contains("docker compose build")
+                        || low_trimmed.contains("buildx build")
+                        || low_trimmed.contains("cargo build --release")
+                        || low_trimmed.contains("npm run build")
+                        || low_trimmed.contains("pnpm build")
+                        || low_trimmed.contains("pnpm run build")
+                        || low_trimmed.contains("yarn build")
+                        || low_trimmed.contains("bun run build")
+                        || low_trimmed.contains("gradlew assemble")
+                        || low_trimmed.contains("gradlew build")
+                        || low_trimmed.contains("dotnet build")
+                        || low_trimmed.contains("swift build")
+                        || low_trimmed.contains("flutter build")
+                        || low_trimmed.contains("cmake --build")
+                        || low_trimmed.contains("make -j")
+                        || low_trimmed.contains("bazel build")
+                        || low_trimmed.contains("nx affected")
+                        || low_trimmed.contains("nx run-many")
+                        || low_trimmed.contains("turbo build")
+                        || low_trimmed.contains("turbo run build")
+                        || (low_trimmed.contains("xcodebuild") && !low_trimmed.contains("test")));
 
-                if has_test_cmd || has_build_cmd {
-                    if has_test_cmd {
+                let raw_low = raw_line.to_ascii_lowercase();
+                if raw_low.contains("# minici-rust-bootstrap") {
+                    // Cached Rust bootstrap action (< 2s)
+                } else if raw_low.contains("# minici-rust-accelerated:nextest") {
+                    step_mins += 1.45;
+                } else if raw_low.contains("# minici-rust-accelerated:")
+                    || raw_low.contains("# minici-rust-everywhere")
+                {
+                    step_mins = (step_mins - 0.20).max(0.45);
+                } else if has_test_cmd || has_build_cmd {
+                    if has_test_cmd && !cur_step_counted_test {
                         step_mins += 2.5;
+                        cur_step_counted_test = true;
                     }
-                    if has_build_cmd {
+                    if has_build_cmd && !cur_step_counted_build {
                         step_mins += 3.5;
+                        cur_step_counted_build = true;
                     }
                 } else if trimmed.starts_with("- name:")
                     || trimmed.starts_with("- run:")
@@ -1403,153 +1779,165 @@ fn analyze_github_job_block(
         return None;
     }
 
-    let raw_mins = explicit_est_mins.unwrap_or(if saw_steps { step_mins } else { 3.5 });
-
-    let mut product_count = 1usize;
-    let mut matrix_os_list: Vec<String> = Vec::new();
-    let mut include_os_list: Vec<String> = Vec::new();
-    let mut non_empty_axes = 0usize;
-    for (axis_name, items) in &axis_counts {
-        if !items.is_empty() {
-            non_empty_axes += 1;
-            product_count = product_count.saturating_mul(items.len());
-            if axis_name == "os" || axis_name == "runner" || axis_name == "runs-on" {
-                matrix_os_list = items.clone();
-            } else if items
-                .iter()
-                .any(|it| it.starts_with('{') && extract_os_from_flow_map(it).is_some())
-            {
-                matrix_os_list = items
-                    .iter()
-                    .map(|it| {
-                        extract_os_from_flow_map(it)
-                            .unwrap_or_else(|| "ubuntu-latest".to_string())
-                    })
-                    .collect();
-            }
+    // Apply warm-cache speedup discount (~15%) when `uses_cache` is active on multi-minute build/test jobs (fixes H2!)
+    let adjusted_step_mins = if uses_cache && step_mins > 1.5 {
+        0.85 + (step_mins - 0.85) * 0.82
+    } else {
+        step_mins
+    };
+    let mut raw_mins = if let Some(em) = explicit_est_mins {
+        em
+    } else if step_est_mins_sum > 0.0 {
+        step_est_mins_sum.max(0.2)
+    } else if saw_steps {
+        adjusted_step_mins
+    } else {
+        3.5
+    };
+    if explicit_est_mins.is_none() && step_est_mins_sum <= 0.0 {
+        if let Some(tm) = timeout_minutes_val {
+            raw_mins = raw_mins.min(tm.max(0.2));
         }
     }
 
-    // Fixes Bug #13: Only count an `include:` entry as an EXTRA matrix job if `non_empty_axes == 0`
-    // OR at least one key in the `include:` entry specifies a value NOT already present in `axis_counts[key]`!
-    let mut extra_include_items = 0usize;
-    for inc_pairs in &include_entries {
-        let inc_os = inc_pairs
-            .iter()
-            .find(|(k, _)| k == "os" || k == "runner" || k == "runs-on")
-            .map(|(_, v)| v.clone());
-        if non_empty_axes == 0 {
-            extra_include_items += 1;
-            include_os_list.push(inc_os.unwrap_or_else(|| "ubuntu-latest".to_string()));
-        } else {
+    let non_empty_axis_defs: Vec<&(String, Vec<String>)> = axis_counts
+        .iter()
+        .filter(|(_, items)| !items.is_empty())
+        .collect();
+    let non_empty_axes = non_empty_axis_defs.len();
+    let mut product_count = 1usize;
+    for (_, items) in &non_empty_axis_defs {
+        product_count = product_count.saturating_mul(items.len());
+    }
+
+    let cell_matches_kv = |cell: &[(String, String)], ek: &str, ev: &str| -> bool {
+        if let Some((_, cv)) = cell.iter().find(|(ck, _)| ck == ek) {
+            return cv == ev;
+        }
+        if ek == "os" || ek == "runner" || ek == "runs-on" {
+            for (_, cv) in cell {
+                if cv.starts_with('{') {
+                    if let Some(flow_os) = extract_os_from_flow_map(cv) {
+                        if flow_os == ev {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    };
+    let extract_cell_os = |cell: &[(String, String)]| -> Option<String> {
+        for (ck, cv) in cell {
+            if ck == "os" || ck == "runner" || ck == "runs-on" {
+                return Some(cv.clone());
+            }
+            if cv.starts_with('{') {
+                if let Some(flow_os) = extract_os_from_flow_map(cv) {
+                    return Some(flow_os);
+                }
+            }
+        }
+        None
+    };
+
+    let (matrix_count, bucket_jobs_exact, is_matrix_job) = if non_empty_axes > 0 && product_count <= 4096 {
+        let mut cells: Vec<Vec<(String, String)>> = vec![Vec::new()];
+        for (ax_name, ax_vals) in &non_empty_axis_defs {
+            let mut next_cells = Vec::with_capacity(cells.len() * ax_vals.len());
+            for prefix in &cells {
+                for v in ax_vals {
+                    let mut c = prefix.clone();
+                    c.push((ax_name.clone(), v.clone()));
+                    next_cells.push(c);
+                }
+            }
+            cells = next_cells;
+        }
+        if !exclude_entries.is_empty() {
+            cells.retain(|cell| {
+                !exclude_entries.iter().any(|ex| {
+                    !ex.is_empty() && ex.iter().all(|(ek, ev)| cell_matches_kv(cell, ek, ev))
+                })
+            });
+        }
+        for inc_pairs in &include_entries {
+            if inc_pairs.is_empty() {
+                continue;
+            }
             let mut adds_new_cell = false;
             let mut matched_any_axis = false;
             for (k, v) in inc_pairs {
-                if let Some((_, existing_vals)) = axis_counts.iter().find(|(ak, av)| ak == k && !av.is_empty()) {
+                if let Some((_, existing_vals)) =
+                    non_empty_axis_defs.iter().find(|(ak, _)| ak == k)
+                {
                     matched_any_axis = true;
                     if !existing_vals.iter().any(|ev| ev == v) {
                         adds_new_cell = true;
                     }
                 }
             }
-            if !matched_any_axis || adds_new_cell {
+            let already_present = cells.iter().any(|c| {
+                inc_pairs.iter().all(|(ik, iv)| cell_matches_kv(c, ik, iv))
+            });
+            if (!matched_any_axis || adds_new_cell) && !already_present {
+                cells.push(inc_pairs.clone());
+            }
+        }
+        let m_cnt = cells.len().max(1);
+        let mut os_buckets: Vec<(String, usize)> = Vec::new();
+        for c in &cells {
+            if let Some(os_lbl) = extract_cell_os(c) {
+                if let Some(found) = os_buckets.iter_mut().find(|x| x.0 == os_lbl) {
+                    found.1 += 1;
+                } else {
+                    os_buckets.push((os_lbl, 1));
+                }
+            }
+        }
+        let is_mat = product_count > 1 || m_cnt > 1 || os_buckets.len() > 1;
+        (m_cnt, os_buckets, is_mat)
+    } else {
+        let mut include_os_list: Vec<String> = Vec::new();
+        let mut extra_include_items = 0usize;
+        for inc_pairs in &include_entries {
+            let inc_os = inc_pairs
+                .iter()
+                .find(|(k, _)| k == "os" || k == "runner" || k == "runs-on")
+                .map(|(_, v)| v.clone());
+            if non_empty_axes == 0 {
+                extra_include_items += 1;
+                include_os_list.push(inc_os.unwrap_or_else(|| "ubuntu-latest".to_string()));
+            } else {
                 extra_include_items += 1;
                 if let Some(os_v) = inc_os {
                     include_os_list.push(os_v);
                 }
             }
         }
-    }
-
-    let matrix_count = if non_empty_axes == 0 && extra_include_items > 0 {
-        if matrix_os_list.is_empty() && !include_os_list.is_empty() {
-            matrix_os_list = include_os_list.clone();
+        let m_cnt = if non_empty_axes == 0 && extra_include_items > 0 {
+            extra_include_items
+        } else {
+            product_count.saturating_sub(exclude_entries.len()) + extra_include_items
         }
-        extra_include_items
-    } else {
-        product_count.saturating_sub(exclude_items) + extra_include_items
-    }
-    .max(1);
-
-    if !matrix_os_list.is_empty() && raw_runs_on.contains("${{") {
+        .max(1);
         let mut os_buckets: Vec<(String, usize)> = Vec::new();
-        for os_l in &matrix_os_list {
+        for os_l in &include_os_list {
             if let Some(found) = os_buckets.iter_mut().find(|x| x.0 == *os_l) {
                 found.1 += 1;
             } else {
                 os_buckets.push((os_l.clone(), 1));
             }
         }
-        if non_empty_axes == 0 && extra_include_items > 0 {
-            for (os_label, per_os_jobs) in os_buckets {
-                let sku = resolve_runner_sku(&os_label);
-                let clean_os_lbl = os_label
-                    .trim()
-                    .trim_end_matches(',')
-                    .trim()
-                    .trim_matches('"')
-                    .trim_matches('\'')
-                    .to_string();
-                let billed_per_job = select_provider_plugin(sku.provider)
-                    .round_job_minutes(raw_mins, sku.ceil_to_whole_minute);
-                let total_billed = billed_per_job * (per_os_jobs as f64);
-                out_jobs.push(ExpandedJobCost {
-                    workflow_file: wf_rel.to_string(),
-                    job_id: format!("{} [{}]", job_id, clean_os_lbl),
-                    matrix_combination_count: per_os_jobs,
-                    runner_label: clean_os_lbl,
-                    provider: sku.provider.to_string(),
-                    os: sku.os.to_string(),
-                    vcpus: sku.vcpus,
-                    est_raw_duration_mins_per_job: (raw_mins * 100.0).round() / 100.0,
-                    billed_mins_per_job: billed_per_job,
-                    total_billed_mins_all_matrix: total_billed,
-                    rate_per_min_usd: sku.rate_per_min_usd,
-                    run_compute_cost_usd: ((total_billed * sku.rate_per_min_usd) * 10000.0).round()
-                        / 10000.0,
-                    blacksmith_run_cost_usd: ((raw_mins
-                        * (per_os_jobs as f64)
-                        * sku.blacksmith_equiv_rate_usd)
-                        * 10000.0)
-                        .round()
-                        / 10000.0,
-                    self_hosted_spot_run_cost_usd: ((raw_mins
-                        * (per_os_jobs as f64)
-                        * sku.self_hosted_spot_rate_usd)
-                        * 10000.0)
-                        .round()
-                        / 10000.0,
-                    has_concurrency_cancel: has_job_concurrency,
-                    has_timeout_minutes,
-                    has_sparse_or_shallow_clone: has_sparse,
-                    uses_cache,
-                    uploads_artifacts,
-                    artifact_retention_days,
-                });
-            }
-            return Some((raw_mins, matrix_count, needs_ids));
-        }
+        let is_mat = m_cnt > 1 || os_buckets.len() > 1;
+        (m_cnt, os_buckets, is_mat)
+    };
 
-        // Fixes Bug #13: Attribute explicit `include:` OS entries (`include_os_list`) directly to their matching OS bucket
-        let total_os_items = matrix_os_list.len().max(1);
-        let mut bucket_jobs: Vec<(String, usize)> = os_buckets
-            .iter()
-            .map(|(lbl, c)| (lbl.clone(), ((product_count * *c) / total_os_items).max(1)))
-            .collect();
-        for inc_os in &include_os_list {
-            if let Some(found) = bucket_jobs.iter_mut().find(|x| x.0 == *inc_os) {
-                found.1 += 1;
-            } else {
-                bucket_jobs.push((inc_os.clone(), 1));
+    if !bucket_jobs_exact.is_empty() && raw_runs_on.contains("${{") {
+        for (os_label, per_os_jobs) in bucket_jobs_exact {
+            if per_os_jobs == 0 {
+                continue;
             }
-        }
-        let current_sum: usize = bucket_jobs.iter().map(|(_, n)| *n).sum();
-        if current_sum != matrix_count && !bucket_jobs.is_empty() {
-            let others_sum: usize = bucket_jobs.iter().skip(1).map(|(_, n)| *n).sum();
-            bucket_jobs[0].1 = matrix_count.saturating_sub(others_sum).max(1);
-        }
-
-        for (os_label, per_os_jobs) in bucket_jobs {
             let sku = resolve_runner_sku(&os_label);
             let clean_os_lbl = os_label
                 .trim()
@@ -1562,8 +1950,10 @@ fn analyze_github_job_block(
                 .round_job_minutes(raw_mins, sku.ceil_to_whole_minute);
             let total_billed = billed_per_job * (per_os_jobs as f64);
             out_jobs.push(ExpandedJobCost {
-                workflow_file: wf_rel.to_string(),
+                workflow_file: normalize_ci_path(wf_rel),
                 job_id: format!("{} [{}]", job_id, clean_os_lbl),
+                line_start,
+                line_end,
                 matrix_combination_count: per_os_jobs,
                 runner_label: clean_os_lbl,
                 provider: sku.provider.to_string(),
@@ -1593,6 +1983,7 @@ fn analyze_github_job_block(
                 uses_cache,
                 uploads_artifacts,
                 artifact_retention_days,
+                monthly_runs_for_job: None,
             });
         }
     } else {
@@ -1612,8 +2003,10 @@ fn analyze_github_job_block(
                 .to_string()
         };
         out_jobs.push(ExpandedJobCost {
-            workflow_file: wf_rel.to_string(),
+            workflow_file: normalize_ci_path(wf_rel),
             job_id: job_id.to_string(),
+            line_start,
+            line_end,
             matrix_combination_count: matrix_count,
             runner_label: display_runner,
             provider: sku.provider.to_string(),
@@ -1643,9 +2036,10 @@ fn analyze_github_job_block(
             uses_cache,
             uploads_artifacts,
             artifact_retention_days,
+            monthly_runs_for_job: None,
         });
     }
-    Some((raw_mins, matrix_count, needs_ids))
+    Some((raw_mins, matrix_count, needs_ids, job_display_name, is_matrix_job))
 }
 
 /// Computes BOTH `(critical_path_mins, max_parallel_stage_width)` on a workflow's `needs:` DAG (Fixes Bug #9 & Bug #23).
@@ -1729,33 +2123,38 @@ fn compute_dag_critical_path_and_width(dag_nodes: &[(String, f64, usize, Vec<Str
     (max_cp, max_width)
 }
 
-/// Returns `(critical_path_mins, max_parallel_stage_width, triggers_on_pr_or_push)` for a GitHub Actions workflow file.
+/// Returns `(critical_path_mins, max_parallel_stage_width, triggers_on_pr_or_push, ast_meta)` for a GitHub Actions workflow file.
 fn parse_github_workflow_file(
     wf_path: &Path,
     rel_name: &str,
     has_repo_gosum: bool,
     out_jobs: &mut Vec<ExpandedJobCost>,
-) -> (f64, usize, bool) {
+) -> (f64, usize, bool, WorkflowAstMeta) {
     let content = match fs::read_to_string(wf_path) {
         Ok(c) => c,
-        Err(_) => return (0.0, 0, false),
+        Err(_) => return (0.0, 0, false, WorkflowAstMeta::default()),
     };
     let triggers_pr_or_push = workflow_triggers_on_pr_or_push(&content.to_ascii_lowercase());
     let all_lines: Vec<&str> = content.lines().collect();
     let mut has_top_concurrency = false;
+    let mut in_top_conc = false;
     let mut has_top_cache = false;
     let mut in_jobs = false;
     let mut jobs_indent = 0usize;
     let mut job_header_indent: Option<usize> = None;
     let mut current_job_id: Option<String> = None;
+    let mut current_job_start_line = 1usize;
+    let mut current_job_end_line = 1usize;
     let mut current_job_lines: Vec<&str> = Vec::new();
-    let mut dag_nodes: Vec<(String, f64, usize, Vec<String>)> = Vec::new();
+    let mut meta = WorkflowAstMeta::default();
 
-    for &line in &all_lines {
+    for (line_idx, &line) in all_lines.iter().enumerate() {
+        let line_no = line_idx + 1;
         if in_jobs && current_job_id.is_some() && extract_comment_est_minutes(line).is_some() {
             let pre_clean = strip_comment(line).trim();
             if pre_clean.is_empty() || pre_clean.starts_with('#') {
                 current_job_lines.push(line);
+                current_job_end_line = line_no;
                 continue;
             }
         }
@@ -1767,8 +2166,24 @@ fn parse_github_workflow_file(
         let ind = indent_of(clean);
 
         if !in_jobs {
-            if ind == 0 && trimmed.starts_with("concurrency:") {
-                has_top_concurrency = true;
+            if ind == 0 {
+                in_top_conc = trimmed.starts_with("concurrency:");
+                if in_top_conc {
+                    let low_t = trimmed.to_ascii_lowercase();
+                    if low_t.contains("cancel-in-progress: true")
+                        || low_t.contains("cancel-in-progress: ${{")
+                    {
+                        has_top_concurrency = true;
+                    }
+                }
+            } else if in_top_conc {
+                let low_t = trimmed.to_ascii_lowercase();
+                if let Some(cip) = low_t.strip_prefix("cancel-in-progress:") {
+                    let cv = cip.trim().trim_matches('"').trim_matches('\'');
+                    if cv == "true" || cv.contains("${{") {
+                        has_top_concurrency = true;
+                    }
+                }
             }
             if line_has_cache_signal(&trimmed.to_ascii_lowercase()) {
                 has_top_cache = true;
@@ -1776,22 +2191,31 @@ fn parse_github_workflow_file(
         }
         if ind == 0 && trimmed == "jobs:" {
             in_jobs = true;
+            in_top_conc = false;
             jobs_indent = 0;
             continue;
         }
         if in_jobs {
             if ind == 0 && !trimmed.starts_with('#') {
                 if let Some(jid) = current_job_id.take() {
-                    if let Some((dur, exp_c, deps)) = analyze_github_job_block(
+                    if let Some((dur, exp_c, deps, disp_nm, is_mat)) = analyze_github_job_block(
                         rel_name,
                         &jid,
                         &current_job_lines,
+                        current_job_start_line,
+                        current_job_end_line,
                         has_top_concurrency,
                         has_top_cache,
                         has_repo_gosum,
                         out_jobs,
                     ) {
-                        dag_nodes.push((jid, dur, exp_c, deps));
+                        if let Some(dn) = disp_nm {
+                            meta.job_display_names.push((jid.clone(), dn));
+                        }
+                        if is_mat {
+                            meta.matrix_job_ids.push(jid.clone());
+                        }
+                        meta.dag_nodes.push((jid, dur, exp_c, deps));
                     }
                     current_job_lines.clear();
                 }
@@ -1817,22 +2241,32 @@ fn parse_github_workflow_file(
                 let cand_raw = trimmed.trim_end_matches(':').trim();
                 let cand_clean = cand_raw.trim_matches('"').trim_matches('\'').trim();
                 if let Some(jid) = current_job_id.take() {
-                    if let Some((dur, exp_c, deps)) = analyze_github_job_block(
+                    if let Some((dur, exp_c, deps, disp_nm, is_mat)) = analyze_github_job_block(
                         rel_name,
                         &jid,
                         &current_job_lines,
+                        current_job_start_line,
+                        current_job_end_line,
                         has_top_concurrency,
                         has_top_cache,
                         has_repo_gosum,
                         out_jobs,
                     ) {
-                        dag_nodes.push((jid, dur, exp_c, deps));
+                        if let Some(dn) = disp_nm {
+                            meta.job_display_names.push((jid.clone(), dn));
+                        }
+                        if is_mat {
+                            meta.matrix_job_ids.push(jid.clone());
+                        }
+                        meta.dag_nodes.push((jid, dur, exp_c, deps));
                     }
                     current_job_lines.clear();
                 }
                 if !cand_clean.is_empty() && !cand_clean.contains(':') {
-                    current_job_id = Some(cand_raw.to_string());
-                    if let Some(hash_idx) = line.find('#') {
+                    current_job_id = Some(cand_clean.to_string());
+                    current_job_start_line = line_no;
+                    current_job_end_line = line_no;
+                    if let Some(hash_idx) = find_unquoted_comment_idx(line) {
                         if extract_comment_est_minutes(line).is_some() {
                             current_job_lines.push(&line[hash_idx..]);
                         }
@@ -1840,26 +2274,35 @@ fn parse_github_workflow_file(
                 }
             } else if current_job_id.is_some() {
                 current_job_lines.push(line);
+                current_job_end_line = line_no;
             }
         }
     }
 
     if let Some(jid) = current_job_id.take() {
-        if let Some((dur, exp_c, deps)) = analyze_github_job_block(
+        if let Some((dur, exp_c, deps, disp_nm, is_mat)) = analyze_github_job_block(
             rel_name,
             &jid,
             &current_job_lines,
+            current_job_start_line,
+            current_job_end_line,
             has_top_concurrency,
             has_top_cache,
             has_repo_gosum,
             out_jobs,
         ) {
-            dag_nodes.push((jid, dur, exp_c, deps));
+            if let Some(dn) = disp_nm {
+                meta.job_display_names.push((jid.clone(), dn));
+            }
+            if is_mat {
+                meta.matrix_job_ids.push(jid.clone());
+            }
+            meta.dag_nodes.push((jid, dur, exp_c, deps));
         }
     }
 
-    let (cp, width) = compute_dag_critical_path_and_width(&dag_nodes);
-    (cp, width, triggers_pr_or_push)
+    let (cp, width) = compute_dag_critical_path_and_width(&meta.dag_nodes);
+    (cp, width, triggers_pr_or_push, meta)
 }
 
 /// Multi-vendor per-job parser for `.gitlab-ci.yml`, `.circleci/config.yml`, `bitbucket-pipelines.yml`, and `buildspec.yml`
@@ -1879,6 +2322,9 @@ fn parse_gitlab_or_other_ci(
     #[derive(Clone)]
     struct ParsedVendorJob {
         name: String,
+        stage: String,
+        line_start: usize,
+        line_end: usize,
         sku_label: String,
         parallel_count: usize,
         explicit_mins: Option<f64>,
@@ -1892,9 +2338,10 @@ fn parse_gitlab_or_other_ci(
         has_cache: bool,
         in_tags_list: bool,
         in_parallel_matrix: bool,
-        matrix_axes: Vec<usize>,
+        matrix_item_axes: Vec<Vec<usize>>,
     }
 
+    let is_codebuild = provider_hint == "BUILD_GENERAL1_SMALL";
     let mut default_sku = provider_hint.to_string();
     let mut default_cache = false;
     let mut default_interruptible = false;
@@ -1904,23 +2351,30 @@ fn parse_gitlab_or_other_ci(
     let mut in_circle_jobs_section = false;
     let mut circle_job_indent: Option<usize> = None;
     let mut in_default_section = false;
+    let total_lines = content.lines().count().max(1);
 
     let flush_job = |cur: &mut Option<ParsedVendorJob>, list: &mut Vec<ParsedVendorJob>| {
         if let Some(mut j) = cur.take() {
-            if !j.matrix_axes.is_empty() {
-                let prod: usize = j.matrix_axes.iter().copied().filter(|&n| n > 0).product();
-                if prod > j.parallel_count {
-                    j.parallel_count = prod;
+            if !j.matrix_item_axes.is_empty() {
+                let sum_prods: usize = j
+                    .matrix_item_axes
+                    .iter()
+                    .map(|axes| axes.iter().copied().filter(|&n| n > 0).product::<usize>())
+                    .sum();
+                if sum_prods > j.parallel_count {
+                    j.parallel_count = sum_prods;
                 }
             }
             list.push(j);
         }
     };
 
-    for line in content.lines() {
+    for (line_idx, line) in content.lines().enumerate() {
+        let line_no = line_idx + 1;
         if let Some(m) = extract_comment_est_minutes(line) {
             if let Some(ref mut job) = current {
                 job.explicit_mins = Some(m);
+                job.line_end = line_no;
             }
         }
         let clean = strip_comment(line);
@@ -1937,10 +2391,48 @@ fn parse_gitlab_or_other_ci(
 
         if ind == 0 && trimmed.ends_with(':') && !trimmed.starts_with('-') {
             let key = trimmed.trim_end_matches(':').trim();
+            if is_codebuild && key == "artifacts" {
+                if let Some(ref mut job) = current {
+                    job.uploads_artifacts = true;
+                    job.step_mins += 0.35;
+                }
+                continue;
+            }
+            if is_codebuild && key == "cache" {
+                default_cache = true;
+                if let Some(ref mut job) = current {
+                    job.has_cache = true;
+                }
+                continue;
+            }
             flush_job(&mut current, &mut jobs_list);
             in_default_section = key == "default";
             in_circle_jobs_section = key == "jobs";
-            if !key.is_empty()
+            if is_codebuild && key == "phases" {
+                current = Some(ParsedVendorJob {
+                    name: "codebuild-phases".to_string(),
+                    stage: "test".to_string(),
+                    line_start: line_no,
+                    line_end: line_no,
+                    sku_label: default_sku.clone(),
+                    parallel_count: 1,
+                    explicit_mins: None,
+                    step_mins: 0.5,
+                    saw_script_steps: true,
+                    has_dlc: false,
+                    has_timeout: default_timeout,
+                    uploads_artifacts: false,
+                    retention_days: None,
+                    has_interruptible: default_interruptible,
+                    has_cache: default_cache,
+                    in_tags_list: false,
+                    in_parallel_matrix: false,
+                    matrix_item_axes: Vec::new(),
+                });
+                continue;
+            }
+            if !is_codebuild
+                && !key.is_empty()
                 && !key.starts_with('.')
                 && !key.starts_with(':')
                 && !key.contains(": ")
@@ -1964,10 +2456,18 @@ fn parse_gitlab_or_other_ci(
                         | "phases"
                         | "jobs"
                         | "cache"
+                        | "env"
+                        | "reports"
+                        | "artifacts"
+                        | "logs"
+                        | "batch"
                 )
             {
                 current = Some(ParsedVendorJob {
                     name: key.to_string(),
+                    stage: "test".to_string(),
+                    line_start: line_no,
+                    line_end: line_no,
                     sku_label: default_sku.clone(),
                     parallel_count: 1,
                     explicit_mins: None,
@@ -1981,7 +2481,7 @@ fn parse_gitlab_or_other_ci(
                     has_cache: default_cache,
                     in_tags_list: false,
                     in_parallel_matrix: false,
-                    matrix_axes: Vec::new(),
+                    matrix_item_axes: Vec::new(),
                 });
             }
             if key == "cache" {
@@ -1999,6 +2499,9 @@ fn parse_gitlab_or_other_ci(
                 let jname = trimmed.trim_end_matches(':').trim().to_string();
                 current = Some(ParsedVendorJob {
                     name: jname,
+                    stage: "test".to_string(),
+                    line_start: line_no,
+                    line_end: line_no,
                     sku_label: default_sku.clone(),
                     parallel_count: 1,
                     explicit_mins: None,
@@ -2012,16 +2515,21 @@ fn parse_gitlab_or_other_ci(
                     has_cache: default_cache,
                     in_tags_list: false,
                     in_parallel_matrix: false,
-                    matrix_axes: Vec::new(),
+                    matrix_item_axes: Vec::new(),
                 });
                 continue;
             }
         }
 
-        if current.is_none() && trimmed.starts_with("- step:") {
+        // Fixes D8: Flush previous step on every `- step:` in Bitbucket Pipelines!
+        if trimmed.starts_with("- step:") && !in_circle_jobs_section {
+            flush_job(&mut current, &mut jobs_list);
             let step_idx = jobs_list.len() + 1;
             current = Some(ParsedVendorJob {
                 name: format!("step-{}", step_idx),
+                stage: format!("step-stage-{}", step_idx),
+                line_start: line_no,
+                line_end: line_no,
                 sku_label: default_sku.clone(),
                 parallel_count: 1,
                 explicit_mins: None,
@@ -2035,13 +2543,14 @@ fn parse_gitlab_or_other_ci(
                 has_cache: default_cache,
                 in_tags_list: false,
                 in_parallel_matrix: false,
-                matrix_axes: Vec::new(),
+                matrix_item_axes: Vec::new(),
             });
             continue;
         }
 
         let target_cache_signal = line_has_cache_signal(&low);
         if let Some(ref mut job) = current {
+            job.line_end = line_no;
             if job.in_tags_list {
                 if trimmed.starts_with('-') {
                     let tg = trimmed
@@ -2059,22 +2568,53 @@ fn parse_gitlab_or_other_ci(
                 }
             }
             if job.in_parallel_matrix {
-                if trimmed.contains(':') && trimmed.contains('[') {
+                if trimmed.starts_with('-') && trimmed.contains(':') && trimmed.contains('[') {
+                    let list = parse_inline_yaml_list(trimmed);
+                    job.matrix_item_axes.push(if list.is_empty() { Vec::new() } else { vec![list.len()] });
+                    continue;
+                } else if trimmed == "-" {
+                    job.matrix_item_axes.push(Vec::new());
+                    continue;
+                } else if trimmed.starts_with('-') && trimmed.contains(':') {
+                    job.matrix_item_axes.push(vec![0]);
+                    continue;
+                } else if trimmed.contains(':') && trimmed.contains('[') {
                     let list = parse_inline_yaml_list(trimmed);
                     if !list.is_empty() {
-                        job.matrix_axes.push(list.len());
+                        if job.matrix_item_axes.is_empty() {
+                            job.matrix_item_axes.push(Vec::new());
+                        }
+                        if let Some(cur_item) = job.matrix_item_axes.last_mut() {
+                            cur_item.push(list.len());
+                        }
                     }
                     continue;
                 } else if trimmed.starts_with('-') && !trimmed.contains(':') {
-                    if let Some(last_ax) = job.matrix_axes.last_mut() {
-                        *last_ax += 1;
+                    if let Some(cur_item) = job.matrix_item_axes.last_mut() {
+                        if let Some(last_ax) = cur_item.last_mut() {
+                            *last_ax += 1;
+                        }
                     }
                     continue;
                 } else if trimmed.ends_with(':') && !trimmed.starts_with('-') && trimmed != "matrix:" && trimmed != "script:" && trimmed != "steps:" {
-                    job.matrix_axes.push(0);
+                    if job.matrix_item_axes.is_empty() {
+                        job.matrix_item_axes.push(Vec::new());
+                    }
+                    if let Some(cur_item) = job.matrix_item_axes.last_mut() {
+                        cur_item.push(0);
+                    }
                     continue;
-                } else if trimmed == "script:" || trimmed == "steps:" || trimmed.starts_with("tags:") {
+                } else if trimmed == "script:" || trimmed == "steps:" || trimmed.starts_with("tags:") || trimmed.starts_with("stage:") {
                     job.in_parallel_matrix = false;
+                }
+            }
+
+            if trimmed.starts_with("stage:") {
+                if let Some(st) = trimmed.splitn(2, ':').nth(1) {
+                    let st_clean = st.trim().trim_matches('"').trim_matches('\'');
+                    if !st_clean.is_empty() {
+                        job.stage = st_clean.to_string();
+                    }
                 }
             }
 
@@ -2209,6 +2749,9 @@ fn parse_gitlab_or_other_ci(
     if jobs_list.is_empty() {
         jobs_list.push(ParsedVendorJob {
             name: "default-pipeline".to_string(),
+            stage: "test".to_string(),
+            line_start: 1,
+            line_end: total_lines,
             sku_label: default_sku,
             parallel_count: 1,
             explicit_mins: Some(4.0),
@@ -2222,12 +2765,12 @@ fn parse_gitlab_or_other_ci(
             has_cache: default_cache,
             in_tags_list: false,
             in_parallel_matrix: false,
-            matrix_axes: Vec::new(),
+            matrix_item_axes: Vec::new(),
         });
     }
 
-    let mut max_raw = 0.0_f64;
-    let mut total_width = 0usize;
+    let mut stage_max_dur: Vec<(String, f64)> = Vec::new();
+    let mut stage_widths: Vec<(String, usize)> = Vec::new();
     for pj in jobs_list {
         let raw_mins = pj.explicit_mins.unwrap_or_else(|| {
             if pj.saw_script_steps {
@@ -2236,8 +2779,16 @@ fn parse_gitlab_or_other_ci(
                 4.0
             }
         });
-        max_raw = max_raw.max(raw_mins);
-        total_width += pj.parallel_count;
+        if let Some(sm) = stage_max_dur.iter_mut().find(|(s, _)| *s == pj.stage) {
+            sm.1 = sm.1.max(raw_mins);
+        } else {
+            stage_max_dur.push((pj.stage.clone(), raw_mins));
+        }
+        if let Some(sw) = stage_widths.iter_mut().find(|(s, _)| *s == pj.stage) {
+            sw.1 += pj.parallel_count;
+        } else {
+            stage_widths.push((pj.stage.clone(), pj.parallel_count));
+        }
         let sku = resolve_runner_sku(&pj.sku_label);
         let billed_per_job = select_provider_plugin(sku.provider)
             .round_job_minutes(raw_mins, sku.ceil_to_whole_minute);
@@ -2249,8 +2800,10 @@ fn parse_gitlab_or_other_ci(
             0.0
         };
         out_jobs.push(ExpandedJobCost {
-            workflow_file: rel_name.to_string(),
+            workflow_file: normalize_ci_path(rel_name),
             job_id: pj.name,
+            line_start: pj.line_start,
+            line_end: pj.line_end,
             matrix_combination_count: pj.parallel_count,
             runner_label: sku.sku_label.to_string(),
             provider: sku.provider.to_string(),
@@ -2281,9 +2834,12 @@ fn parse_gitlab_or_other_ci(
             uses_cache: pj.has_cache,
             uploads_artifacts: pj.uploads_artifacts,
             artifact_retention_days: pj.retention_days,
+            monthly_runs_for_job: None,
         });
     }
-    (max_raw, total_width)
+    let cp_sum: f64 = stage_max_dur.iter().map(|(_, d)| *d).sum();
+    let peak_stage_w: usize = stage_widths.iter().map(|(_, w)| *w).max().unwrap_or(0);
+    (cp_sum, peak_stage_w)
 }
 
 /// Native Google Cloud Build (`cloudbuild.yaml` / `cloudbuild.yml`) parser with `machineType` SKU rates,
@@ -2454,12 +3010,15 @@ fn parse_gcp_cloudbuild_file(
         }
     }
 
+    let total_cb_lines = content.lines().count().max(1);
     let raw_mins = explicit_mins.unwrap_or(if saw_steps { step_mins.max(0.5) } else { 3.5 });
     let billed_per_job =
         select_provider_plugin("gcp-cloud-build").round_job_minutes(raw_mins, false);
     out_jobs.push(ExpandedJobCost {
-        workflow_file: rel_name.to_string(),
+        workflow_file: normalize_ci_path(rel_name),
         job_id: "cloud-build".to_string(),
+        line_start: 1,
+        line_end: total_cb_lines,
         matrix_combination_count: 1,
         runner_label,
         provider: "gcp-cloud-build".to_string(),
@@ -2478,6 +3037,7 @@ fn parse_gcp_cloudbuild_file(
         uses_cache: has_cache,
         uploads_artifacts,
         artifact_retention_days: None,
+        monthly_runs_for_job: None,
     });
     (raw_mins, 1)
 }
@@ -2498,6 +3058,8 @@ fn parse_azure_pipelines_file(
     #[derive(Clone)]
     struct AzJob {
         name: String,
+        line_start: usize,
+        line_end: usize,
         vm_image: String,
         explicit_mins: Option<f64>,
         step_mins: f64,
@@ -2510,6 +3072,7 @@ fn parse_azure_pipelines_file(
         matrix_indent: usize,
         matrix_entry_indent: Option<usize>,
         named_matrix_legs: usize,
+        leg_vm_images: Vec<String>,
         list_matrix_axes: Vec<usize>,
     }
 
@@ -2521,14 +3084,17 @@ fn parse_azure_pipelines_file(
     let mut top_matrix_entry_indent: Option<usize> = None;
     let mut top_named_legs = 0usize;
     let mut top_list_axes: Vec<usize> = Vec::new();
+    let total_az_lines = content.lines().count().max(1);
 
     let mut jobs_list: Vec<AzJob> = Vec::new();
     let mut current: Option<AzJob> = None;
 
-    for line in content.lines() {
+    for (line_idx, line) in content.lines().enumerate() {
+        let line_no = line_idx + 1;
         if let Some(m) = extract_comment_est_minutes(line) {
             if let Some(ref mut j) = current {
                 j.explicit_mins = Some(m);
+                j.line_end = line_no;
             } else {
                 default_explicit_mins = Some(m);
             }
@@ -2556,6 +3122,8 @@ fn parse_azure_pipelines_file(
             };
             current = Some(AzJob {
                 name: jname,
+                line_start: line_no,
+                line_end: line_no,
                 vm_image: default_vm_image.clone(),
                 explicit_mins: None,
                 step_mins: 0.50,
@@ -2568,6 +3136,7 @@ fn parse_azure_pipelines_file(
                 matrix_indent: 0,
                 matrix_entry_indent: None,
                 named_matrix_legs: 0,
+                leg_vm_images: Vec::new(),
                 list_matrix_axes: Vec::new(),
             });
             continue;
@@ -2585,6 +3154,8 @@ fn parse_azure_pipelines_file(
         {
             current = Some(AzJob {
                 name: "pipeline".to_string(),
+                line_start: line_no,
+                line_end: line_no,
                 vm_image: default_vm_image.clone(),
                 explicit_mins: default_explicit_mins,
                 step_mins: 0.50,
@@ -2597,6 +3168,7 @@ fn parse_azure_pipelines_file(
                 matrix_indent: 0,
                 matrix_entry_indent: None,
                 named_matrix_legs: top_named_legs,
+                leg_vm_images: Vec::new(),
                 list_matrix_axes: top_list_axes.clone(),
             });
             if trimmed == "steps:" {
@@ -2605,6 +3177,7 @@ fn parse_azure_pipelines_file(
         }
 
         if let Some(ref mut j) = current {
+            j.line_end = line_no;
             if j.in_matrix {
                 if ind <= j.matrix_indent && !trimmed.starts_with('-') {
                     j.in_matrix = false;
@@ -2625,7 +3198,7 @@ fn parse_azure_pipelines_file(
                         if let Some(v) = trimmed.splitn(2, ':').nth(1) {
                             let vc = v.trim().trim_matches('"').trim_matches('\'');
                             if !vc.is_empty() && !vc.contains('$') {
-                                j.vm_image = vc.to_string();
+                                j.leg_vm_images.push(vc.to_string());
                             }
                         }
                     }
@@ -2774,6 +3347,8 @@ fn parse_azure_pipelines_file(
     if jobs_list.is_empty() {
         jobs_list.push(AzJob {
             name: "pipeline".to_string(),
+            line_start: 1,
+            line_end: total_az_lines,
             vm_image: default_vm_image,
             explicit_mins: default_explicit_mins.or(Some(3.5)),
             step_mins: 3.5,
@@ -2786,6 +3361,7 @@ fn parse_azure_pipelines_file(
             matrix_indent: 0,
             matrix_entry_indent: None,
             named_matrix_legs: top_named_legs,
+            leg_vm_images: Vec::new(),
             list_matrix_axes: top_list_axes,
         });
     }
@@ -2813,54 +3389,84 @@ fn parse_azure_pipelines_file(
         max_raw = max_raw.max(raw_mins);
         total_width += matrix_count;
 
-        let vm_low = aj.vm_image.to_ascii_lowercase();
-        let (runner_lbl, os_str, vcpus, rate_per_min, bs_equiv, spot_equiv) =
-            if vm_low.contains("macos") || vm_low.contains("darwin") {
-                ("macos-latest", "macOS", 3_u32, 0.0620_f64, 0.035_f64, 0.022_f64)
-            } else if vm_low.contains("windows") || vm_low.contains("vs20") {
-                ("windows-latest", "Windows", 2_u32, 0.0080_f64, 0.006_f64, 0.0025_f64)
+        let vm_buckets: Vec<(String, usize, bool)> = if aj.leg_vm_images.len() > 1 {
+            let mut b: Vec<(String, usize)> = Vec::new();
+            for img in &aj.leg_vm_images {
+                if let Some(found) = b.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case(img)) {
+                    found.1 += list_prod.max(1);
+                } else {
+                    b.push((img.clone(), list_prod.max(1)));
+                }
+            }
+            let mult = b.len() > 1;
+            b.into_iter().map(|(k, c)| (k, c, mult)).collect()
+        } else {
+            let single_img = aj
+                .leg_vm_images
+                .first()
+                .cloned()
+                .unwrap_or_else(|| aj.vm_image.clone());
+            vec![(single_img, matrix_count, false)]
+        };
+
+        for (vm_img, bucket_cnt, suffix_os) in vm_buckets {
+            let vm_low = vm_img.to_ascii_lowercase();
+            let (runner_lbl, os_str, vcpus, rate_per_min, bs_equiv, spot_equiv) =
+                if vm_low.contains("macos") || vm_low.contains("darwin") {
+                    ("macos-latest", "macOS", 3_u32, 0.0620_f64, 0.035_f64, 0.022_f64)
+                } else if vm_low.contains("windows") || vm_low.contains("vs20") {
+                    ("windows-latest", "Windows", 2_u32, 0.0080_f64, 0.006_f64, 0.0025_f64)
+                } else {
+                    (
+                        "azure-pipelines-ms-hosted",
+                        "Linux",
+                        2_u32,
+                        0.0080_f64,
+                        0.004_f64,
+                        0.0011_f64,
+                    )
+                };
+
+            let billed_per_job =
+                select_provider_plugin("azure-pipelines").round_job_minutes(raw_mins, true);
+            let total_billed = billed_per_job * (bucket_cnt as f64);
+            let jid = if suffix_os {
+                format!("{} [{}]", aj.name, vm_img)
             } else {
-                (
-                    "azure-pipelines-ms-hosted",
-                    "Linux",
-                    2_u32,
-                    0.0080_f64,
-                    0.004_f64,
-                    0.0011_f64,
-                )
+                aj.name.clone()
             };
 
-        let billed_per_job =
-            select_provider_plugin("azure-pipelines").round_job_minutes(raw_mins, false);
-        let total_billed = billed_per_job * (matrix_count as f64);
-
-        out_jobs.push(ExpandedJobCost {
-            workflow_file: rel_name.to_string(),
-            job_id: aj.name,
-            matrix_combination_count: matrix_count,
-            runner_label: runner_lbl.to_string(),
-            provider: "azure-pipelines".to_string(),
-            os: os_str.to_string(),
-            vcpus,
-            est_raw_duration_mins_per_job: (raw_mins * 100.0).round() / 100.0,
-            billed_mins_per_job: billed_per_job,
-            total_billed_mins_all_matrix: total_billed,
-            rate_per_min_usd: rate_per_min,
-            run_compute_cost_usd: ((total_billed * rate_per_min) * 10000.0).round() / 10000.0,
-            blacksmith_run_cost_usd: ((raw_mins * (matrix_count as f64) * bs_equiv) * 10000.0)
-                .round()
-                / 10000.0,
-            self_hosted_spot_run_cost_usd: ((raw_mins * (matrix_count as f64) * spot_equiv)
-                * 10000.0)
-                .round()
-                / 10000.0,
-            has_concurrency_cancel: false,
-            has_timeout_minutes: aj.has_timeout,
-            has_sparse_or_shallow_clone: aj.has_shallow,
-            uses_cache: aj.has_cache,
-            uploads_artifacts: aj.uploads_artifacts,
-            artifact_retention_days: None,
-        });
+            out_jobs.push(ExpandedJobCost {
+                workflow_file: normalize_ci_path(rel_name),
+                job_id: jid,
+                line_start: aj.line_start,
+                line_end: aj.line_end,
+                matrix_combination_count: bucket_cnt,
+                runner_label: runner_lbl.to_string(),
+                provider: "azure-pipelines".to_string(),
+                os: os_str.to_string(),
+                vcpus,
+                est_raw_duration_mins_per_job: (raw_mins * 100.0).round() / 100.0,
+                billed_mins_per_job: billed_per_job,
+                total_billed_mins_all_matrix: total_billed,
+                rate_per_min_usd: rate_per_min,
+                run_compute_cost_usd: ((total_billed * rate_per_min) * 10000.0).round() / 10000.0,
+                blacksmith_run_cost_usd: ((raw_mins * (bucket_cnt as f64) * bs_equiv) * 10000.0)
+                    .round()
+                    / 10000.0,
+                self_hosted_spot_run_cost_usd: ((raw_mins * (bucket_cnt as f64) * spot_equiv)
+                    * 10000.0)
+                    .round()
+                    / 10000.0,
+                has_concurrency_cancel: false,
+                has_timeout_minutes: aj.has_timeout,
+                has_sparse_or_shallow_clone: aj.has_shallow,
+                uses_cache: aj.has_cache,
+                uploads_artifacts: aj.uploads_artifacts,
+                artifact_retention_days: None,
+                monthly_runs_for_job: None,
+            });
+        }
     }
     (max_raw, total_width)
 }
@@ -3065,9 +3671,81 @@ struct WorkflowHygieneSignals {
     container_images_built_count: usize,
     has_registry_retention_cleanup: bool,
     workflow_trigger_weights: Vec<(String, f64)>,
+    workflow_fixed_monthly_runs: Vec<(String, f64)>, // Exact non-PR cron/manual monthly runs (fixes D1 & D2!)
 }
 
-/// Parses 5-field cron expressions in YAML (`cron: '0 2 * * *'`) into estimated monthly triggers.
+fn eval_cron_field_count(field: &str, min_v: u32, max_v: u32) -> f64 {
+    let span = max_v.saturating_sub(min_v) + 1;
+    let f = field.trim();
+    if f == "*" {
+        return span as f64;
+    }
+    let map_token = |tok: &str| -> Option<u32> {
+        match tok.trim().to_ascii_lowercase().as_str() {
+            "sun" => Some(0),
+            "mon" => Some(1),
+            "tue" => Some(2),
+            "wed" => Some(3),
+            "thu" => Some(4),
+            "fri" => Some(5),
+            "sat" => Some(6),
+            "jan" => Some(1),
+            "feb" => Some(2),
+            "mar" => Some(3),
+            "apr" => Some(4),
+            "may" => Some(5),
+            "jun" => Some(6),
+            "jul" => Some(7),
+            "aug" => Some(8),
+            "sep" => Some(9),
+            "oct" => Some(10),
+            "nov" => Some(11),
+            "dec" => Some(12),
+            other => other.parse::<u32>().ok(),
+        }
+    };
+    let mut hits: Vec<u32> = Vec::new();
+    for part in f.split(',') {
+        let p = part.trim();
+        if p.is_empty() {
+            continue;
+        }
+        let (range_part, step) = if let Some((rp, sp)) = p.split_once('/') {
+            (rp.trim(), sp.trim().parse::<u32>().unwrap_or(1).max(1))
+        } else {
+            (p, 1)
+        };
+        if range_part == "*" {
+            let mut v = min_v;
+            while v <= max_v {
+                if !hits.contains(&v) {
+                    hits.push(v);
+                }
+                v = v.saturating_add(step);
+            }
+        } else if let Some((a_str, b_str)) = range_part.split_once('-') {
+            if let (Some(a_raw), Some(b_raw)) = (map_token(a_str), map_token(b_str)) {
+                let mut v = a_raw.max(min_v);
+                let hi = b_raw.min(if max_v == 6 && b_raw == 7 { 7 } else { max_v });
+                while v <= hi {
+                    let norm_v = if max_v == 6 && v == 7 { 0 } else { v };
+                    if norm_v >= min_v && norm_v <= max_v && !hits.contains(&norm_v) {
+                        hits.push(norm_v);
+                    }
+                    v = v.saturating_add(step);
+                }
+            }
+        } else if let Some(v_raw) = map_token(range_part) {
+            let norm_v = if max_v == 6 && v_raw == 7 { 0 } else { v_raw };
+            if norm_v >= min_v && norm_v <= max_v && !hits.contains(&norm_v) {
+                hits.push(norm_v);
+            }
+        }
+    }
+    (hits.len().max(1) as f64).min(span as f64)
+}
+
+/// Parses 5-field cron expressions in YAML (`cron: '0 2 * * *'`) into exact estimated monthly triggers (fixes D3!).
 fn estimate_cron_monthly_runs(raw_low: &str) -> Option<f64> {
     let mut total = 0.0_f64;
     let mut found = false;
@@ -3083,37 +3761,30 @@ fn estimate_cron_monthly_runs(raw_low: &str) -> Option<f64> {
                 let min_f = fields[0];
                 let hour_f = fields[1];
                 let dom_f = fields[2];
+                let mon_f = fields[3];
                 let dow_f = fields[4];
-                let runs = if let Some(step) = min_f.strip_prefix("*/") {
-                    let n = step.parse::<f64>().unwrap_or(15.0).max(1.0);
-                    (60.0 / n) * 24.0 * 30.0
-                } else if hour_f == "*" {
-                    24.0 * 30.0
-                } else if let Some(step) = hour_f.strip_prefix("*/") {
-                    let n = step.parse::<f64>().unwrap_or(6.0).max(1.0);
-                    (24.0 / n) * 30.0
-                } else if hour_f.contains(',') {
-                    let count = hour_f.split(',').count() as f64;
-                    count * 30.0
-                } else if dom_f != "*" {
-                    let count = dom_f.split(',').count() as f64;
-                    count.max(1.0)
-                } else if dow_f != "*" {
-                    let count = if dow_f.contains('-') {
-                        5.0
-                    } else {
-                        dow_f.split(',').count() as f64
-                    };
-                    count * 4.33
-                } else {
+
+                let mins_per_hr = eval_cron_field_count(min_f, 0, 59);
+                let hrs_per_day = eval_cron_field_count(hour_f, 0, 23);
+                let month_frac = (eval_cron_field_count(mon_f, 1, 12) / 12.0).clamp(1.0 / 12.0, 1.0);
+                let days_per_mo = if dom_f == "*" && dow_f == "*" {
                     30.0
+                } else if dom_f != "*" && dow_f == "*" {
+                    eval_cron_field_count(dom_f, 1, 31).min(30.0)
+                } else if dom_f == "*" && dow_f != "*" {
+                    eval_cron_field_count(dow_f, 0, 6).min(7.0) * 4.33
+                } else {
+                    // POSIX cron OR-semantics when both DOM and DOW are restricted
+                    let dom_d = eval_cron_field_count(dom_f, 1, 31).min(30.0);
+                    let dow_d = eval_cron_field_count(dow_f, 0, 6).min(7.0) * 4.33;
+                    (dom_d + dow_d - (dom_d * dow_d / 30.0)).min(30.0)
                 };
-                total += runs;
+                total += mins_per_hr * hrs_per_day * days_per_mo * month_frac;
             }
         }
     }
     if found {
-        Some(total.max(1.0))
+        Some(total.max(0.08))
     } else {
         None
     }
@@ -3436,13 +4107,20 @@ fn detect_workflow_hygiene_signals(target: &Path) -> WorkflowHygieneSignals {
         if has_sched {
             sig.has_nightly_schedule_workflow = true;
         }
-        // Per-workflow cadence weight (Fixes Bug #8 across static & cron-weighted workflows):
-        // PR/push workflows run at 1.0x monthly cadence; schedule-only workflows use parsed cron frequency; release/manual-only ~4x/mo.
+        // Per-workflow cadence: PR/push workflows scale with PR traffic (`wf_weight = 1.0`),
+        // whereas schedule-only and manual/release-only workflows use FIXED monthly runs independent of PR traffic (fixes D1 & D2!).
+        let parsed_cron_mo = if has_sched {
+            Some(estimate_cron_monthly_runs(raw_low).unwrap_or(30.0))
+        } else {
+            None
+        };
         let wf_weight = if triggers_pr_or_push {
             1.0
-        } else if has_sched {
-            estimate_cron_monthly_runs(raw_low).unwrap_or(30.0) / 433.0
+        } else if let Some(cr) = parsed_cron_mo {
+            sig.workflow_fixed_monthly_runs.push((wf_name.clone(), cr));
+            cr / 433.0
         } else {
+            sig.workflow_fixed_monthly_runs.push((wf_name.clone(), 4.0));
             4.0 / 433.0
         };
         sig.workflow_trigger_weights.push((wf_name.clone(), wf_weight));
@@ -3610,7 +4288,6 @@ fn detect_workflow_hygiene_signals(target: &Path) -> WorkflowHygieneSignals {
         }
         if low.contains("ecr-pull-through")
             || low.contains("pull-through")
-            || low.contains("mirror.gcr.io")
             || low.contains("registry-mirrors")
             || low.contains("verdaccio")
             || low.contains("artifactory")
@@ -3659,8 +4336,7 @@ fn detect_workflow_hygiene_signals(target: &Path) -> WorkflowHygieneSignals {
         {
             sig.has_browser_or_e2e_tests = true;
         }
-        if low.contains("continue-on-error: true")
-            || low.contains("nick-fields/retry")
+        if low.contains("nick-fields/retry")
             || low.contains("wretry")
             || low.contains("max_retries")
             || low.contains("retry:")
@@ -4054,6 +4730,16 @@ pub fn analyze_path_with_telemetry(
     let mut human_pr_dag_critical_path = 0.0_f64;
     let mut concurrent_pr_width = 0usize;
     let mut max_other_width = 0usize;
+    let mut wf_ast_metas: Vec<(String, bool, WorkflowAstMeta)> = Vec::new();
+    let mut any_pr_or_push_workflow = false;
+
+    let is_fixed_only_wf = |wf_rel: &str| -> bool {
+        let wf_base = wf_rel.rsplit('/').next().unwrap_or(wf_rel);
+        hygiene
+            .workflow_fixed_monthly_runs
+            .iter()
+            .any(|(k, _)| k == wf_rel || k.rsplit('/').next().unwrap_or(k) == wf_base)
+    };
 
     if target.is_file() {
         workflow_count = 1;
@@ -4066,44 +4752,76 @@ pub fn analyze_path_with_telemetry(
             let (cp, w) =
                 parse_gitlab_or_other_ci(target, fname, "saas-linux-small-amd64", &mut jobs);
             max_dag_critical_path = max_dag_critical_path.max(cp);
-            human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
-            concurrent_pr_width += w;
+            if !is_fixed_only_wf(fname) {
+                any_pr_or_push_workflow = true;
+                human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
+                concurrent_pr_width += w;
+            } else {
+                max_other_width = max_other_width.max(w);
+            }
         } else if target_low.contains(".circleci") || fname.contains("circleci") {
             let (cp, w) = parse_gitlab_or_other_ci(target, fname, "docker-medium", &mut jobs);
             max_dag_critical_path = max_dag_critical_path.max(cp);
-            human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
-            concurrent_pr_width += w;
+            if !is_fixed_only_wf(fname) {
+                any_pr_or_push_workflow = true;
+                human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
+                concurrent_pr_width += w;
+            } else {
+                max_other_width = max_other_width.max(w);
+            }
         } else if fname.contains("bitbucket") {
             let (cp, w) = parse_gitlab_or_other_ci(target, fname, "bitbucket-1x", &mut jobs);
             max_dag_critical_path = max_dag_critical_path.max(cp);
-            human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
-            concurrent_pr_width += w;
+            if !is_fixed_only_wf(fname) {
+                any_pr_or_push_workflow = true;
+                human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
+                concurrent_pr_width += w;
+            } else {
+                max_other_width = max_other_width.max(w);
+            }
         } else if fname.contains("buildspec") {
             let (cp, w) =
                 parse_gitlab_or_other_ci(target, fname, "BUILD_GENERAL1_SMALL", &mut jobs);
             max_dag_critical_path = max_dag_critical_path.max(cp);
-            human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
-            concurrent_pr_width += w;
+            if !is_fixed_only_wf(fname) {
+                any_pr_or_push_workflow = true;
+                human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
+                concurrent_pr_width += w;
+            } else {
+                max_other_width = max_other_width.max(w);
+            }
         } else if fname.to_ascii_lowercase().contains("cloudbuild") {
             let (cp, w) = parse_gcp_cloudbuild_file(target, fname, &mut jobs);
             max_dag_critical_path = max_dag_critical_path.max(cp);
-            human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
-            concurrent_pr_width += w;
+            if !is_fixed_only_wf(fname) {
+                any_pr_or_push_workflow = true;
+                human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
+                concurrent_pr_width += w;
+            } else {
+                max_other_width = max_other_width.max(w);
+            }
         } else if fname.to_ascii_lowercase().contains("azure-pipelines") {
             let (cp, w) = parse_azure_pipelines_file(target, fname, &mut jobs);
             max_dag_critical_path = max_dag_critical_path.max(cp);
-            human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
-            concurrent_pr_width += w;
+            if !is_fixed_only_wf(fname) {
+                any_pr_or_push_workflow = true;
+                human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
+                concurrent_pr_width += w;
+            } else {
+                max_other_width = max_other_width.max(w);
+            }
         } else {
-            let (wf_cp, wf_w, is_pr) =
+            let (wf_cp, wf_w, is_pr, wf_meta) =
                 parse_github_workflow_file(target, fname, has_repo_gosum, &mut jobs);
             max_dag_critical_path = max_dag_critical_path.max(wf_cp);
             if is_pr {
+                any_pr_or_push_workflow = true;
                 human_pr_dag_critical_path = human_pr_dag_critical_path.max(wf_cp);
                 concurrent_pr_width += wf_w;
             } else {
                 max_other_width = max_other_width.max(wf_w);
             }
+            wf_ast_metas.push((fname.to_string(), is_pr, wf_meta));
         }
     } else {
         let gh_dir = target.join(".github").join("workflows");
@@ -4125,15 +4843,17 @@ pub fn analyze_path_with_telemetry(
                         ".github/workflows/{}",
                         p.file_name().and_then(|s| s.to_str()).unwrap_or("ci.yml")
                     );
-                    let (wf_cp, wf_w, is_pr) =
+                    let (wf_cp, wf_w, is_pr, wf_meta) =
                         parse_github_workflow_file(&p, &rel, has_repo_gosum, &mut jobs);
                     max_dag_critical_path = max_dag_critical_path.max(wf_cp);
                     if is_pr {
+                        any_pr_or_push_workflow = true;
                         human_pr_dag_critical_path = human_pr_dag_critical_path.max(wf_cp);
                         concurrent_pr_width += wf_w;
                     } else {
                         max_other_width = max_other_width.max(wf_w);
                     }
+                    wf_ast_metas.push((rel, is_pr, wf_meta));
                 }
             }
         }
@@ -4147,8 +4867,13 @@ pub fn analyze_path_with_telemetry(
                 &mut jobs,
             );
             max_dag_critical_path = max_dag_critical_path.max(cp);
-            human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
-            concurrent_pr_width += w;
+            if !is_fixed_only_wf(".gitlab-ci.yml") {
+                any_pr_or_push_workflow = true;
+                human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
+                concurrent_pr_width += w;
+            } else {
+                max_other_width = max_other_width.max(w);
+            }
         }
         let circle_file = target.join(".circleci").join("config.yml");
         if circle_file.is_file() {
@@ -4160,8 +4885,13 @@ pub fn analyze_path_with_telemetry(
                 &mut jobs,
             );
             max_dag_critical_path = max_dag_critical_path.max(cp);
-            human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
-            concurrent_pr_width += w;
+            if !is_fixed_only_wf(".circleci/config.yml") {
+                any_pr_or_push_workflow = true;
+                human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
+                concurrent_pr_width += w;
+            } else {
+                max_other_width = max_other_width.max(w);
+            }
         }
         let bb_file = target.join("bitbucket-pipelines.yml");
         if bb_file.is_file() {
@@ -4173,8 +4903,13 @@ pub fn analyze_path_with_telemetry(
                 &mut jobs,
             );
             max_dag_critical_path = max_dag_critical_path.max(cp);
-            human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
-            concurrent_pr_width += w;
+            if !is_fixed_only_wf("bitbucket-pipelines.yml") {
+                any_pr_or_push_workflow = true;
+                human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
+                concurrent_pr_width += w;
+            } else {
+                max_other_width = max_other_width.max(w);
+            }
         }
         let cb_file = target.join("buildspec.yml");
         if cb_file.is_file() {
@@ -4182,8 +4917,13 @@ pub fn analyze_path_with_telemetry(
             let (cp, w) =
                 parse_gitlab_or_other_ci(&cb_file, "buildspec.yml", "BUILD_GENERAL1_SMALL", &mut jobs);
             max_dag_critical_path = max_dag_critical_path.max(cp);
-            human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
-            concurrent_pr_width += w;
+            if !is_fixed_only_wf("buildspec.yml") {
+                any_pr_or_push_workflow = true;
+                human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
+                concurrent_pr_width += w;
+            } else {
+                max_other_width = max_other_width.max(w);
+            }
         }
         for gcp_name in ["cloudbuild.yaml", "cloudbuild.yml"] {
             let gcp_file = target.join(gcp_name);
@@ -4191,8 +4931,13 @@ pub fn analyze_path_with_telemetry(
                 workflow_count += 1;
                 let (cp, w) = parse_gcp_cloudbuild_file(&gcp_file, gcp_name, &mut jobs);
                 max_dag_critical_path = max_dag_critical_path.max(cp);
-                human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
-                concurrent_pr_width += w;
+                if !is_fixed_only_wf(gcp_name) {
+                    any_pr_or_push_workflow = true;
+                    human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
+                    concurrent_pr_width += w;
+                } else {
+                    max_other_width = max_other_width.max(w);
+                }
             }
         }
         for az_name in ["azure-pipelines.yml", "azure-pipelines.yaml"] {
@@ -4201,8 +4946,13 @@ pub fn analyze_path_with_telemetry(
                 workflow_count += 1;
                 let (cp, w) = parse_azure_pipelines_file(&az_file, az_name, &mut jobs);
                 max_dag_critical_path = max_dag_critical_path.max(cp);
-                human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
-                concurrent_pr_width += w;
+                if !is_fixed_only_wf(az_name) {
+                    any_pr_or_push_workflow = true;
+                    human_pr_dag_critical_path = human_pr_dag_critical_path.max(cp);
+                    concurrent_pr_width += w;
+                } else {
+                    max_other_width = max_other_width.max(w);
+                }
             }
         }
         // Fallback for monorepos with nested `<subdir>/.github/workflows` (e.g., `Eazy-Ops/Automation` `cron/.github/workflows`)
@@ -4237,7 +4987,7 @@ pub fn analyze_path_with_telemetry(
                                 );
                                 let sub_gosum =
                                     sub_dir.join("go.sum").exists() || sub_dir.join("go.mod").exists();
-                                let (wf_cp, wf_w, is_pr) = parse_github_workflow_file(
+                                let (wf_cp, wf_w, is_pr, wf_meta) = parse_github_workflow_file(
                                     &p,
                                     &rel,
                                     has_repo_gosum || sub_gosum,
@@ -4245,12 +4995,14 @@ pub fn analyze_path_with_telemetry(
                                 );
                                 max_dag_critical_path = max_dag_critical_path.max(wf_cp);
                                 if is_pr {
+                                    any_pr_or_push_workflow = true;
                                     human_pr_dag_critical_path =
                                         human_pr_dag_critical_path.max(wf_cp);
                                     concurrent_pr_width += wf_w;
                                 } else {
                                     max_other_width = max_other_width.max(wf_w);
                                 }
+                                wf_ast_metas.push((rel, is_pr, wf_meta));
                             }
                         }
                     }
@@ -4259,92 +5011,286 @@ pub fn analyze_path_with_telemetry(
         }
     }
 
-    // Overlay real observed job durations (exact & matrix-cell prefix matches) when live or lockfile telemetry is present
-    let static_max_job_dur = jobs
-        .iter()
-        .map(|j| j.est_raw_duration_mins_per_job)
-        .fold(0.0_f64, f64::max);
+    fn split_base_jid(jid: &str) -> (&str, Option<&str>) {
+        if let Some(idx) = jid.rfind(" [") {
+            let tag = jid[idx + 2..].trim_end_matches(']');
+            if matches!(tag, "linux" | "windows" | "macos") {
+                return (&jid[..idx], Some(tag));
+            }
+        }
+        (jid, None)
+    }
+
+    // Overlay real observed job labels, dynamic `fromJSON` matrix counts, and exact ceiled durations (`A1, A2, C2, C3, C4, C6`)
     if let Some(ref telem) = active_telemetry {
-        if !telem.job_runtime_labels.is_empty() {
-            for j in &mut jobs {
-                if j.runner_label.contains("${{") || j.runner_label == "ubuntu-latest" {
-                    let wf_base = j.workflow_file.trim_start_matches(".github/workflows/");
-                    let k1 = format!("{}#{}", j.workflow_file, j.job_id);
-                    let k2 = format!("{}#{}", wf_base, j.job_id);
-                    if let Some((_, rt_lbl)) = telem
-                        .job_runtime_labels
-                        .iter()
-                        .find(|(k, _)| k == &k1 || k == &k2 || k == &j.job_id)
+        let rt_has_scoped = telem.job_runtime_labels.iter().any(|(k, _)| k.contains('#'));
+        let dur_has_scoped = telem.job_durations_mins.iter().any(|(k, _)| k.contains('#'));
+        let mat_has_scoped = telem.job_observed_matrix_counts.iter().any(|(k, _)| k.contains('#'));
+        let bil_has_scoped = telem.job_billed_mins.iter().any(|(k, _)| k.contains('#'));
+
+        let match_wf_scope = |key: &str, wf_file: &str, has_scoped: bool| -> Option<String> {
+            let wf_base = wf_file.rsplit('/').next().unwrap_or(wf_file);
+            if let Some((k_wf, k_job)) = key.split_once('#') {
+                let k_wf_base = k_wf.rsplit('/').next().unwrap_or(k_wf);
+                if k_wf == wf_file || k_wf_base == wf_base {
+                    Some(k_job.to_string())
+                } else {
+                    None
+                }
+            } else if workflow_count <= 1 || !has_scoped {
+                Some(key.to_string())
+            } else {
+                None
+            }
+        };
+
+        let leg_matches_os = |k_job: &str, os_tag: &str| -> bool {
+            let low = k_job.to_ascii_lowercase();
+            match os_tag {
+                "macos" => low.contains("macos") || low.contains("darwin") || low.contains("osx"),
+                "windows" => low.contains("windows") || low.contains("win32") || low.contains("win64"),
+                _ => low.contains("ubuntu") || low.contains("linux") || low.contains("debian"),
+            }
+        };
+
+        for j in &mut jobs {
+            let (base_jid, multi_os_tag) = split_base_jid(&j.job_id);
+            let wf_meta_opt = wf_ast_metas
+                .iter()
+                .find(|(wf, _, _)| wf == &j.workflow_file)
+                .map(|(_, _, m)| m);
+            let display_name = wf_meta_opt.and_then(|m| {
+                m.job_display_names
+                    .iter()
+                    .find(|(id, _)| id == base_jid)
+                    .map(|(_, dn)| dn.as_str())
+            });
+            let is_static_matrix_job = wf_meta_opt
+                .map(|m| m.matrix_job_ids.iter().any(|id| id == base_jid))
+                .unwrap_or(j.matrix_combination_count > 1 || multi_os_tag.is_some());
+
+            let cand_matches_exact_or_prefix = |k_job: &str, allow_prefix: bool| -> bool {
+                let cands: [&str; 2] = [base_jid, display_name.unwrap_or(base_jid)];
+                for cand in cands {
+                    if k_job.eq_ignore_ascii_case(cand)
+                        || k_job.eq_ignore_ascii_case(&j.job_id)
                     {
-                        if j.runner_label.contains("${{") || !rt_lbl.eq_ignore_ascii_case("ubuntu-latest") {
-                            let sku = resolve_runner_sku(rt_lbl);
-                            j.runner_label = rt_lbl.clone();
-                            j.provider = sku.provider.to_string();
-                            j.os = sku.os.to_string();
-                            j.vcpus = sku.vcpus;
-                            j.rate_per_min_usd = sku.rate_per_min_usd;
-                            let billed_per_job = select_provider_plugin(&j.provider)
-                                .round_job_minutes(j.est_raw_duration_mins_per_job, sku.ceil_to_whole_minute);
-                            let total_billed = billed_per_job * (j.matrix_combination_count as f64);
-                            j.billed_mins_per_job = billed_per_job;
-                            j.total_billed_mins_all_matrix = total_billed;
-                            j.run_compute_cost_usd = ((total_billed * j.rate_per_min_usd) * 10000.0).round() / 10000.0;
-                            j.blacksmith_run_cost_usd = ((total_billed * sku.blacksmith_equiv_rate_usd) * 10000.0).round() / 10000.0;
-                            j.self_hosted_spot_run_cost_usd = ((total_billed * sku.self_hosted_spot_rate_usd) * 10000.0).round() / 10000.0;
+                        return true;
+                    }
+                    if allow_prefix && !k_job.contains(" [os:") {
+                        let pref = format!("{} (", cand);
+                        if k_job.len() > pref.len()
+                            && k_job[..pref.len()].eq_ignore_ascii_case(&pref)
+                        {
+                            return true;
                         }
                     }
                 }
-            }
-        }
-        if !telem.job_durations_mins.is_empty() {
-            for j in &mut jobs {
-                let wf_base = j.workflow_file.trim_start_matches(".github/workflows/");
-                let k1 = format!("{}#{}", j.workflow_file, j.job_id);
-                let k2 = format!("{}#{}", wf_base, j.job_id);
-                let p1 = format!("{} (", k1);
-                let p2 = format!("{} (", k2);
-                let p3 = format!("{} (", j.job_id);
-                let matching: Vec<f64> = telem
-                    .job_durations_mins
+                false
+            };
+
+            // 1. Dynamic `fromJSON` matrix fan-out calibration (`C3`)
+            if !is_static_matrix_job
+                && j.matrix_combination_count == 1
+                && !telem.job_observed_matrix_counts.is_empty()
+            {
+                if let Some(obs_cnt) = telem
+                    .job_observed_matrix_counts
                     .iter()
-                    .filter(|(k, _)| {
-                        k == &k1
-                            || k == &k2
-                            || k == &j.job_id
-                            || k.starts_with(&p1)
-                            || k.starts_with(&p2)
-                            || k.starts_with(&p3)
+                    .filter_map(|(k, cnt)| {
+                        let kj = match_wf_scope(k, &j.workflow_file, mat_has_scoped)?;
+                        if cand_matches_exact_or_prefix(&kj, false) {
+                            Some(*cnt)
+                        } else {
+                            None
+                        }
                     })
-                    .map(|(_, v)| *v)
-                    .collect();
-                if !matching.is_empty() {
-                    let raw_m = matching.iter().sum::<f64>() / (matching.len() as f64);
+                    .max()
+                {
+                    if obs_cnt > 1 {
+                        j.matrix_combination_count = obs_cnt;
+                        let total_billed = j.billed_mins_per_job * (obs_cnt as f64);
+                        let sku = resolve_runner_sku(&j.runner_label);
+                        j.total_billed_mins_all_matrix = total_billed;
+                        j.run_compute_cost_usd =
+                            ((total_billed * j.rate_per_min_usd) * 10000.0).round() / 10000.0;
+                        j.blacksmith_run_cost_usd = ((j.est_raw_duration_mins_per_job
+                            * (obs_cnt as f64)
+                            * sku.blacksmith_equiv_rate_usd)
+                            * 10000.0)
+                            .round()
+                            / 10000.0;
+                        j.self_hosted_spot_run_cost_usd = ((j.est_raw_duration_mins_per_job
+                            * (obs_cnt as f64)
+                            * sku.self_hosted_spot_rate_usd)
+                            * 10000.0)
+                            .round()
+                            / 10000.0;
+                    }
+                }
+            }
+
+            // 2. Runtime runner label override (`C4`, preserving unceiled Spot/MicroVM math `A2`)
+            if !telem.job_runtime_labels.is_empty()
+                && multi_os_tag.is_none()
+                && (j.runner_label.contains("${{") || j.runner_label == "ubuntu-latest")
+            {
+                if let Some(rt_lbl) = telem.job_runtime_labels.iter().find_map(|(k, lbl)| {
+                    let kj = match_wf_scope(k, &j.workflow_file, rt_has_scoped)?;
+                    if cand_matches_exact_or_prefix(&kj, true) {
+                        Some(lbl)
+                    } else {
+                        None
+                    }
+                }) {
+                    if j.runner_label.contains("${{")
+                        || !rt_lbl.eq_ignore_ascii_case("ubuntu-latest")
+                    {
+                        let sku = resolve_runner_sku(rt_lbl);
+                        j.runner_label = rt_lbl.clone();
+                        j.provider = sku.provider.to_string();
+                        j.os = sku.os.to_string();
+                        j.vcpus = sku.vcpus;
+                        j.rate_per_min_usd = sku.rate_per_min_usd;
+                        let billed_per_job = select_provider_plugin(&j.provider)
+                            .round_job_minutes(j.est_raw_duration_mins_per_job, sku.ceil_to_whole_minute);
+                        let total_billed = billed_per_job * (j.matrix_combination_count as f64);
+                        let total_raw =
+                            j.est_raw_duration_mins_per_job * (j.matrix_combination_count as f64);
+                        j.billed_mins_per_job = billed_per_job;
+                        j.total_billed_mins_all_matrix = total_billed;
+                        j.run_compute_cost_usd =
+                            ((total_billed * j.rate_per_min_usd) * 10000.0).round() / 10000.0;
+                        j.blacksmith_run_cost_usd =
+                            ((total_raw * sku.blacksmith_equiv_rate_usd) * 10000.0).round()
+                                / 10000.0;
+                        j.self_hosted_spot_run_cost_usd =
+                            ((total_raw * sku.self_hosted_spot_rate_usd) * 10000.0).round()
+                                / 10000.0;
+                    }
+                }
+            }
+
+            // 3. Duration & exact mean-of-ceilings billed minutes (`A1, A2, C2`)
+            if !telem.job_durations_mins.is_empty() {
+                let collect_vals = |vec: &[(String, f64)], has_scoped: bool| -> Vec<f64> {
+                    if let Some(os_tag) = multi_os_tag {
+                        let cands: [&str; 2] = [base_jid, display_name.unwrap_or(base_jid)];
+                        let os_bucket_vals: Vec<f64> = vec
+                            .iter()
+                            .filter_map(|(k, v)| {
+                                let kj = match_wf_scope(k, &j.workflow_file, has_scoped)?;
+                                for cand in cands {
+                                    let want = format!("{} [os:{}]", cand, os_tag);
+                                    if kj.eq_ignore_ascii_case(&want) {
+                                        return Some(*v);
+                                    }
+                                }
+                                None
+                            })
+                            .collect();
+                        if !os_bucket_vals.is_empty() {
+                            return os_bucket_vals;
+                        }
+                        let os_leg_vals: Vec<f64> = vec
+                            .iter()
+                            .filter_map(|(k, v)| {
+                                let kj = match_wf_scope(k, &j.workflow_file, has_scoped)?;
+                                if cand_matches_exact_or_prefix(&kj, true)
+                                    && leg_matches_os(&kj, os_tag)
+                                {
+                                    Some(*v)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        if !os_leg_vals.is_empty() {
+                            return os_leg_vals;
+                        }
+                    }
+                    vec.iter()
+                        .filter_map(|(k, v)| {
+                            let kj = match_wf_scope(k, &j.workflow_file, has_scoped)?;
+                            if cand_matches_exact_or_prefix(&kj, true) {
+                                Some(*v)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                };
+
+                let matching_raw = collect_vals(&telem.job_durations_mins, dur_has_scoped);
+                if !matching_raw.is_empty() {
+                    let raw_m = matching_raw.iter().sum::<f64>() / (matching_raw.len() as f64);
                     let raw_clamped = (raw_m.max(0.05) * 100.0).round() / 100.0;
                     let sku = resolve_runner_sku(&j.runner_label);
-                    let billed_per_job = select_provider_plugin(&j.provider)
-                        .round_job_minutes(raw_clamped, sku.ceil_to_whole_minute);
-                    let total_billed = billed_per_job * (j.matrix_combination_count as f64);
-                    let bs_rate = sku.blacksmith_equiv_rate_usd;
-                    let spot_rate = sku.self_hosted_spot_rate_usd;
+                    let matching_billed = collect_vals(&telem.job_billed_mins, bil_has_scoped);
+                    let billed_per_job = if !matching_billed.is_empty() {
+                        let bm =
+                            matching_billed.iter().sum::<f64>() / (matching_billed.len() as f64);
+                        let min_floor = if sku.ceil_to_whole_minute {
+                            raw_clamped.max(1.0)
+                        } else {
+                            raw_clamped
+                        };
+                        ((bm.max(min_floor)) * 100.0).round() / 100.0
+                    } else {
+                        select_provider_plugin(&j.provider)
+                            .round_job_minutes(raw_clamped, sku.ceil_to_whole_minute)
+                    };
+                    let mat_f = j.matrix_combination_count as f64;
+                    let total_billed = (billed_per_job * mat_f * 100.0).round() / 100.0;
+                    let total_raw = raw_clamped * mat_f;
                     j.est_raw_duration_mins_per_job = raw_clamped;
                     j.billed_mins_per_job = billed_per_job;
                     j.total_billed_mins_all_matrix = total_billed;
                     j.run_compute_cost_usd =
                         ((total_billed * j.rate_per_min_usd) * 10000.0).round() / 10000.0;
                     j.blacksmith_run_cost_usd =
-                        ((total_billed * bs_rate) * 10000.0).round() / 10000.0;
+                        ((total_raw * sku.blacksmith_equiv_rate_usd) * 10000.0).round() / 10000.0;
                     j.self_hosted_spot_run_cost_usd =
-                        ((total_billed * spot_rate) * 10000.0).round() / 10000.0;
+                        ((total_raw * sku.self_hosted_spot_rate_usd) * 10000.0).round() / 10000.0;
                 }
             }
-            let new_max_job_dur = jobs
-                .iter()
-                .map(|j| j.est_raw_duration_mins_per_job)
-                .fold(0.0_f64, f64::max);
-            if static_max_job_dur > 0.0 {
-                let ratio = new_max_job_dur / static_max_job_dur;
-                max_dag_critical_path *= ratio;
-                human_pr_dag_critical_path *= ratio;
+        }
+
+        // Recompute exact DAG critical path per workflow from overlaid durations (`C6`)
+        if !telem.job_durations_mins.is_empty() && !wf_ast_metas.is_empty() {
+            let mut new_max_cp = 0.0_f64;
+            let mut new_human_cp = 0.0_f64;
+            for (wf_rel, is_pr, meta) in &wf_ast_metas {
+                let updated_nodes: Vec<(String, f64, usize, Vec<String>)> = meta
+                    .dag_nodes
+                    .iter()
+                    .map(|(nid, orig_dur, exp_c, deps)| {
+                        let overlaid_dur = jobs
+                            .iter()
+                            .filter(|j| {
+                                &j.workflow_file == wf_rel && split_base_jid(&j.job_id).0 == nid
+                            })
+                            .map(|j| j.est_raw_duration_mins_per_job)
+                            .fold(0.0_f64, f64::max);
+                        let eff_dur = if overlaid_dur > 0.0 {
+                            overlaid_dur
+                        } else {
+                            *orig_dur
+                        };
+                        (nid.clone(), eff_dur, *exp_c, deps.clone())
+                    })
+                    .collect();
+                let (cp, _) = compute_dag_critical_path_and_width(&updated_nodes);
+                new_max_cp = new_max_cp.max(cp);
+                if *is_pr {
+                    new_human_cp = new_human_cp.max(cp);
+                }
+            }
+            if new_max_cp > 0.0 {
+                max_dag_critical_path = new_max_cp;
+            }
+            if new_human_cp > 0.0 {
+                human_pr_dag_critical_path = new_human_cp;
             }
         }
     }
@@ -4365,7 +5311,15 @@ pub fn analyze_path_with_telemetry(
             .unwrap_or("github-actions")
     };
 
-    let total_defined_jobs = jobs.len();
+    // Count distinct `(workflow_file, base_jid)` so multi-OS matrix buckets count as 1 defined YAML job (`D5`)
+    let mut distinct_defined_jobs: Vec<(&str, &str)> = Vec::new();
+    for j in &jobs {
+        let pair = (j.workflow_file.as_str(), split_base_jid(&j.job_id).0);
+        if !distinct_defined_jobs.contains(&pair) {
+            distinct_defined_jobs.push(pair);
+        }
+    }
+    let total_defined_jobs = distinct_defined_jobs.len();
     let total_expanded_matrix_jobs: usize = jobs.iter().map(|j| j.matrix_combination_count).sum();
     let raw_duration_mins_per_run: f64 = jobs
         .iter()
@@ -4376,24 +5330,32 @@ pub fn analyze_path_with_telemetry(
         .map(|j| j.est_raw_duration_mins_per_job)
         .fold(0.0_f64, f64::max);
     let critical_path_wait_mins_per_run: f64 = max_dag_critical_path.max(max_single_job_mins);
-    let human_wait_mins_per_run: f64 = if human_pr_dag_critical_path > 0.0 {
+    let human_wait_mins_per_run: f64 = if !any_pr_or_push_workflow {
+        0.0
+    } else if human_pr_dag_critical_path > 0.0 {
         human_pr_dag_critical_path
     } else {
         critical_path_wait_mins_per_run
     };
     let billed_mins_per_run: f64 = jobs.iter().map(|j| j.total_billed_mins_all_matrix).sum();
 
-    let monthly_runs = if workflow_count == 0 {
-        0.0
-    } else if let Some(obs_runs) = active_telemetry.as_ref().and_then(|t| t.observed_monthly_runs) {
-        obs_runs.max(0.0)
-    } else {
-        (usage.prs_per_week * usage.pushes_per_pr * 4.33).round()
+    let pr_monthly_runs = (usage.prs_per_week * usage.pushes_per_pr * 4.33).round();
+    let lookup_fixed_wf_runs = |wf_file: &str| -> Option<f64> {
+        let wf_base = wf_file.rsplit('/').next().unwrap_or(wf_file);
+        hygiene
+            .workflow_fixed_monthly_runs
+            .iter()
+            .find(|(k, _)| k == wf_file || k.rsplit('/').next().unwrap_or(k) == wf_base)
+            .map(|(_, v)| *v)
     };
-
     let has_live_wf_runs = active_telemetry
         .as_ref()
         .map(|t| !t.workflow_monthly_runs.is_empty())
+        .unwrap_or(false);
+    let is_truncated_live_window = active_telemetry
+        .as_ref()
+        .and_then(|t| Some((t.observed_monthly_runs?, t.observed_runs_in_window? as f64)))
+        .map(|(mo, obs)| obs > 0.0 && mo > obs * 1.5)
         .unwrap_or(false);
     let lookup_live_wf_runs = |wf_file: &str| -> Option<f64> {
         let telem = active_telemetry.as_ref()?;
@@ -4408,57 +5370,68 @@ pub fn analyze_path_with_telemetry(
             .map(|(_, v)| *v)
     };
 
-    let monthly_billed_mins = if has_live_wf_runs {
+    let monthly_runs = if workflow_count == 0 {
+        0.0
+    } else if let Some(obs_runs) = active_telemetry.as_ref().and_then(|t| t.observed_monthly_runs) {
+        obs_runs.max(0.0)
+    } else if !any_pr_or_push_workflow && !hygiene.workflow_fixed_monthly_runs.is_empty() {
+        (hygiene
+            .workflow_fixed_monthly_runs
+            .iter()
+            .map(|(_, r)| *r)
+            .sum::<f64>()
+            * 100.0)
+            .round()
+            / 100.0
+    } else {
+        pr_monthly_runs
+    };
+
+    // Populate exact per-workflow `monthly_runs_for_job` on EVERY job (`C1, C7, D1, D2`)
+    for j in &mut jobs {
+        let wf_r = if has_live_wf_runs {
+            if let Some(r) = lookup_live_wf_runs(&j.workflow_file) {
+                r.max(0.0)
+            } else if is_truncated_live_window {
+                // High-velocity repo where 300-run sample covered <20d: preserve periodic cron schedules (`C7`)
+                lookup_fixed_wf_runs(&j.workflow_file)
+                    .filter(|&cr| cr > 4.0)
+                    .unwrap_or(0.0)
+            } else {
+                0.0
+            }
+        } else if active_telemetry
+            .as_ref()
+            .and_then(|t| t.observed_monthly_runs)
+            .is_some()
+        {
+            monthly_runs
+        } else if let Some(fixed_r) = lookup_fixed_wf_runs(&j.workflow_file) {
+            fixed_r.max(0.0)
+        } else {
+            pr_monthly_runs
+        };
+        j.monthly_runs_for_job = Some((wf_r * 100.0).round() / 100.0);
+    }
+
+    let monthly_billed_mins = if !jobs.is_empty() {
         let m: f64 = jobs
             .iter()
-            .map(|j| {
-                let r = lookup_live_wf_runs(&j.workflow_file).unwrap_or(0.0);
-                j.total_billed_mins_all_matrix * r
-            })
+            .map(|j| j.total_billed_mins_all_matrix * j.effective_monthly_runs(monthly_runs))
             .sum();
         (m * 100.0).round() / 100.0
     } else if let Some(inv_mins) = active_telemetry
         .as_ref()
         .and_then(|t| t.observed_monthly_runs)
-        .filter(|_| jobs.is_empty())
     {
         inv_mins
     } else {
         (billed_mins_per_run * monthly_runs * 100.0).round() / 100.0
     };
 
-    let effective_runs_for_ledger = if has_live_wf_runs && billed_mins_per_run > 0.0 {
-        monthly_billed_mins / billed_mins_per_run
-    } else {
-        monthly_runs
-    };
-
     let provider_plugin = select_provider_plugin(primary_provider);
-    let (mut invoice_receipt, per_run_os_weighted_pool_mins) = if has_live_wf_runs {
-        // Scale each job by its own workflow's observed 30d runs so mixed OS / Larger Runner workflows
-        // draw down free-tier pool minutes accurately without cross-workflow ratio distortion!
-        let per_run_rec =
-            provider_plugin.compute_invoice_ledger(&jobs, 1.0, &usage.tier, visibility);
-        let scaled_jobs: Vec<ExpandedJobCost> = jobs
-            .iter()
-            .map(|j| {
-                let wf_r = lookup_live_wf_runs(&j.workflow_file).unwrap_or(0.0);
-                let mut cj = j.clone();
-                cj.total_billed_mins_all_matrix = j.total_billed_mins_all_matrix * wf_r;
-                cj.run_compute_cost_usd = j.run_compute_cost_usd * wf_r;
-                cj
-            })
-            .collect();
-        let monthly_rec =
-            provider_plugin.compute_invoice_ledger(&scaled_jobs, 1.0, &usage.tier, visibility);
-        (monthly_rec, per_run_rec.os_weighted_pool_mins_per_run)
-    } else {
-        let rec =
-            provider_plugin.compute_invoice_ledger(&jobs, monthly_runs, &usage.tier, visibility);
-        let pr_os = rec.os_weighted_pool_mins_per_run;
-        (rec, pr_os)
-    };
-    invoice_receipt.os_weighted_pool_mins_per_run = per_run_os_weighted_pool_mins;
+    let invoice_receipt =
+        provider_plugin.compute_invoice_ledger(&jobs, monthly_runs, &usage.tier, visibility);
     let free_tier_included_mins = invoice_receipt.free_tier_included_mins;
     let free_tier_quota_burn_pct = invoice_receipt.free_tier_quota_burn_pct;
     let effective_tier = invoice_receipt.effective_tier;
@@ -4466,36 +5439,42 @@ pub fn analyze_path_with_telemetry(
     let gross_compute_cost_per_run_usd = norm_zero(
         (jobs.iter().map(|j| j.run_compute_cost_usd).sum::<f64>() * 10000.0).round() / 10000.0,
     );
-    let gross_monthly_compute_cost_usd = norm_zero(
-        if let Some(inv_gross) = active_telemetry
-            .as_ref()
-            .filter(|t| t.provenance_mode == "invoice_reconciled")
-            .and_then(|t| t.invoice_gross_usd)
-        {
-            (inv_gross * 100.0).round() / 100.0
-        } else if has_live_wf_runs {
-            let g: f64 = jobs
-                .iter()
-                .map(|j| {
-                    let r = lookup_live_wf_runs(&j.workflow_file).unwrap_or(0.0);
-                    j.run_compute_cost_usd * r
-                })
-                .sum();
-            (g * 100.0).round() / 100.0
+    let is_invoice_reconciled = active_telemetry
+        .as_ref()
+        .map(|t| t.provenance_mode == "invoice_reconciled")
+        .unwrap_or(false);
+    let mut gross_monthly_compute_cost_usd = norm_zero(
+        if is_invoice_reconciled {
+            if let Some(inv_gross) = active_telemetry
+                .as_ref()
+                .and_then(|t| t.invoice_compute_gross_usd.or(t.invoice_gross_usd))
+            {
+                (inv_gross * 100.0).round() / 100.0
+            } else {
+                invoice_receipt.gross_monthly_compute_cost_usd
+            }
         } else {
-            ((gross_compute_cost_per_run_usd * monthly_runs) * 100.0).round() / 100.0
+            invoice_receipt.gross_monthly_compute_cost_usd
         },
     );
 
-    let (raw_net_billed, raw_discount) = if let Some(inv_net) = active_telemetry
-        .as_ref()
-        .and_then(|t| t.invoice_net_billed_usd)
-    {
-        let disc = active_telemetry
+    let (raw_net_billed, raw_discount) = if is_invoice_reconciled {
+        if let Some(inv_net) = active_telemetry
             .as_ref()
-            .and_then(|t| t.invoice_discount_usd)
-            .unwrap_or_else(|| (gross_monthly_compute_cost_usd - inv_net).max(0.0));
-        ((inv_net * 100.0).round() / 100.0, (disc * 100.0).round() / 100.0)
+            .and_then(|t| t.invoice_compute_net_usd.or(t.invoice_net_billed_usd))
+        {
+            let net_r = (inv_net.max(0.0) * 100.0).round() / 100.0;
+            if net_r > gross_monthly_compute_cost_usd {
+                gross_monthly_compute_cost_usd = net_r;
+            }
+            let disc_r = ((gross_monthly_compute_cost_usd - net_r).max(0.0) * 100.0).round() / 100.0;
+            (net_r, disc_r)
+        } else {
+            (
+                invoice_receipt.net_billed_monthly_compute_cost_usd,
+                invoice_receipt.discount_allowance_monthly_usd,
+            )
+        }
     } else {
         (
             invoice_receipt.net_billed_monthly_compute_cost_usd,
@@ -4510,7 +5489,10 @@ pub fn analyze_path_with_telemetry(
         ((jobs
             .iter()
             .filter(|j| j.matrix_combination_count > 1)
-            .map(|j| ((j.matrix_combination_count.saturating_sub(1)) as f64) * 1.25)
+            .map(|j| {
+                let dup_shards = (j.matrix_combination_count.saturating_sub(1)) as f64;
+                (dup_shards * 1.25).min(j.est_raw_duration_mins_per_job * dup_shards * 0.75)
+            })
             .sum::<f64>())
             * 100.0)
             .round()
@@ -4518,53 +5500,70 @@ pub fn analyze_path_with_telemetry(
     );
     let clones_per_ci_run = total_expanded_matrix_jobs;
 
-    // DORA-anchored 40% productivity-loss factor applied consistently across headline & component wait KPIs (Fixes Bug #9 & #10)
+    // DORA-anchored 40% productivity-loss factor applied without cascading intermediate rounding (`G1`)
     let productivity_loss_factor = 0.40_f64;
-    let human_monthly_runs = active_telemetry
-        .as_ref()
-        .and_then(|t| t.observed_human_pr_monthly_runs)
-        .unwrap_or(monthly_runs);
-    let dev_wait_cost_per_run_usd = (((human_wait_mins_per_run / 60.0)
-        * usage.dev_hourly_rate_usd
-        * productivity_loss_factor)
-        * 100.0)
-        .round()
-        / 100.0;
+    let human_monthly_runs = if !any_pr_or_push_workflow {
+        0.0
+    } else {
+        active_telemetry
+            .as_ref()
+            .and_then(|t| t.observed_human_pr_monthly_runs)
+            .unwrap_or(if has_live_wf_runs { monthly_runs } else { pr_monthly_runs })
+    };
+    let raw_dev_wait_per_run =
+        (human_wait_mins_per_run / 60.0) * usage.dev_hourly_rate_usd * productivity_loss_factor;
+    let dev_wait_cost_per_run_usd = norm_zero((raw_dev_wait_per_run * 100.0).round() / 100.0);
     let monthly_dev_wait_cost_usd =
-        ((dev_wait_cost_per_run_usd * human_monthly_runs) * 100.0).round() / 100.0;
+        norm_zero(((raw_dev_wait_per_run * human_monthly_runs) * 100.0).round() / 100.0);
 
     let any_artifacts = jobs.iter().any(|j| j.uploads_artifacts);
 
-    let monthly_blacksmith_cost_usd = ((jobs
-        .iter()
-        .map(|j| j.blacksmith_run_cost_usd)
-        .sum::<f64>()
-        * effective_runs_for_ledger)
-        * 100.0)
-        .round()
-        / 100.0;
+    let monthly_blacksmith_cost_usd = norm_zero(
+        ((jobs
+            .iter()
+            .map(|j| j.blacksmith_run_cost_usd * j.effective_monthly_runs(monthly_runs))
+            .sum::<f64>())
+            * 100.0)
+            .round()
+            / 100.0,
+    );
     let monthly_self_hosted_spot_cost_usd = if jobs.is_empty() {
         0.0
     } else {
-        ((jobs
-            .iter()
-            .map(|j| j.self_hosted_spot_run_cost_usd)
-            .sum::<f64>()
-            * effective_runs_for_ledger
-            + SELF_HOSTED_VPS_BASE_MONTHLY_USD)
-            * 100.0)
-            .round()
-            / 100.0
+        norm_zero(
+            ((jobs
+                .iter()
+                .map(|j| j.self_hosted_spot_run_cost_usd * j.effective_monthly_runs(monthly_runs))
+                .sum::<f64>()
+                + SELF_HOSTED_VPS_BASE_MONTHLY_USD)
+                * 100.0)
+                .round()
+                / 100.0,
+        )
     };
 
-    // --- Compute Line-by-Line CI/CD Invoice Cost Components (unified CI/CD FinOps + Cloud Compute Catalog) ---
-    let rounding_tax_mins_per_run = ((billed_mins_per_run - raw_duration_mins_per_run).max(0.0) * 100.0).round() / 100.0;
+    // --- Compute Line-by-Line CI/CD Invoice Cost Components (per-job runner rate for rounding tax `A3`) ---
+    let rounding_tax_mins_per_run =
+        ((billed_mins_per_run - raw_duration_mins_per_run).max(0.0) * 100.0).round() / 100.0;
     let avg_rate_per_min = if billed_mins_per_run > 0.0 {
         gross_compute_cost_per_run_usd / billed_mins_per_run
     } else {
         0.006
     };
-    let monthly_rounding_tax_usd = ((rounding_tax_mins_per_run * avg_rate_per_min * effective_runs_for_ledger) * 100.0).round() / 100.0;
+    let monthly_rounding_tax_usd = norm_zero(
+        ((jobs
+            .iter()
+            .map(|j| {
+                let raw_all =
+                    j.est_raw_duration_mins_per_job * (j.matrix_combination_count as f64);
+                let job_tax_mins = (j.total_billed_mins_all_matrix - raw_all).max(0.0);
+                job_tax_mins * j.rate_per_min_usd * j.effective_monthly_runs(monthly_runs)
+            })
+            .sum::<f64>())
+            * 100.0)
+            .round()
+            / 100.0,
+    );
 
     let mut linux_mins_per_run = 0.0_f64;
     let mut windows_mins_per_run = 0.0_f64;
@@ -4573,7 +5572,8 @@ pub fn analyze_path_with_telemetry(
     let mut has_arm_jobs = false;
     let mut has_linux_arm_jobs = false;
     let mut jobs_uploading_artifacts = 0_usize;
-    let mut yaml_configured_retention_days: Option<u32> = None;
+    let mut weighted_ret_days_num = 0.0_f64;
+    let mut weighted_ret_days_den = 0.0_f64;
     let mut macos_concurrent_jobs_per_run = 0_usize;
     let mut self_hosted_or_microvm_jobs_per_run = 0_usize;
     let mut true_self_hosted_jobs_per_run = 0_usize;
@@ -4584,25 +5584,42 @@ pub fn analyze_path_with_telemetry(
         }
         if j.uploads_artifacts {
             jobs_uploading_artifacts += j.matrix_combination_count;
+            if let Some(d) = j.artifact_retention_days {
+                let w = (j.matrix_combination_count.max(1) as f64)
+                    * j.effective_monthly_runs(monthly_runs).max(1.0);
+                weighted_ret_days_num += (d as f64) * w;
+                weighted_ret_days_den += w;
+            }
+        } else if let Some(d) = j.artifact_retention_days {
+            if weighted_ret_days_den == 0.0 {
+                weighted_ret_days_num += d as f64;
+                weighted_ret_days_den += 1.0;
+            }
         }
-        if let Some(d) = j.artifact_retention_days {
-            yaml_configured_retention_days = Some(
-                yaml_configured_retention_days
-                    .map(|prev| prev.max(d))
-                    .unwrap_or(d),
-            );
-        }
+        let rl_low = j.runner_label.to_ascii_lowercase();
+        let is_self_or_3p = j.provider.starts_with("self-hosted")
+            || j.provider == "blacksmith"
+            || j.provider == "third-party-microvm"
+            || rl_low.contains("blacksmith")
+            || rl_low.contains("depot")
+            || rl_low.contains("warpbuild")
+            || rl_low.contains("buildjet")
+            || rl_low.contains("namespace")
+            || rl_low.contains("self-hosted");
+
         let os_low = j.os.to_ascii_lowercase();
         if os_low.contains("mac") {
             macos_mins_per_run += j.total_billed_mins_all_matrix;
-            macos_concurrent_jobs_per_run += j.matrix_combination_count;
+            // Only vendor-hosted macOS jobs count against GitHub's 5-concurrent hosted macOS cap (`G4`)
+            if !is_self_or_3p {
+                macos_concurrent_jobs_per_run += j.matrix_combination_count;
+            }
         } else if os_low.contains("win") {
             windows_mins_per_run += j.total_billed_mins_all_matrix;
         } else {
             linux_mins_per_run += j.total_billed_mins_all_matrix;
         }
 
-        let rl_low = j.runner_label.to_ascii_lowercase();
         let is_job_arm = rl_low.contains("arm")
             || rl_low.contains("aarch64")
             || rl_low.contains("c7g")
@@ -4617,19 +5634,15 @@ pub fn analyze_path_with_telemetry(
         if j.provider.starts_with("self-hosted") || rl_low.contains("self-hosted") {
             true_self_hosted_jobs_per_run += j.matrix_combination_count;
         }
-        if j.provider.starts_with("self-hosted")
-            || j.provider == "blacksmith"
-            || j.provider == "third-party-microvm"
-            || rl_low.contains("blacksmith")
-            || rl_low.contains("depot")
-            || rl_low.contains("warpbuild")
-            || rl_low.contains("buildjet")
-            || rl_low.contains("namespace")
-            || rl_low.contains("self-hosted")
-        {
+        if is_self_or_3p {
             self_hosted_or_microvm_jobs_per_run += j.matrix_combination_count;
         }
     }
+    let yaml_configured_retention_days: Option<u32> = if weighted_ret_days_den > 0.0 {
+        Some(((weighted_ret_days_num / weighted_ret_days_den).round() as u32).max(1))
+    } else {
+        None
+    };
 
     // Use provider_plugin's exact free-tier pool math so Larger Runners do NOT inflate OS-weighted pool mins (Fixes Bug #6)
     let os_weighted_free_tier_mins_per_run = invoice_receipt.os_weighted_pool_mins_per_run;
@@ -4643,18 +5656,18 @@ pub fn analyze_path_with_telemetry(
     let (ec2_label, ec2_od_hr, ec2_od_mo, ec2_spot_hr) =
         infracost_ec2_runner_profile(max_vcpus, has_linux_arm_jobs, is_macos_only_workload);
     let infracost_ec2_surrounding_overhead_monthly_usd = if jobs.is_empty() { 0.0 } else { 8.40 };
-    let macos_self_hosted_mac_mini_monthly_usd = if macos_concurrent_jobs_per_run > 0 {
+    let macos_self_hosted_mac_mini_monthly_usd = if macos_mins_per_run > 0.0 {
         25.00
     } else {
         0.0
     };
 
-    // Primary-source verified Ephemeral Runner & Spot Instance Economics (AWS Live Spot Advisor + EKS/Karpenter)
+    // Primary-source verified Ephemeral Runner & Spot Instance Economics (`G3`: 720h/mo capacity per node)
     let active_runner_hours_per_month = monthly_billed_mins / 60.0;
     let fleet_nodes = if jobs.is_empty() {
         0_usize
     } else {
-        ((active_runner_hours_per_month / 500.0).ceil() as usize).max(1)
+        ((active_runner_hours_per_month / 720.0).ceil() as usize).max(1)
     };
     let always_on_runner_utilization_pct = if fleet_nodes == 0 {
         0.0
@@ -4710,7 +5723,7 @@ pub fn analyze_path_with_telemetry(
     let spot_retry_overhead_monthly_usd =
         ((monthly_self_hosted_spot_cost_usd * spot_retry_factor) * 100.0).round() / 100.0;
 
-    // 3. Artifact Storage (90d default vs configured YAML retention-days vs plan-included allowance + S3)
+    // 3. Artifact Storage (90d default vs configured YAML retention-days vs plan-included allowance + S3, `G2`)
     let default_retention_days = if providers.iter().any(|p| p == "gitlab-ci" || p == "circleci") {
         30
     } else {
@@ -4725,31 +5738,41 @@ pub fn analyze_path_with_telemetry(
     });
     let monthly_created_gb = if jobs.is_empty() || !any_artifacts {
         0.0
-    } else if has_live_wf_runs {
-        let mut wf_art_jobs: Vec<(String, usize)> = Vec::new();
+    } else {
+        let mut wf_art_jobs: Vec<(String, usize, f64)> = Vec::new();
         for j in &jobs {
             if j.uploads_artifacts {
-                if let Some(entry) = wf_art_jobs.iter_mut().find(|(w, _)| w == &j.workflow_file) {
+                let jr = j.effective_monthly_runs(monthly_runs);
+                if let Some(entry) = wf_art_jobs.iter_mut().find(|(w, _, _)| w == &j.workflow_file)
+                {
                     entry.1 += j.matrix_combination_count;
                 } else {
-                    wf_art_jobs.push((j.workflow_file.clone(), j.matrix_combination_count));
+                    wf_art_jobs.push((j.workflow_file.clone(), j.matrix_combination_count, jr));
                 }
             }
         }
-        wf_art_jobs
-            .iter()
-            .map(|(wf, cnt)| {
-                let r = lookup_live_wf_runs(wf).unwrap_or(0.0);
-                usage.artifact_gb_per_run * r * ((*cnt).max(1) as f64).min(3.0)
-            })
-            .sum()
-    } else {
-        usage.artifact_gb_per_run * monthly_runs * (jobs_uploading_artifacts.max(1) as f64).min(3.0)
+        if has_live_wf_runs {
+            wf_art_jobs
+                .iter()
+                .map(|(_, cnt, r)| usage.artifact_gb_per_run * (*r) * ((*cnt).max(1) as f64).min(3.0))
+                .sum()
+        } else {
+            let total_art_runs = if wf_art_jobs.len() == 1 {
+                wf_art_jobs[0].2
+            } else {
+                let weighted_r: f64 = wf_art_jobs
+                    .iter()
+                    .map(|(_, cnt, r)| (*cnt as f64) * (*r))
+                    .sum();
+                weighted_r / (jobs_uploading_artifacts.max(1) as f64)
+            };
+            usage.artifact_gb_per_run * total_art_runs * (jobs_uploading_artifacts.max(1) as f64).min(3.0)
+        }
     };
-    let steady_state_stored_gb_configured = if let Some(obs_gb) = active_telemetry
+    let observed_art_gb_opt = active_telemetry
         .as_ref()
-        .and_then(|t| t.observed_artifact_storage_gb)
-    {
+        .and_then(|t| t.observed_artifact_storage_gb);
+    let steady_state_stored_gb_configured = if let Some(obs_gb) = observed_art_gb_opt {
         (obs_gb * 100.0).round() / 100.0
     } else {
         ((monthly_created_gb * (configured_retention_days as f64 / 30.0)) * 100.0).round() / 100.0
@@ -4775,9 +5798,19 @@ pub fn analyze_path_with_telemetry(
             / 100.0;
     let monthly_artifact_storage_vendor_usd = monthly_vendor_storage_configured_usd;
     let monthly_artifact_storage_s3_usd = monthly_infracost_s3_configured_usd;
-    let steady_state_stored_gb_90d = ((monthly_created_gb * 3.0) * 100.0).round() / 100.0;
-    let steady_state_stored_gb_14d =
-        ((monthly_created_gb * (14.0 / 30.0)) * 100.0).round() / 100.0;
+    let (steady_state_stored_gb_90d, steady_state_stored_gb_14d) =
+        if let Some(obs_gb) = observed_art_gb_opt {
+            let base_days = (configured_retention_days.max(1)) as f64;
+            (
+                ((obs_gb * (90.0 / base_days)) * 100.0).round() / 100.0,
+                ((obs_gb * (14.0 / base_days)) * 100.0).round() / 100.0,
+            )
+        } else {
+            (
+                ((monthly_created_gb * 3.0) * 100.0).round() / 100.0,
+                ((monthly_created_gb * (14.0 / 30.0)) * 100.0).round() / 100.0,
+            )
+        };
     let monthly_vendor_storage_90d_usd =
         ((steady_state_stored_gb_90d * ARTIFACT_STORAGE_VENDOR_USD_PER_GB_MO) * 100.0).round()
             / 100.0;

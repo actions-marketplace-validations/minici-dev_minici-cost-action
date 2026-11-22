@@ -587,7 +587,7 @@ pub static EMBEDDED_SKU_CATALOG: &[RunnerSkuSpec] = &[
         vcpus: 2,
         ram_gb: 7.0,
         rate_per_min_usd: 0.008,
-        ceil_to_whole_minute: false,
+        ceil_to_whole_minute: true,
         free_tier_mins_per_month: 1800.0,
         paid_team_included_mins: 1800.0,
         blacksmith_equiv_rate_usd: 0.004,
@@ -808,19 +808,27 @@ fn extract_json_str_prop(obj: &str, key: &str) -> Option<String> {
     Some(inner[..end].to_string())
 }
 
+fn parse_leading_json_float(s: &str) -> Option<f64> {
+    let trimmed = s.trim_start();
+    let mut end = 0;
+    for (i, ch) in trimmed.char_indices() {
+        if ch.is_ascii_digit() || matches!(ch, '.' | '-' | '+' | 'e' | 'E') {
+            end = i + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if end == 0 {
+        None
+    } else {
+        trimmed[..end].parse::<f64>().ok()
+    }
+}
+
 fn extract_json_num_prop(obj: &str, key: &str) -> Option<f64> {
     let needle = format!("\"{}\":", key);
     let idx = obj.find(&needle)?;
-    let rest = obj[idx + needle.len()..].trim_start();
-    let num: String = rest
-        .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
-        .collect();
-    if num.is_empty() {
-        None
-    } else {
-        num.parse::<f64>().ok()
-    }
+    parse_leading_json_float(&obj[idx + needle.len()..])
 }
 
 fn extract_json_bool_prop(obj: &str, key: &str) -> Option<bool> {
@@ -888,21 +896,41 @@ fn parse_vendor_pricing_json(raw: &str, out_skus: &mut Vec<DynamicJsonSkuSpec>, 
                 Some(s) if !s.is_empty() => s,
                 _ => continue,
             };
+            let status = extract_json_str_prop(obj, "status").unwrap_or_default();
             let unit = extract_json_str_prop(obj, "unit").unwrap_or_default();
-            if unit != "minute" && unit != "second" && !unit.contains("minute") {
+            if !matches!(
+                unit.as_str(),
+                "minute" | "second" | "1000_minutes" | "1000_compute_minutes" | "hour"
+            ) {
                 continue;
             }
-            let raw_rate = match extract_json_num_prop(obj, "usd") {
-                Some(r) if r >= 0.0 => r,
-                _ => continue,
-            };
-            let rate = if unit == "second" {
-                ((raw_rate * 60.0) * 100000.0).round() / 100000.0
+            let raw_rate = if status.contains("not in effect") {
+                match extract_json_num_prop(obj, "effective_usd") {
+                    Some(r) if r >= 0.0 => r,
+                    _ => continue,
+                }
             } else {
-                raw_rate
+                match extract_json_num_prop(obj, "usd") {
+                    Some(r) if r >= 0.0 => r,
+                    _ => continue,
+                }
+            };
+            let rate = match unit.as_str() {
+                "second" => ((raw_rate * 60.0) * 100000.0).round() / 100000.0,
+                "1000_minutes" | "1000_compute_minutes" => {
+                    ((raw_rate / 1000.0) * 100000.0).round() / 100000.0
+                }
+                "hour" => ((raw_rate / 60.0) * 100000.0).round() / 100000.0,
+                _ => raw_rate,
             };
             let rounding = extract_json_str_prop(obj, "rounding").unwrap_or_default();
             let ceil = rounding.contains("ceil");
+            let raw_inc_qty = extract_json_num_prop(obj, "included_qty").unwrap_or(0.0);
+            let inc_mins = match unit.as_str() {
+                "second" => raw_inc_qty / 60.0,
+                "hour" => raw_inc_qty * 60.0,
+                _ => raw_inc_qty,
+            };
             out_skus.push(DynamicJsonSkuSpec {
                 platform: extract_json_str_prop(obj, "platform").unwrap_or_else(|| platform.clone()),
                 sku_id,
@@ -913,7 +941,7 @@ fn parse_vendor_pricing_json(raw: &str, out_skus: &mut Vec<DynamicJsonSkuSpec>, 
                 rate_per_min_usd: rate,
                 ceil_to_whole_minute: ceil,
                 uses_allowance: extract_json_bool_prop(obj, "uses_allowance").unwrap_or(false),
-                included_qty: extract_json_num_prop(obj, "included_qty").unwrap_or(0.0),
+                included_qty: inc_mins,
             });
         }
     }
@@ -1208,16 +1236,20 @@ fn extract_runner_vcpus(lower: &str) -> Option<u32> {
     ] {
         cleaned = cleaned.replace(token, "");
     }
+    let is_bitbucket = lower.contains("bitbucket");
     for (n, pats) in [
-        (96u32, &["96vcpu", "96-core", "96core", "-96"][..]),
-        (64u32, &["64vcpu", "64-core", "64core", "16xlarge", "-64"][..]),
-        (32u32, &["32vcpu", "32-core", "32core", "8xlarge", "c8g_8x", "-32"][..]),
-        (16u32, &["16vcpu", "16-core", "16core", "16x32", "4xlarge", "-16", "-xl"][..]),
-        (8u32, &["8vcpu", "8-core", "8core", "2xlarge", "-8"][..]),
-        (4u32, &["4vcpu", "4-core", "4core", "xlarge", "-4"][..]),
-        (2u32, &["2vcpu", "2-core", "2core", "-2"][..]),
+        (96u32, &["96vcpu", "96cpu", "96-core", "96core", "-96x", "-96"][..]),
+        (64u32, &["64vcpu", "64cpu", "64-core", "64core", "16xlarge", "-64x", "-64"][..]),
+        (32u32, &["32vcpu", "32cpu", "32-core", "32core", "8xlarge", "c8g_8x", "-32x", "-32"][..]),
+        (16u32, &["16vcpu", "16cpu", "16-core", "16core", "16x32", "4xlarge", "-16x", "-16", "-xl"][..]),
+        (8u32, &["8vcpu", "8cpu", "8-core", "8core", "2xlarge", "-8x", "-8"][..]),
+        (4u32, &["4vcpu", "4cpu", "4-core", "4core", "xlarge", "-4x", "-4"][..]),
+        (2u32, &["2vcpu", "2cpu", "2-core", "2core", "-2x", "-2"][..]),
     ] {
         for pat in pats {
+            if is_bitbucket && pat.ends_with('x') {
+                continue;
+            }
             if pat.starts_with('-') {
                 if cleaned.ends_with(pat) || cleaned.contains(&format!("{}-", pat)) {
                     return Some(n);
@@ -1259,6 +1291,8 @@ pub fn resolve_runner_sku(raw_label: &str) -> RunnerSkuSpec {
         }
     }
 
+    let use_spot = lower.contains("spot") || lower.contains("preemptible");
+
     // 1. Exact Cloud Instance Catalog match (`45` Golden Static + `150` Dynamic Seeded Cloud VMs x `12` Regions — excluding managed `cloud-build` SaaS labels!)
     if !lower.contains("cloudbuild") && !lower.contains("cloud-build") {
         if let Some(cloud) = lookup_infracost_cloud_spec(&lower) {
@@ -1283,13 +1317,15 @@ pub fn resolve_runner_sku(raw_label: &str) -> RunnerSkuSpec {
                 arch: cloud.arch,
                 vcpus: cloud.vcpus,
                 ram_gb: cloud.ram_gb,
-                rate_per_min_usd: od_per_min,
+                rate_per_min_usd: if use_spot { spot_per_min } else { od_per_min },
                 ceil_to_whole_minute: false,
                 free_tier_mins_per_month: 0.0,
                 paid_team_included_mins: 0.0,
                 blacksmith_equiv_rate_usd: (cloud.vcpus as f64) * 0.0020,
                 self_hosted_spot_rate_usd: spot_per_min,
             };
+            scale_equiv_rates_for_vcpus(&mut s);
+            s.self_hosted_spot_rate_usd = spot_per_min;
             apply_live_override(&mut s, raw_label);
             return s;
         }
@@ -1322,13 +1358,15 @@ pub fn resolve_runner_sku(raw_label: &str) -> RunnerSkuSpec {
                 arch: arch_static,
                 vcpus: seed.vcpus,
                 ram_gb: seed.ram_gb,
-                rate_per_min_usd: od_per_min,
+                rate_per_min_usd: if use_spot { spot_per_min } else { od_per_min },
                 ceil_to_whole_minute: false,
                 free_tier_mins_per_month: 0.0,
                 paid_team_included_mins: 0.0,
                 blacksmith_equiv_rate_usd: (seed.vcpus as f64) * 0.0020,
                 self_hosted_spot_rate_usd: spot_per_min,
             };
+            scale_equiv_rates_for_vcpus(&mut s);
+            s.self_hosted_spot_rate_usd = spot_per_min;
             apply_live_override(&mut s, raw_label);
             return s;
         }
@@ -1336,12 +1374,17 @@ pub fn resolve_runner_sku(raw_label: &str) -> RunnerSkuSpec {
 
     // 1B. Exact Dynamic JSON SKU Catalog Match across all 7 `pricing/*.json` files (`160` Official SKUs)
     let dyn_reg = dynamic_pricing_registry();
+    let cloudbuild_stripped = lower
+        .strip_prefix("cloudbuild-")
+        .or_else(|| lower.strip_prefix("cloud-build-"));
     if !matches!(lower.as_str(), "linux" | "windows" | "macos") {
-        if let Some(js) = dyn_reg
-            .json_skus
-            .iter()
-            .find(|j| j.sku_id.eq_ignore_ascii_case(&lower))
-        {
+        if let Some(js) = dyn_reg.json_skus.iter().find(|j| {
+            j.sku_id.eq_ignore_ascii_case(&lower)
+                || (j.platform == "gcp"
+                    && cloudbuild_stripped
+                        .map(|cb| j.sku_id.eq_ignore_ascii_case(cb) || j.sku_id.replace('-', "_").eq_ignore_ascii_case(&cb.replace('-', "_")))
+                        .unwrap_or(false))
+        }) {
             let prov_static: &'static str = match js.platform.as_str() {
                 "gitlab" => "gitlab-ci",
                 "circleci" => "circleci",
@@ -1617,13 +1660,15 @@ pub fn resolve_runner_sku(raw_label: &str) -> RunnerSkuSpec {
         if let Some(vc) = explicit_vcpus {
             s.vcpus = vc;
             s.ram_gb = (vc as f64) * 4.0;
-            s.rate_per_min_usd = (vc as f64) * 0.0006;
+            let per_vcpu = if is_arm { 0.00045 } else { 0.0006 };
+            s.rate_per_min_usd = ((vc as f64) * per_vcpu * 100000.0).round() / 100000.0;
             scale_equiv_rates_for_vcpus(&mut s);
         }
         s
     } else if lower.contains("blacksmith")
         || lower.contains("buildjet")
         || lower.contains("warpbuild")
+        || lower.starts_with("warp-")
         || lower.contains("depot")
         || lower.contains("namespace")
     {
@@ -1664,9 +1709,11 @@ pub fn resolve_runner_sku(raw_label: &str) -> RunnerSkuSpec {
             s.vcpus = vc;
             s.ram_gb = (vc as f64) * 4.0;
             s.arch = if is_arm { "arm64" } else { "x86_64" };
-            s.rate_per_min_usd = (vc as f64) * 0.0020;
+            let per_vcpu = if !is_blacksmith && is_arm { 0.0015 } else { 0.0020 };
+            s.rate_per_min_usd = ((vc as f64) * per_vcpu * 100000.0).round() / 100000.0;
             s.sku_label = if is_blacksmith {
                 match vc {
+                    96 => "blacksmith-96vcpu",
                     64 => "blacksmith-64vcpu",
                     32 => "blacksmith-32vcpu",
                     16 => "blacksmith-16vcpu",
@@ -1676,6 +1723,7 @@ pub fn resolve_runner_sku(raw_label: &str) -> RunnerSkuSpec {
                 }
             } else {
                 match vc {
+                    96 => "third-party-microvm-96vcpu",
                     64 => "third-party-microvm-64vcpu",
                     32 => "third-party-microvm-32vcpu",
                     16 => "third-party-microvm-16vcpu",
@@ -2003,12 +2051,7 @@ fn tier3_jev_systemone_runner_choice(raw_label: &str) -> Option<&'static str> {
 
 fn extract_json_score(raw: &str) -> Option<f64> {
     let idx = raw.find("\"score\":")?;
-    let rest = raw[idx + 8..].trim_start();
-    let num: String = rest
-        .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
-        .collect();
-    num.parse::<f64>().ok()
+    parse_leading_json_float(&raw[idx + 8..])
 }
 
 #[cfg(test)]

@@ -35,6 +35,7 @@ runs:
         OUT_FILE: ${{ inputs.output-path }}
       run: |
         set -euo pipefail
+        OUT_FILE="${OUT_FILE:-.minici/step_hardware_telemetry.json}"
         mkdir -p "$(dirname "$OUT_FILE")"
         CPU_PCT="35.0"
         RAM_PCT="45.0"

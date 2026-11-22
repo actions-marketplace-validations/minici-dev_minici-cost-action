@@ -1,0 +1,16 @@
+{
+  "name": "minici",
+  "description": "Official MiniCI CI/CD FinOps, Pull Request cost diff, and workflow optimization plugins.",
+  "owner": {
+    "name": "MiniCI",
+    "url": "https://github.com/minici-dev"
+  },
+  "plugins": [
+    {
+      "name": "minici-cost",
+      "source": "./",
+      "description": "Deterministic sub-millisecond CI/CD cost breakdown, Pull Request cost diff, ARM64 runner right-sizing, and comment-preserving YAML optimization across 7 CI platforms.",
+      "version": "0.9.1"
+    }
+  ]
+}

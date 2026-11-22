@@ -16,9 +16,10 @@ pub mod telemetry;
 
 use engine::{analyze_path, analyze_path_with_telemetry, compute_diff, BreakdownReport, UsageConfig};
 use renderer::{
-    generate_post_tool_use_launch_pack, render_breakdown_csv, render_breakdown_html,
+    active_glyphs, generate_post_tool_use_launch_pack, render_breakdown_csv, render_breakdown_html,
     render_breakdown_markdown, render_cli_compact_diff, render_cli_compact_summary,
-    render_diff_markdown, render_slack_breakdown_payload, render_slack_payload,
+    render_diff_markdown, render_diff_markdown_for_platform, render_slack_breakdown_payload,
+    render_slack_payload, short_workflow_label,
 };
 use std::env;
 use std::fs;
@@ -30,7 +31,7 @@ fn print_help() {
 }
 
 pub fn help_text() -> &'static str {
-    "minici 0.9.0 — MiniCI: Sub-Millisecond CI/CD Cost Breakdown, PR Diff & Quota Receipt Engine\n\
+    "minici 0.9.1 — MiniCI: Sub-Millisecond CI/CD Cost Breakdown, PR Diff & Quota Receipt Engine\n\
 Author: Aamir Raza <raza.aamir01@gmail.com>\n\n\
 USAGE:\n  \
   minici <COMMAND> [OPTIONS]\n\n\
@@ -41,6 +42,7 @@ COMMANDS:\n  \
   permissions  Verify least-privilege zero-source-code token security & 108-attribute telemetry coverage\n  \
   sync         Sync live GitHub Actions telemetry (ETag 304) or billing CSV into .minici/telemetry.lock.json\n  \
   shrink       Generate or apply surgical workflow cost optimizations with verified shadow DiffReport\n  \
+  accelerate   Swap legacy CI steps to Rust tools (uv/ruff/biome/nextest) + scoped rust-everywhere CI converter\n  \
   migrate      Evaluate or apply safe runner & 7x7 cross-platform migrations with 5-Layer Switching TCO\n  \
   ask          Ask any natural-language CI/CD FinOps question (Jev /v1/systemone intent router + live math)\n  \
   catalog      Inspect, sync, or override the Multi-Vendor & Cloud Compute Pricing SKU Catalog\n  \
@@ -49,6 +51,9 @@ COMMANDS:\n  \
   mcp          Start 8-tool JSON-RPC 2.0 stdio MCP server for Claude, Antigravity, Cursor & VS Code\n  \
   self-update  Sync live pricing catalog, verify 0 drift, and self-upgrade binary (--install-dir <DIR>)\n  \
   init-hooks   Install Shift-Left PreToolUse/PostToolUse hooks, Agent MCP (.mcp.json) & GitHub Action\n  \
+  login        Save or verify optional Polar.sh Cloud License Key (Starter $1 / Pro $10 / Team Flex)\n  \
+  share        Upload unlisted HTML/JSON FinOps report to MiniCI Cloud (/r/<id>) [Starter $1+]\n  \
+  cloud-sync   Push anonymized run KPIs to 30d/365d Cloud Trend Ledger & Org Policy Gate [Starter $1+]\n  \
   launch-pack  Generate automatic PostToolUse 6-Channel Launch & Partner Profile Pack\n\n\
 OPTIONS (breakdown):\n  \
   --path <PATH_OR_URL>       Local repo path OR public GitHub URL (e.g. https://github.com/owner/repo) [default: .]\n  \
@@ -57,6 +62,9 @@ OPTIONS (breakdown):\n  \
   --billing-csv <FILE>       Reconcile breakdown against GitHub, CircleCI, GitLab, or FOCUS v1.1 billing CSV\n  \
   --refresh                  Force re-fetch of cached public GitHub repository workflows\n  \
   --format <FMT>             Output format: table, markdown, json, html, or csv [default: table]\n  \
+  --compact                  Emit token-efficient agent JSON digest (<2KB) when --format json\n  \
+  --all                      Expand all workflow job rows instead of Top-15 cost drivers\n  \
+  --ascii                    Use pure 7-bit ASCII glyphs for non-UTF8 terminals\n  \
   --report <FILE>            Generate report file (.html, .json, .md, .csv) — auto-detects format from extension\n  \
   --out-file <FILE>          Write output to file path\n  \
   --tier <TIER>              Pricing tier mode: auto, free, pro, team, enterprise, or paid [default: auto]\n  \
@@ -171,12 +179,12 @@ pub fn handle_mcp_jsonrpc_line(line: &str, default_path: &Path) -> Option<String
         "ping" => Some(format!("{{\"jsonrpc\":\"2.0\",\"id\":{},\"result\":{{}}}}", id)),
         "tools/list" => Some(format!(
             "{{\"jsonrpc\":\"2.0\",\"id\":{},\"result\":{{\"tools\":[\
-{{\"name\":\"minici_breakdown\",\"description\":\"Calculate 24-model CI/CD workflow cost, unit economics ($/PR), free-tier quota burn %, and developer wait-time breakdown\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\",\"description\":\"Repository path or GitHub owner/repo\"}}}}}}}},\
-{{\"name\":\"minici_diff\",\"description\":\"Compare Pull Request CI workflow cost delta against a base branch\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\"}},\"compare_to\":{{\"type\":\"string\"}}}}}}}},\
+{{\"name\":\"minici_breakdown\",\"description\":\"Calculate 24-model CI/CD workflow cost, unit economics ($/PR), free-tier quota burn %, developer wait-time breakdown, and per-job YAML line spans\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\",\"description\":\"Repository path or GitHub owner/repo\"}},\"compact\":{{\"type\":\"boolean\",\"description\":\"Return token-efficient agent digest (<2KB) instead of full 24-model ledger\"}}}}}}}},\
+{{\"name\":\"minici_diff\",\"description\":\"Compare Pull Request / Merge Request CI workflow cost delta against a base branch\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\"}},\"compare_to\":{{\"type\":\"string\"}},\"compact\":{{\"type\":\"boolean\",\"description\":\"Return token-efficient diff digest (<2KB)\"}}}}}}}},\
 {{\"name\":\"minici_sync_live\",\"description\":\"Sync live GitHub Actions telemetry (ETag 304 conditional cache) or FOCUS v1.1 billing CSV into .minici/telemetry.lock.json\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\"}},\"repo\":{{\"type\":\"string\"}},\"billing_csv\":{{\"type\":\"string\"}}}}}}}},\
 {{\"name\":\"minici_permissions\",\"description\":\"Audit CI token least-privilege scopes (Actions: Read, Metadata: Read, Contents: Read for private YAML only) and report 108-attribute telemetry coverage\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"repo\":{{\"type\":\"string\"}},\"vendor\":{{\"type\":\"string\"}},\"billing_csv\":{{\"type\":\"string\"}},\"live\":{{\"type\":\"boolean\"}}}}}}}},\
 {{\"name\":\"minici_anomalies\",\"description\":\"Inspect 7d/23d CI spend burn velocity, projected EOM bill, quota exhaustion day, and missing timeout-minutes exposure\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\"}}}}}}}},\
-{{\"name\":\"minici_shrink\",\"description\":\"Generate surgical comment-preserving YAML optimizations (concurrency, timeout-minutes, shallow clone, cache, retention-days) verified by shadow DiffReport\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\"}},\"security\":{{\"type\":\"boolean\"}},\"apply\":{{\"type\":\"boolean\"}},\"confirm_write\":{{\"type\":\"boolean\"}}}}}}}},\
+{{\"name\":\"minici_shrink\",\"description\":\"Generate surgical comment-preserving YAML optimizations (concurrency, timeout-minutes, shallow clone, cache, retention-days, plus optional Rust CI toolchain swapper & scoped rust-everywhere CI converter) verified by shadow DiffReport\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\"}},\"security\":{{\"type\":\"boolean\"}},\"rust_tools\":{{\"type\":\"boolean\"}},\"rust_everywhere\":{{\"type\":\"boolean\"}},\"apply\":{{\"type\":\"boolean\"}},\"confirm_write\":{{\"type\":\"boolean\"}}}}}}}},\
 {{\"name\":\"minici_migrate\",\"description\":\"Evaluate safe runner migration (arm64 / high-speed / spot) or 7x7 cross-platform CI translation with 5-Layer Switching TCO payback verdict\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\"}},\"from\":{{\"type\":\"string\"}},\"target\":{{\"type\":\"string\"}},\"apply\":{{\"type\":\"boolean\"}},\"confirm_write\":{{\"type\":\"boolean\"}}}}}}}},\
 {{\"name\":\"minici_ask\",\"description\":\"Answer any free-form natural-language CI/CD FinOps question by routing intent via Jev /v1/systemone and grounding 100% of dollar figures in the 24-model engine\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"question\":{{\"type\":\"string\"}},\"path\":{{\"type\":\"string\"}},\"compare_to\":{{\"type\":\"string\"}}}},\"required\":[\"question\"]}}}}\
 ]}}}}",
@@ -187,11 +195,16 @@ pub fn handle_mcp_jsonrpc_line(line: &str, default_path: &Path) -> Option<String
             let target_arg = extract_json_str(trimmed, "path")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| default_path.to_path_buf());
+            let want_compact = trimmed.contains("\"compact\":true") || trimmed.contains("\"compact\": true");
             let mut is_error = false;
             let payload_json = match tool_name.as_str() {
                 "minici_diff" => {
                     let cmp_str = extract_json_str(trimmed, "compare_to").unwrap_or_else(|| "main".to_string());
-                    let ck = mcp_cache_key("diff", &target_arg, &cmp_str);
+                    let ck = mcp_cache_key(
+                        if want_compact { "diff_compact" } else { "diff" },
+                        &target_arg,
+                        &cmp_str,
+                    );
                     if let Ok(guard) = MCP_RESPONSE_CACHE.lock() {
                         if let Some((_, cached)) = guard.iter().find(|(k, _)| k == &ck) {
                             let text = engine::json_escape(cached);
@@ -204,7 +217,12 @@ pub fn handle_mcp_jsonrpc_line(line: &str, default_path: &Path) -> Option<String
                     let cmp_arg = PathBuf::from(&cmp_str);
                     let base = load_or_analyze_in_repo(&cmp_arg, Some(&target_arg), None, false, true);
                     let head = load_or_analyze_in_repo(&target_arg, None, Some(base.usage.clone()), false, true);
-                    let res = compute_diff(&base, &head).to_json();
+                    let diff_obj = compute_diff(&base, &head);
+                    let res = if want_compact {
+                        diff_obj.to_compact_json()
+                    } else {
+                        diff_obj.to_json()
+                    };
                     if let Ok(mut guard) = MCP_RESPONSE_CACHE.lock() {
                         if guard.len() >= 32 {
                             guard.remove(0);
@@ -302,6 +320,8 @@ pub fn handle_mcp_jsonrpc_line(line: &str, default_path: &Path) -> Option<String
                     }
                     let security_mode = trimmed.contains("\"security\":true") || trimmed.contains("\"security\": true");
                     let with_fixer = trimmed.contains("\"with_fixer\":true") || trimmed.contains("\"with_fixer\": true");
+                    let rust_tools = trimmed.contains("\"rust_tools\":true") || trimmed.contains("\"rust_tools\": true");
+                    let rust_everywhere = trimmed.contains("\"rust_everywhere\":true") || trimmed.contains("\"rust_everywhere\": true");
                     optimizer::run_surgical_optimizer_with_opts(
                         &target_arg,
                         "shrink",
@@ -310,6 +330,8 @@ pub fn handle_mcp_jsonrpc_line(line: &str, default_path: &Path) -> Option<String
                         optimizer::MigrateOptions {
                             security_mode,
                             with_fixer,
+                            rust_tools,
+                            rust_everywhere,
                             ..Default::default()
                         },
                     )
@@ -346,7 +368,11 @@ pub fn handle_mcp_jsonrpc_line(line: &str, default_path: &Path) -> Option<String
                     jev::answer_natural_language_finops_query(&q, &target_arg, cmp_opt.as_deref()).to_json()
                 }
                 "minici_breakdown" => {
-                    let ck = mcp_cache_key("breakdown", &target_arg, "");
+                    let ck = mcp_cache_key(
+                        if want_compact { "breakdown_compact" } else { "breakdown" },
+                        &target_arg,
+                        "",
+                    );
                     if let Ok(guard) = MCP_RESPONSE_CACHE.lock() {
                         if let Some((_, cached)) = guard.iter().find(|(k, _)| k == &ck) {
                             let text = engine::json_escape(cached);
@@ -356,7 +382,12 @@ pub fn handle_mcp_jsonrpc_line(line: &str, default_path: &Path) -> Option<String
                             ));
                         }
                     }
-                    let res = load_or_analyze_in_repo(&target_arg, None, None, false, true).to_json();
+                    let rep = load_or_analyze_in_repo(&target_arg, None, None, false, true);
+                    let res = if want_compact {
+                        rep.to_compact_json()
+                    } else {
+                        rep.to_json()
+                    };
                     if let Ok(mut guard) = MCP_RESPONSE_CACHE.lock() {
                         if guard.len() >= 32 {
                             guard.remove(0);
@@ -506,7 +537,6 @@ fn resolve_target_to_dir_ext(raw_spec: &str, force_refresh: bool, quiet: bool) -
         if force_refresh {
             let _ = fs::remove_dir_all(&cache_dir);
         }
-        let _ = fs::create_dir_all(&wf_dir);
 
         // 1. Fetch ONLY `.github/workflows/*.yml` via GitHub HTTP API into persistent cache (0-Clone!)
         if !quiet {
@@ -514,7 +544,11 @@ fn resolve_target_to_dir_ext(raw_spec: &str, force_refresh: bool, quiet: bool) -
         }
         let tok_opt = permissions::discover_github_token_with_keyring(true);
         let mut detected_private = false;
-        let repo_meta_url = format!("https://api.github.com/repos/{}", slug);
+        let api_root = env::var("GITHUB_API_URL")
+            .unwrap_or_else(|_| "https://api.github.com".to_string())
+            .trim_end_matches('/')
+            .to_string();
+        let repo_meta_url = format!("{}/repos/{}", api_root, slug);
         let mut meta_cmd = Command::new("curl");
         meta_cmd.args([
             "-fsSL",
@@ -539,7 +573,7 @@ fn resolve_target_to_dir_ext(raw_spec: &str, force_refresh: bool, quiet: bool) -
             }
         }
 
-        let api_url = format!("https://api.github.com/repos/{}/contents/.github/workflows", slug);
+        let api_url = format!("{}/repos/{}/contents/.github/workflows", api_root, slug);
         let mut wf_cmd = Command::new("curl");
         wf_cmd.args([
             "-fsSL",
@@ -565,6 +599,7 @@ fn resolve_target_to_dir_ext(raw_spec: &str, force_refresh: bool, quiet: bool) -
                         if let Some(end_q) = rest[1..].find('"') {
                             let dl_url = &rest[1..1 + end_q];
                             if dl_url.ends_with(".yml") || dl_url.ends_with(".yaml") {
+                                let _ = fs::create_dir_all(&wf_dir);
                                 let fname = dl_url.rsplit('/').next().unwrap_or("ci.yml");
                                 let dest = wf_dir.join(fname);
                                 let mut dl_cmd = Command::new("curl");
@@ -607,6 +642,8 @@ fn resolve_target_to_dir_ext(raw_spec: &str, force_refresh: bool, quiet: bool) -
                             slug, vis_badge, downloaded
                         ),
                     );
+                } else {
+                    let _ = fs::remove_dir_all(&cache_dir);
                 }
             }
         }
@@ -623,6 +660,7 @@ fn resolve_target_to_dir_ext(raw_spec: &str, force_refresh: bool, quiet: bool) -
                         if dir_name.contains(&norm.replace('/', "-")) || dir_name.ends_with(&repo_part) {
                             let snap_wf = entry.path().join(".github").join("workflows");
                             if let Ok(wfs) = fs::read_dir(&snap_wf) {
+                                let _ = fs::create_dir_all(&wf_dir);
                                 for wf in wfs.flatten() {
                                     let _ = fs::copy(wf.path(), wf_dir.join(wf.file_name()));
                                 }
@@ -644,7 +682,11 @@ fn resolve_target_to_dir_ext(raw_spec: &str, force_refresh: bool, quiet: bool) -
             }
         }
 
-        // 3. Fallback to shallow blobless Git metadata fetch into cache_dir
+        // 3. Fallback to shallow blobless Git metadata fetch into a clean cache_dir
+        let _ = fs::remove_dir_all(&cache_dir);
+        if let Some(parent) = cache_dir.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
         let clone_url = format!("https://github.com/{}.git", slug);
         let status = Command::new("git")
             .args([
@@ -664,6 +706,15 @@ fn resolve_target_to_dir_ext(raw_spec: &str, force_refresh: bool, quiet: bool) -
                 None,
                 format!("github.com/{} [PUBLIC & ACCESSIBLE • Shallow Cached]", slug),
             );
+        } else {
+            let _ = fs::remove_dir_all(&cache_dir);
+            if !quiet {
+                eprintln!(
+                    "⚠️ minici: Unable to fetch remote repository '{}' (network unavailable, rate-limited, or repository private/not found).",
+                    slug
+                );
+            }
+            return (p.to_path_buf(), None, raw_spec.to_string());
         }
     }
 
@@ -800,14 +851,189 @@ fn infer_github_slug_from_dir(dir: &Path) -> Option<String> {
         .trim_start_matches("git@github.com:")
         .trim_end_matches(".git")
         .trim_end_matches('/');
-    if slug.contains('/') && !slug.contains(' ') {
+    if slug.contains('/') && !slug.contains(' ') && !slug.contains(':') && !slug.starts_with("http") {
         Some(slug.to_string())
     } else {
         None
     }
 }
 
-/// Scaffolds `.minici/hooks.json`, `.mcp.json`, and `.github/workflows/minici-cost.yml` into `target`.
+fn infer_git_provider_slug_from_dir(dir: &Path, provider_host_hint: &str) -> Option<String> {
+    let check_dir = if dir.exists() && dir.is_dir() {
+        dir
+    } else if dir.exists() && dir.is_file() {
+        dir.parent().unwrap_or(Path::new("."))
+    } else {
+        Path::new(".")
+    };
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(check_dir)
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8(out.stdout).ok()?;
+    let r = raw.trim().trim_end_matches('/').trim_end_matches(".git");
+    let host_and_path = if let Some(rest) = r.strip_prefix("https://").or_else(|| r.strip_prefix("http://")) {
+        match rest.find('@') {
+            Some(at) => rest[at + 1..].to_string(),
+            None => rest.to_string(),
+        }
+    } else if let Some(rest) = r.strip_prefix("git@") {
+        if let Some((h, p)) = rest.split_once(':') {
+            format!("{}/{}", h, p.trim_start_matches('/'))
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+    let (host, slug) = host_and_path.split_once('/')?;
+    if slug.is_empty() || slug.contains(' ') {
+        return None;
+    }
+    let hl = host.to_ascii_lowercase();
+    match provider_host_hint {
+        "gitlab" => {
+            if hl.contains("gitlab") || env::var("GITLAB_CI").is_ok() {
+                Some(slug.to_string())
+            } else {
+                None
+            }
+        }
+        "bitbucket" => {
+            if hl.contains("bitbucket") || env::var("BITBUCKET_BUILD_NUMBER").is_ok() {
+                Some(slug.to_string())
+            } else {
+                None
+            }
+        }
+        _ => {
+            if hl.contains("github") {
+                Some(slug.to_string())
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn minici_credentials_path() -> PathBuf {
+    let home = env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".to_string());
+    Path::new(&home).join(".minici").join("credentials.json")
+}
+
+fn default_cloud_api_url() -> String {
+    env::var("MINICI_CLOUD_URL")
+        .unwrap_or_else(|_| "https://minici-cost-action.raza-aamir01.workers.dev".to_string())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn load_cloud_credentials_from(p: &Path, default_url: &str) -> (Option<String>, String) {
+    if let Ok(raw) = fs::read_to_string(p) {
+        let k = extract_json_str(&raw, "key").filter(|s| !s.trim().is_empty());
+        let u = extract_json_str(&raw, "api_url")
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| default_url.to_string());
+        return (k, u);
+    }
+    (None, default_url.to_string())
+}
+
+fn load_saved_cloud_credentials() -> (Option<String>, String) {
+    let default_url = default_cloud_api_url();
+    if let Ok(env_k) = env::var("MINICI_KEY").or_else(|_| env::var("MINICI_CLOUD_KEY")) {
+        let tk = env_k.trim().to_string();
+        if !tk.is_empty() {
+            return (Some(tk), default_url);
+        }
+    }
+    let p = minici_credentials_path();
+    load_cloud_credentials_from(&p, &default_url)
+}
+
+fn save_cloud_credentials_at(p: &Path, key: &str, api_url: &str) -> Result<PathBuf, String> {
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let payload = format!(
+        "{{\n  \"key\": \"{}\",\n  \"api_url\": \"{}\"\n}}\n",
+        engine::json_escape(key.trim()),
+        engine::json_escape(api_url.trim_end_matches('/'))
+    );
+    fs::write(p, payload).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(p, fs::Permissions::from_mode(0o600));
+    }
+    Ok(p.to_path_buf())
+}
+
+fn save_cloud_credentials(key: &str, api_url: &str) -> Result<PathBuf, String> {
+    let p = minici_credentials_path();
+    save_cloud_credentials_at(&p, key, api_url)
+}
+
+fn detect_any_repo_slug_for_cloud(dir: &Path) -> String {
+    if let Some(gh) = infer_github_slug_from_dir(dir) {
+        return gh;
+    }
+    if let Some(gl) = infer_git_provider_slug_from_dir(dir, "gitlab") {
+        return gl;
+    }
+    if let Some(bb) = infer_git_provider_slug_from_dir(dir, "bitbucket") {
+        return bb;
+    }
+    dir.canonicalize()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "local-repo".to_string())
+}
+
+fn detect_git_branch_and_sha(dir: &Path) -> (String, String) {
+    let check_dir = if dir.is_dir() {
+        dir
+    } else {
+        dir.parent().unwrap_or(Path::new("."))
+    };
+    let branch = Command::new("git")
+        .arg("-C")
+        .arg(check_dir)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "main".to_string());
+    let sha = Command::new("git")
+        .arg("-C")
+        .arg(check_dir)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    (branch, sha)
+}
+
+const EMBEDDED_SKILL_MD: &str = include_str!("../../../skills/minici-cost/SKILL.md");
+const EMBEDDED_SKILL_REF_MD: &str =
+    include_str!("../../../skills/minici-cost/references/cli-and-mcp-reference.md");
+const EMBEDDED_OPENAI_YAML: &str =
+    include_str!("../../../skills/minici-cost/agents/openai.yaml");
+
+/// Scaffolds `.minici/hooks.json`, `.mcp.json`, multi-agent `SKILL.md` bundles, and `.github/workflows/minici-cost.yml` into `target`.
 fn scaffold_init_hooks(target: &Path) -> (PathBuf, PathBuf, PathBuf) {
     let hooks_dir = target.join(".minici");
     let _ = fs::create_dir_all(&hooks_dir);
@@ -911,6 +1137,40 @@ fn scaffold_init_hooks(target: &Path) -> (PathBuf, PathBuf, PathBuf) {
         let _ = fs::write(&vscode_mcp_file, vscode_mcp);
     }
 
+    let cursor_mcp_file = target.join(".cursor").join("mcp.json");
+    if !cursor_mcp_file.exists() {
+        let _ = fs::create_dir_all(target.join(".cursor"));
+        let _ = fs::write(&cursor_mcp_file, mcp_json);
+    }
+
+    // Non-destructively scaffold workspace Agent Skills across all major AI coding agents:
+    // `.agents/skills/` (Antigravity, OpenAI Codex, Windsurf, Gemini CLI, Amp, Cline, Goose),
+    // `.claude/skills/` (Claude Code), `.cursor/skills/` (Cursor), and `.github/skills/` (GitHub Copilot).
+    for (root_dir, include_openai_meta) in [
+        (".agents", true),
+        (".claude", false),
+        (".cursor", false),
+        (".github", false),
+    ] {
+        let skill_dir = target.join(root_dir).join("skills").join("minici-cost");
+        let skill_md = skill_dir.join("SKILL.md");
+        if !skill_md.exists() {
+            let _ = fs::create_dir_all(skill_dir.join("references"));
+            let _ = fs::write(&skill_md, EMBEDDED_SKILL_MD);
+            let _ = fs::write(
+                skill_dir.join("references").join("cli-and-mcp-reference.md"),
+                EMBEDDED_SKILL_REF_MD,
+            );
+            if include_openai_meta {
+                let _ = fs::create_dir_all(skill_dir.join("agents"));
+                let _ = fs::write(
+                    skill_dir.join("agents").join("openai.yaml"),
+                    EMBEDDED_OPENAI_YAML,
+                );
+            }
+        }
+    }
+
     let git_dir = target.join(".git");
     if git_dir.is_dir() {
         let pre_commit = git_dir.join("hooks").join("pre-commit");
@@ -952,6 +1212,8 @@ jobs:
     if: >-
       github.event_name != 'issue_comment' ||
       (github.event.issue.pull_request &&
+       github.event.comment.user.type != 'Bot' &&
+       !contains(github.event.comment.body, '<!-- minici-') &&
        contains(github.event.comment.body, '@minici') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
@@ -1042,21 +1304,73 @@ pub fn route_at_minici_comment_command(comment_body: &str, repo_dir: &Path) -> O
     route_at_minici_comment_command_with_base(comment_body, repo_dir, None)
 }
 
+fn strip_inline_backticks_and_blockquotes(raw: &str) -> String {
+    let mut cleaned = String::with_capacity(raw.len());
+    for line in raw.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('>') {
+            continue;
+        }
+        let mut in_tick = false;
+        for ch in trimmed.chars() {
+            if ch == '`' {
+                in_tick = !in_tick;
+            } else if !in_tick {
+                cleaned.push(ch);
+            }
+        }
+        cleaned.push('\n');
+    }
+    cleaned
+}
+
 pub fn route_at_minici_comment_command_with_base(
     comment_body: &str,
     repo_dir: &Path,
     compare_to: Option<&Path>,
 ) -> Option<String> {
-    let lower = comment_body.to_ascii_lowercase();
+    if comment_body.contains("<!-- minici-")
+        || comment_body.contains("MiniCI Pull Request CI/CD Cost Diff")
+        || comment_body.contains("MiniCI Merge Request CI/CD Cost Diff")
+    {
+        return None;
+    }
+    let cleaned = strip_inline_backticks_and_blockquotes(comment_body);
+    let lower = cleaned.to_ascii_lowercase();
     let idx = lower.find("@minici")?;
-    let after = comment_body[idx + "@minici".len()..].trim();
+    let after = cleaned[idx + "@minici".len()..].trim();
     let mut parts = after.split_whitespace();
     let cmd = parts.next().unwrap_or("breakdown").to_ascii_lowercase();
     let arg1 = parts.next().unwrap_or("arm64").to_ascii_lowercase();
 
     let reply = match cmd.as_str() {
         "shrink" | "optimize" | "fix" => {
-            let plan = optimizer::run_surgical_optimizer(repo_dir, "shrink", "arm64", false);
+            let want_rust = after.to_ascii_lowercase().contains("rust");
+            let plan = optimizer::run_surgical_optimizer_with_opts(
+                repo_dir,
+                "shrink",
+                "arm64",
+                false,
+                optimizer::MigrateOptions {
+                    rust_tools: want_rust,
+                    rust_everywhere: want_rust,
+                    ..Default::default()
+                },
+            );
+            plan.render_pr_suggestions_markdown()
+        }
+        "accelerate" | "rust-everywhere" | "rust-tools" => {
+            let plan = optimizer::run_surgical_optimizer_with_opts(
+                repo_dir,
+                "accelerate",
+                "rust-everywhere",
+                false,
+                optimizer::MigrateOptions {
+                    rust_tools: true,
+                    rust_everywhere: true,
+                    ..Default::default()
+                },
+            );
             plan.render_pr_suggestions_markdown()
         }
         "migrate" | "switch" => {
@@ -1230,13 +1544,23 @@ fn upsert_github_pr_comment(
     body_markdown: &str,
     behavior: &str,
 ) -> Result<String, String> {
-    let token = env::var("GITHUB_TOKEN")
-        .or_else(|_| env::var("GH_TOKEN"))
-        .map_err(|_| "GITHUB_TOKEN or GH_TOKEN is required for --post".to_string())?;
+    let token = permissions::discover_provider_token_with_consent(
+        "github",
+        true,
+        "posting sticky PR comment",
+    )
+    .ok_or_else(|| {
+        "GITHUB_TOKEN / GH_TOKEN (or `gh auth login` with --consent) is required for --post"
+            .to_string()
+    })?;
+    let api_base = env::var("GITHUB_API_URL")
+        .unwrap_or_else(|_| "https://api.github.com".to_string())
+        .trim_end_matches('/')
+        .to_string();
     let auth_header = format!("Authorization: Bearer {}", token.trim());
     let list_url = format!(
-        "https://api.github.com/repos/{}/issues/{}/comments?per_page=100",
-        repo_slug, pr_number
+        "{}/repos/{}/issues/{}/comments?per_page=100",
+        api_base, repo_slug, pr_number
     );
     let mut existing_comment_id: Option<u64> = None;
     if behavior != "new" {
@@ -1250,7 +1574,7 @@ fn upsert_github_pr_comment(
                 "-H",
                 "Accept: application/vnd.github+json",
                 "-H",
-                "User-Agent: minici-cli/0.9.0",
+                "User-Agent: minici-cli/0.9.1",
                 "-H",
                 &auth_header,
                 &list_url,
@@ -1273,16 +1597,16 @@ fn upsert_github_pr_comment(
         (
             "PATCH",
             format!(
-                "https://api.github.com/repos/{}/issues/comments/{}",
-                repo_slug, cid
+                "{}/repos/{}/issues/comments/{}",
+                api_base, repo_slug, cid
             ),
         )
     } else {
         (
             "POST",
             format!(
-                "https://api.github.com/repos/{}/issues/{}/comments",
-                repo_slug, pr_number
+                "{}/repos/{}/issues/{}/comments",
+                api_base, repo_slug, pr_number
             ),
         )
     };
@@ -1301,7 +1625,7 @@ fn upsert_github_pr_comment(
             "-H",
             "Content-Type: application/json",
             "-H",
-            "User-Agent: minici-cli/0.9.0",
+            "User-Agent: minici-cli/0.9.1",
             "-H",
             &auth_header,
             "--data-binary",
@@ -1321,12 +1645,267 @@ fn upsert_github_pr_comment(
     }
 }
 
+fn url_encode_project_slug(slug: &str) -> String {
+    slug.replace('/', "%2F")
+}
+
+fn upsert_gitlab_mr_note(
+    project_id_or_slug: &str,
+    mr_iid: u64,
+    body_markdown: &str,
+    behavior: &str,
+) -> Result<String, String> {
+    let (hdr_name, hdr_val) = if let Ok(tok) = env::var("GITLAB_TOKEN").or_else(|_| env::var("GL_TOKEN")) {
+        ("PRIVATE-TOKEN", tok.trim().to_string())
+    } else if let Ok(jtok) = env::var("CI_JOB_TOKEN") {
+        ("JOB-TOKEN", jtok.trim().to_string())
+    } else {
+        return Err("GITLAB_TOKEN or CI_JOB_TOKEN is required for `comment gitlab --post`".to_string());
+    };
+    let api_base = env::var("CI_API_V4_URL")
+        .unwrap_or_else(|_| "https://gitlab.com/api/v4".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let proj_enc = if project_id_or_slug.chars().all(|c| c.is_ascii_digit()) {
+        project_id_or_slug.to_string()
+    } else {
+        url_encode_project_slug(project_id_or_slug)
+    };
+    let auth_header = format!("{}: {}", hdr_name, hdr_val);
+    let list_url = format!(
+        "{}/projects/{}/merge_requests/{}/notes?per_page=100",
+        api_base, proj_enc, mr_iid
+    );
+    let mut existing_note_id: Option<u64> = None;
+    if behavior != "new" {
+        if let Ok(out) = Command::new("curl")
+            .args([
+                "-fsSL",
+                "--connect-timeout",
+                "4",
+                "-m",
+                "10",
+                "-H",
+                &auth_header,
+                &list_url,
+            ])
+            .output()
+        {
+            if out.status.success() {
+                let raw = String::from_utf8_lossy(&out.stdout);
+                existing_note_id = find_sticky_comment_id_in_github_json(&raw);
+            }
+        }
+    }
+
+    let payload = format!("{{\"body\":\"{}\"}}", engine::json_escape(body_markdown));
+    let tmp_payload = env::temp_dir().join(format!("minici_gl_note_{}.json", std::process::id()));
+    let _ = fs::write(&tmp_payload, &payload);
+    let data_arg = format!("@{}", tmp_payload.display());
+    let (method, target_url) = if let Some(nid) = existing_note_id {
+        (
+            "PUT",
+            format!(
+                "{}/projects/{}/merge_requests/{}/notes/{}",
+                api_base, proj_enc, mr_iid, nid
+            ),
+        )
+    } else {
+        (
+            "POST",
+            format!(
+                "{}/projects/{}/merge_requests/{}/notes",
+                api_base, proj_enc, mr_iid
+            ),
+        )
+    };
+
+    let res = Command::new("curl")
+        .args([
+            "-fsSL",
+            "--connect-timeout",
+            "4",
+            "-m",
+            "12",
+            "-X",
+            method,
+            "-H",
+            "Content-Type: application/json",
+            "-H",
+            &auth_header,
+            "--data-binary",
+            &data_arg,
+            &target_url,
+        ])
+        .output();
+    let _ = fs::remove_file(&tmp_payload);
+    match res {
+        Ok(o) if o.status.success() => Ok(format!(
+            "{} sticky GitLab MR note on {}!{}",
+            method, project_id_or_slug, mr_iid
+        )),
+        Ok(o) => Err(format!("GitLab MR notes API returned status {}", o.status)),
+        Err(e) => Err(format!("Failed to invoke curl: {}", e)),
+    }
+}
+
+fn find_sticky_comment_id_in_bitbucket_json(raw_json: &str) -> Option<u64> {
+    let marker = "MiniCI Pull Request CI/CD Cost Diff";
+    let m_idx = raw_json.find(marker)?;
+    // Walk backward or forward near `m_idx` inside the enclosing comment object for `"id": <digits>`
+    let window_start = m_idx.saturating_sub(600);
+    let window_end = (m_idx + 1200).min(raw_json.len());
+    let slice = &raw_json[window_start..window_end];
+    for pat in ["\"id\":", "\"id\" :"] {
+        for (pos, _) in slice.match_indices(pat) {
+            let digits: String = slice[pos + pat.len()..]
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            if let Ok(cid) = digits.parse::<u64>() {
+                if cid > 0 {
+                    return Some(cid);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn upsert_bitbucket_pr_comment(
+    repo_slug: &str,
+    pr_id: u64,
+    body_markdown: &str,
+    behavior: &str,
+) -> Result<String, String> {
+    let token = env::var("BITBUCKET_TOKEN")
+        .or_else(|_| env::var("BITBUCKET_ACCESS_TOKEN"))
+        .map_err(|_| "BITBUCKET_TOKEN is required for `comment bitbucket --post`".to_string())?;
+    let api_base = env::var("BITBUCKET_API_URL")
+        .unwrap_or_else(|_| "https://api.bitbucket.org/2.0".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let auth_header = format!("Authorization: Bearer {}", token.trim());
+    let list_url = format!(
+        "{}/repositories/{}/pullrequests/{}/comments?pagelen=100",
+        api_base, repo_slug, pr_id
+    );
+    let mut existing_cid: Option<u64> = None;
+    if behavior != "new" {
+        if let Ok(out) = Command::new("curl")
+            .args([
+                "-fsSL",
+                "--connect-timeout",
+                "4",
+                "-m",
+                "10",
+                "-H",
+                &auth_header,
+                &list_url,
+            ])
+            .output()
+        {
+            if out.status.success() {
+                let raw = String::from_utf8_lossy(&out.stdout);
+                existing_cid = find_sticky_comment_id_in_bitbucket_json(&raw);
+            }
+        }
+    }
+
+    let (method, target_url) = if let Some(cid) = existing_cid {
+        (
+            "PUT",
+            format!(
+                "{}/repositories/{}/pullrequests/{}/comments/{}",
+                api_base, repo_slug, pr_id, cid
+            ),
+        )
+    } else {
+        (
+            "POST",
+            format!(
+                "{}/repositories/{}/pullrequests/{}/comments",
+                api_base, repo_slug, pr_id
+            ),
+        )
+    };
+    let payload = format!(
+        "{{\"content\":{{\"raw\":\"{}\"}}}}",
+        engine::json_escape(body_markdown)
+    );
+    let tmp_payload = env::temp_dir().join(format!("minici_bb_comment_{}.json", std::process::id()));
+    let _ = fs::write(&tmp_payload, &payload);
+    let data_arg = format!("@{}", tmp_payload.display());
+    let res = Command::new("curl")
+        .args([
+            "-fsSL",
+            "--connect-timeout",
+            "4",
+            "-m",
+            "12",
+            "-X",
+            method,
+            "-H",
+            "Content-Type: application/json",
+            "-H",
+            &auth_header,
+            "--data-binary",
+            &data_arg,
+            &target_url,
+        ])
+        .output();
+    let _ = fs::remove_file(&tmp_payload);
+    match res {
+        Ok(o) if o.status.success() => Ok(format!(
+            "{} sticky Bitbucket PR comment on {}#{}",
+            method, repo_slug, pr_id
+        )),
+        Ok(o) => Err(format!("Bitbucket PR comment API returned status {}", o.status)),
+        Err(e) => Err(format!("Failed to invoke curl: {}", e)),
+    }
+}
+
+/// Parses unified diff output (`git diff -U0 ...`) and returns `(rel_path, right_start, right_end)`
+/// 1-based inclusive line ranges on the `RIGHT` (`+`) side of the PR diff so GitHub's Pull Request
+/// Reviews API never rejects inline `suggestion` comments with `HTTP 422 Unprocessable Entity`.
+fn parse_changed_right_hunk_ranges(unified_diff: &str) -> Vec<(String, usize, usize)> {
+    let mut ranges: Vec<(String, usize, usize)> = Vec::new();
+    let mut current_file = String::new();
+    for line in unified_diff.lines() {
+        if let Some(rest) = line.strip_prefix("+++ b/") {
+            current_file = rest.trim().to_string();
+        } else if line.starts_with("@@ ") && !current_file.is_empty() {
+            if let Some(plus_idx) = line.find(" +") {
+                let after_plus = &line[plus_idx + 2..];
+                let range_tok = after_plus.split_whitespace().next().unwrap_or("");
+                let mut parts = range_tok.split(',');
+                let start: usize = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                let count: usize = parts.next().and_then(|s| s.parse().ok()).unwrap_or(1);
+                if start > 0 && count > 0 {
+                    ranges.push((current_file.clone(), start, start + count - 1));
+                }
+            }
+        }
+    }
+    ranges
+}
+
 /// Builds a GitHub Pull Request Review JSON payload (`POST /repos/{slug}/pulls/{pr}/reviews`)
 /// attaching inline ```suggestion``` blocks to workflow lines modified in the PR so GitHub renders
 /// native 1-click "Commit suggestion" + "Add suggestion to batch" buttons on the Files Changed tab.
+#[cfg(test)]
 fn build_inline_pr_review_suggestions_json(
     repo_dir: &Path,
     changed_workflow_paths: &[String],
+) -> Option<String> {
+    build_inline_pr_review_suggestions_json_with_hunks(repo_dir, changed_workflow_paths, None)
+}
+
+fn build_inline_pr_review_suggestions_json_with_hunks(
+    repo_dir: &Path,
+    changed_workflow_paths: &[String],
+    changed_right_hunks: Option<&[(String, usize, usize)]>,
 ) -> Option<String> {
     if changed_workflow_paths.is_empty() {
         return None;
@@ -1351,7 +1930,18 @@ fn build_inline_pr_review_suggestions_json(
         if !changed_workflow_paths.iter().any(|p| p == &rel_norm || p.ends_with(&e.workflow_file)) {
             continue;
         }
-        let anchor = (rel_norm.clone(), e.line_number.max(1));
+        let target_line = e.line_number.max(1);
+        if let Some(hunks) = changed_right_hunks {
+            let in_hunk = hunks.iter().any(|(path, start, end)| {
+                (path == &rel_norm || path.ends_with(&e.workflow_file))
+                    && target_line >= *start
+                    && target_line <= *end
+            });
+            if !in_hunk {
+                continue;
+            }
+        }
+        let anchor = (rel_norm.clone(), target_line);
         if seen_anchors.contains(&anchor) {
             continue;
         }
@@ -1387,7 +1977,11 @@ fn post_inline_github_pr_review_if_applicable(
     repo_dir: &Path,
     compare_to: Option<&Path>,
 ) {
-    let Ok(token) = env::var("GITHUB_TOKEN").or_else(|_| env::var("GH_TOKEN")) else {
+    let Some(token) = permissions::discover_provider_token_with_consent(
+        "github",
+        true,
+        "posting inline PR review suggestions",
+    ) else {
         return;
     };
     let Some(cmp) = compare_to else {
@@ -1410,7 +2004,22 @@ fn post_inline_github_pr_review_if_applicable(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
-    let Some(review_json) = build_inline_pr_review_suggestions_json(repo_dir, &changed_wfs) else {
+    if changed_wfs.is_empty() {
+        return;
+    }
+    let hunk_ranges = Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(["diff", "-U3", &diff_range, "--", ".github/workflows"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| parse_changed_right_hunk_ranges(&String::from_utf8_lossy(&o.stdout)));
+    let Some(review_json) = build_inline_pr_review_suggestions_json_with_hunks(
+        repo_dir,
+        &changed_wfs,
+        hunk_ranges.as_deref(),
+    ) else {
         return;
     };
 
@@ -1422,10 +2031,14 @@ fn post_inline_github_pr_review_if_applicable(
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
+    let api_base = env::var("GITHUB_API_URL")
+        .unwrap_or_else(|_| "https://api.github.com".to_string())
+        .trim_end_matches('/')
+        .to_string();
     let auth_header = format!("Authorization: Bearer {}", token.trim());
     let reviews_url = format!(
-        "https://api.github.com/repos/{}/pulls/{}/reviews",
-        repo_slug, pr_number
+        "{}/repos/{}/pulls/{}/reviews",
+        api_base, repo_slug, pr_number
     );
     if !head_sha.is_empty() {
         if let Ok(existing) = Command::new("curl")
@@ -1438,7 +2051,7 @@ fn post_inline_github_pr_review_if_applicable(
                 "-H",
                 "Accept: application/vnd.github+json",
                 "-H",
-                "User-Agent: minici-cli/0.9.0",
+                "User-Agent: minici-cli/0.9.1",
                 "-H",
                 &auth_header,
                 &format!("{}?per_page=50", reviews_url),
@@ -1469,7 +2082,7 @@ fn post_inline_github_pr_review_if_applicable(
             "-H",
             "Content-Type: application/json",
             "-H",
-            "User-Agent: minici-cli/0.9.0",
+            "User-Agent: minici-cli/0.9.1",
             "-H",
             &auth_header,
             "--data-binary",
@@ -1553,18 +2166,26 @@ fn print_subcommand_help(sub: &str) {
                --pr <NUMBER>                  Pull request number\n\
                --event-path <FILE>            GitHub webhook event JSON path (routes @minici commands)\n\
                --webhook-url <URL>            Slack Incoming Webhook URL (for `comment slack`)\n\
+               --consent, --yes               Authorize ambient local provider token / Slack webhook\n\
                --suggest-fixes                Attach verified YAML optimization snippets & inline PR review suggestions\n\
                --no-suggest-fixes             Omit YAML optimization suggestions from PR comment\n\
                --out-file <FILE>              Save rendered Markdown or Slack Block Kit JSON to file\n\
                --quiet, -q                    Suppress stdout printing"
         ),
         "permissions" => println!(
-            "Usage: minici permissions [check|audit] [OPTIONS]\n\n\
-             Verify least-privilege zero-source-code token security & 108-attribute telemetry coverage.\n\n\
+            "Usage: minici permissions [check|audit|consent] [OPTIONS]\n\n\
+             Verify least-privilege zero-source-code token security, 108-attribute telemetry coverage,\n\
+             and manage explicit user consent (`~/.minici/consent.json`) for ambient host credentials.\n\n\
+             SUBCOMMANDS:\n\
+               check, audit                   Run least-privilege read-only token & coverage audit\n\
+               consent list                   List authorized ambient credential providers\n\
+               consent grant <PROVIDER|all>   Authorize github, gitlab, circleci, bitbucket, slack, or cloud-iac\n\
+               consent revoke <PROVIDER|all>  Revoke stored consent for a provider (or all)\n\n\
              OPTIONS:\n\
                --repo, --path <SLUG_OR_DIR>   Repository slug or local directory\n\
                --vendor, --provider <VENDOR>  github, gitlab, circleci, or bitbucket\n\
                --token <TOKEN>                Optional explicit read-only token to inspect\n\
+               --consent, --yes               Authorize ambient local CLI/keyring token for this run\n\
                --billing-csv <FILE>           Optional FOCUS v1.1 / vendor billing CSV path\n\
                --offline                      Audit local static posture without live API probes\n\
                --format <FMT>                 table, markdown (or md), or json [default: table]"
@@ -1588,7 +2209,20 @@ fn print_subcommand_help(sub: &str) {
              Generate or apply surgical comment-preserving workflow optimizations verified by shadow DiffReport.\n\n\
              OPTIONS:\n\
                --path, --repo <DIR_OR_FILE>   Repository directory or workflow YAML [default: .]\n\
+               --rust-tools                   Swap legacy CI tools (pip/flake8/black/eslint/prettier/cargo test) to Rust (uv/ruff/biome/nextest)\n\
+               --rust-everywhere              Also convert standalone bespoke CI scripts (scripts/*.py, tools/*.js, ci/*.sh) into cached Rust binaries\n\
+               --security                     Inject least-privilege GITHUB_TOKEN permissions\n\
+               --with-fixer                   Delegate 5-Pillar SHA-pinning pass to minici-yaml-fixer\n\
                --apply, --write               Write verified comment-preserving patches to disk\n\
+               --suggest-pr                   Emit GitHub PR committable ```suggestion Markdown blocks\n\
+               --format <table|markdown|json> Output format [default: table]"
+        ),
+        "accelerate" => println!(
+            "Usage: minici accelerate [OPTIONS]\n\n\
+             Two-tier Rust CI acceleration: drop-in Rust toolchains (MINICI-RUST-012) + scoped rust-everywhere CI-script converter (MINICI-RUST-EVERYWHERE-013).\n\n\
+             OPTIONS:\n\
+               --path, --repo <DIR_OR_FILE>   Repository directory or workflow YAML [default: .]\n\
+               --apply, --write               Write verified YAML patches + .minici/rust-everywhere/<tool>/ crates to disk\n\
                --suggest-pr                   Emit GitHub PR committable ```suggestion Markdown blocks\n\
                --format <table|markdown|json> Output format [default: table]"
         ),
@@ -1717,13 +2351,21 @@ fn load_or_analyze_ext(path: &Path, cfg: Option<UsageConfig>, force_refresh: boo
 }
 
 fn main() {
-    let args: Vec<String> = env::args().skip(1).collect();
+    let raw_args: Vec<String> = env::args().skip(1).collect();
+    let mut args: Vec<String> = Vec::with_capacity(raw_args.len());
+    for a in raw_args {
+        if a == "--consent" || a == "--yes" {
+            permissions::set_session_consent(true);
+        } else {
+            args.push(a);
+        }
+    }
     if args.is_empty() || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
         print_help();
         return;
     }
     if args[0] == "--version" || args[0] == "-V" || args[0] == "version" {
-        println!("minici 0.9.0");
+        println!("minici 0.9.1");
         return;
     }
 
@@ -1751,6 +2393,7 @@ fn main() {
             let mut hook: Option<String> = None;
             let mut benchmark = false;
             let mut quiet = false;
+            let mut compact_json = false;
             let mut force_refresh = false;
             let mut live_sync = false;
             let mut window_days: u32 = 30;
@@ -1852,6 +2495,13 @@ fn main() {
                     }
                     "--benchmark" => benchmark = true,
                     "--quiet" | "-q" => quiet = true,
+                    "--compact" => compact_json = true,
+                    "--all" | "--full" => {
+                        env::set_var("MINICI_FULL_TABLE", "1");
+                    }
+                    "--ascii" | "--no-unicode" => {
+                        env::set_var("MINICI_ASCII", "1");
+                    }
                     "--customer-mode" | "--hide-internal" => {
                         env::set_var("MINICI_CUSTOMER_MODE", "1");
                     }
@@ -1959,6 +2609,7 @@ fn main() {
             };
 
             if let Some(hook_name) = hook {
+                let g = active_glyphs();
                 let base_dir = if path.is_file() {
                     path.parent().unwrap_or(Path::new("."))
                 } else if path.exists() {
@@ -1973,22 +2624,50 @@ fn main() {
                     report.to_json(),
                 );
                 if !quiet {
+                    let top_hotspot = report
+                        .jobs
+                        .iter()
+                        .max_by(|a, b| {
+                            a.run_compute_cost_usd
+                                .partial_cmp(&b.run_compute_cost_usd)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                        .map(|j| {
+                            format!(
+                                " | Top: {}:L{} ({} ${:.2}/mo)",
+                                short_workflow_label(&j.workflow_file),
+                                j.line_start.max(1),
+                                j.job_id,
+                                j.run_compute_cost_usd * report.monthly_runs
+                            )
+                        })
+                        .unwrap_or_default();
+                    let prefix = if g.check == "[OK]" { "[minici" } else { "⚡ [minici" };
                     println!(
-                        "⚡ [minici PreToolUse/{}] Checked {} expanded CI jobs in {} µs ({:.2} ms) | Est: ${:.3}/run (${:.2}/mo) | Dev Wait: ${:.2}/run",
+                        "{} PreToolUse/{}] Checked {} expanded CI jobs in {} {} ({:.2} ms) | Est: ${:.3}/run (${:.2}/mo) | Dev Wait: ${:.2}/run{}",
+                        prefix,
                         hook_name,
                         report.total_expanded_matrix_jobs,
                         report.execution_time_us,
+                        g.micros,
                         report.execution_time_ms,
                         report.gross_compute_cost_per_run_usd,
                         report.gross_monthly_compute_cost_usd,
-                        report.dev_wait_cost_per_run_usd
+                        report.dev_wait_cost_per_run_usd,
+                        top_hotspot
                     );
                 }
                 return;
             }
 
             let rendered = match format.as_str() {
-                "json" => report.to_json(),
+                "json" => {
+                    if compact_json {
+                        report.to_compact_json()
+                    } else {
+                        report.to_json()
+                    }
+                }
                 "markdown" | "md" => render_breakdown_markdown(&report),
                 "html" | "htm" => render_breakdown_html(&report),
                 "csv" => render_breakdown_csv(&report),
@@ -2036,6 +2715,7 @@ fn main() {
             let mut format = "table".to_string();
             let mut out_file: Option<PathBuf> = None;
             let mut quiet = false;
+            let mut compact_json = false;
             let mut custom_usage = false;
             let mut tier = "auto".to_string();
             let mut prs_per_week = 25.0_f64;
@@ -2118,6 +2798,13 @@ fn main() {
                         }
                     }
                     "--quiet" | "-q" => quiet = true,
+                    "--compact" => compact_json = true,
+                    "--all" | "--full" => {
+                        env::set_var("MINICI_FULL_TABLE", "1");
+                    }
+                    "--ascii" | "--no-unicode" => {
+                        env::set_var("MINICI_ASCII", "1");
+                    }
                     _ => {}
                 }
                 i += 1;
@@ -2146,7 +2833,13 @@ fn main() {
             let diff = compute_diff(&base, &head);
 
             let rendered = match format.as_str() {
-                "json" => diff.to_json(),
+                "json" => {
+                    if compact_json {
+                        diff.to_compact_json()
+                    } else {
+                        diff.to_json()
+                    }
+                }
                 "markdown" | "md" => render_diff_markdown(&diff),
                 _ => render_cli_compact_diff(&diff),
             };
@@ -2175,10 +2868,15 @@ fn main() {
             let mut pr_number: Option<u64> = None;
             let mut repo_slug_opt: Option<String> = None;
             let mut event_path: Option<PathBuf> = env::var("GITHUB_EVENT_PATH").ok().map(PathBuf::from);
-            let mut webhook_url: Option<String> = env::var("SLACK_WEBHOOK_URL").ok();
+            let mut explicit_webhook_url: Option<String> = None;
             let mut suggest_fixes = env::var("MINICI_SUGGEST_FIXES")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false);
+            let mut tier = "auto".to_string();
+            let mut prs_per_week = 25.0_f64;
+            let mut pushes_per_pr = 4.0_f64;
+            let mut dev_hourly_rate = 65.0_f64;
+            let mut custom_usage = false;
             let mut quiet = false;
 
             let mut i = 0;
@@ -2231,7 +2929,7 @@ fn main() {
                     }
                     "--webhook-url" => {
                         if i + 1 < rest.len() {
-                            webhook_url = Some(rest[i + 1].clone());
+                            explicit_webhook_url = Some(rest[i + 1].clone());
                             i += 1;
                         }
                     }
@@ -2247,6 +2945,34 @@ fn main() {
                             i += 1;
                         }
                     }
+                    "--tier" => {
+                        if i + 1 < rest.len() {
+                            tier = rest[i + 1].clone();
+                            custom_usage = true;
+                            i += 1;
+                        }
+                    }
+                    "--prs-per-week" => {
+                        if i + 1 < rest.len() {
+                            prs_per_week = parse_non_negative_finite_f64(&rest[i + 1], "--prs-per-week", 25.0);
+                            custom_usage = true;
+                            i += 1;
+                        }
+                    }
+                    "--pushes-per-pr" => {
+                        if i + 1 < rest.len() {
+                            pushes_per_pr = parse_non_negative_finite_f64(&rest[i + 1], "--pushes-per-pr", 4.0);
+                            custom_usage = true;
+                            i += 1;
+                        }
+                    }
+                    "--dev-hourly-rate" => {
+                        if i + 1 < rest.len() {
+                            dev_hourly_rate = parse_non_negative_finite_f64(&rest[i + 1], "--dev-hourly-rate", 65.0);
+                            custom_usage = true;
+                            i += 1;
+                        }
+                    }
                     "--suggest-fixes" => suggest_fixes = true,
                     "--no-suggest-fixes" => suggest_fixes = false,
                     "--quiet" | "-q" => quiet = true,
@@ -2258,22 +2984,54 @@ fn main() {
                 i += 1;
             }
 
+            let usage_opt = if custom_usage {
+                Some(UsageConfig {
+                    tier,
+                    prs_per_week,
+                    pushes_per_pr,
+                    dev_hourly_rate_usd: dev_hourly_rate,
+                    ..Default::default()
+                })
+            } else {
+                None
+            };
+
             let mut routed_at_minici_md: Option<String> = None;
+            let mut is_issue_comment_event = false;
+            let mut skip_issue_comment = false;
             if let Some(ref ev_file) = event_path {
                 if let Ok(ev_raw) = fs::read_to_string(ev_file) {
                     if pr_number.is_none() {
                         pr_number = extract_pr_number_from_event_json(&ev_raw);
                     }
                     if let Some(c_idx) = ev_raw.find("\"comment\":") {
-                        if let Some(body) = extract_json_str(&ev_raw[c_idx..], "body") {
+                        is_issue_comment_event = true;
+                        let comment_slice = &ev_raw[c_idx..];
+                        let is_bot_author = comment_slice.contains("\"type\":\"Bot\"")
+                            || comment_slice.contains("\"type\": \"Bot\"")
+                            || comment_slice.contains("[bot]\"");
+                        if is_bot_author {
+                            skip_issue_comment = true;
+                        } else if let Some(body) = extract_json_str(comment_slice, "body") {
                             routed_at_minici_md = route_at_minici_comment_command_with_base(
                                 &body,
                                 &path,
                                 compare_to.as_deref(),
                             );
+                            if routed_at_minici_md.is_none() {
+                                skip_issue_comment = true;
+                            }
+                        } else {
+                            skip_issue_comment = true;
                         }
                     }
                 }
+            }
+            if is_issue_comment_event && skip_issue_comment {
+                if !quiet {
+                    eprintln!("ℹ️ Skipping issue_comment event (bot comment or no direct @minici command).");
+                }
+                return;
             }
 
             let diff = if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("json")
@@ -2284,23 +3042,32 @@ fn main() {
                     extract_json_str(&raw, "head_path"),
                 ) {
                     let hp_path = PathBuf::from(&hp);
-                    let b = load_or_analyze_in_repo(Path::new(&bp), Some(&hp_path), None, false, true);
+                    let b = load_or_analyze_in_repo(Path::new(&bp), Some(&hp_path), usage_opt, false, true);
                     let h = load_or_analyze_in_repo(&hp_path, None, Some(b.usage.clone()), false, true);
                     compute_diff(&b, &h)
                 } else {
-                    let b = load_or_analyze(&path, None);
+                    let b = load_or_analyze(&path, usage_opt);
                     compute_diff(&b, &b)
                 }
             } else if let Some(ref cmp) = compare_to {
-                let b = load_or_analyze_in_repo(cmp, Some(&path), None, false, true);
+                let b = load_or_analyze_in_repo(cmp, Some(&path), usage_opt, false, true);
                 let h = load_or_analyze_in_repo(&path, None, Some(b.usage.clone()), false, true);
                 compute_diff(&b, &h)
             } else {
-                let b = load_or_analyze(&path, None);
+                let b = load_or_analyze(&path, usage_opt);
                 compute_diff(&b, &b)
             };
 
-            let output = if platform.to_lowercase() == "slack" {
+            let plat_low = platform.to_lowercase();
+            if pr_number.is_none() {
+                if plat_low == "gitlab" || plat_low == "gitlab-ci" {
+                    pr_number = env::var("CI_MERGE_REQUEST_IID").ok().and_then(|s| s.parse().ok());
+                } else if plat_low == "bitbucket" || plat_low == "bitbucket-pipelines" {
+                    pr_number = env::var("BITBUCKET_PR_ID").ok().and_then(|s| s.parse().ok());
+                }
+            }
+
+            let output = if plat_low == "slack" {
                 if compare_to.is_none() && diff.delta_monthly_compute_usd == 0.0 && diff.job_changes.is_empty() {
                     render_slack_breakdown_payload(&diff.head_report)
                 } else {
@@ -2309,21 +3076,21 @@ fn main() {
             } else if let Some(ref bot_md) = routed_at_minici_md {
                 format!(
                     "<!-- minici-behavior:{} platform:{} -->\n{}",
-                    behavior,
-                    platform.to_lowercase(),
-                    bot_md
+                    behavior, plat_low, bot_md
                 )
             } else {
-                let mut base_md = render_diff_markdown(&diff);
-                if suggest_fixes {
+                let mut base_md = render_diff_markdown_for_platform(&diff, &plat_low);
+                if suggest_fixes && (plat_low == "github" || plat_low == "github-actions") {
                     base_md.push_str(&render_pr_autofix_appendix(&path));
                 }
-                format!(
-                    "<!-- minici-behavior:{} platform:{} -->\n{}",
-                    behavior,
-                    platform.to_lowercase(),
+                if plat_low == "bitbucket" || plat_low == "bitbucket-pipelines" {
                     base_md
-                )
+                } else {
+                    format!(
+                        "<!-- minici-behavior:{} platform:{} -->\n{}",
+                        behavior, plat_low, base_md
+                    )
+                }
             };
 
             if let Some(out) = out_file {
@@ -2332,8 +3099,19 @@ fn main() {
                 }
                 let _ = fs::write(&out, &output);
             }
-            if platform.to_lowercase() == "slack" {
-                if let Some(ref url) = webhook_url {
+            if plat_low == "slack" {
+                let has_ambient_slack_env = env::var("SLACK_WEBHOOK_URL")
+                    .map(|v| !v.trim().is_empty())
+                    .unwrap_or(false)
+                    || env::var("MINICI_SLACK_WEBHOOK_URL")
+                        .map(|v| !v.trim().is_empty())
+                        .unwrap_or(false);
+                let resolved_webhook = if explicit_webhook_url.is_some() || post_live || has_ambient_slack_env {
+                    permissions::discover_slack_webhook_with_consent(explicit_webhook_url.as_deref())
+                } else {
+                    None
+                };
+                if let Some(ref url) = resolved_webhook {
                     if !url.trim().is_empty() {
                         let tmp_sl = env::temp_dir().join(format!("minici_slack_{}.json", std::process::id()));
                         let _ = fs::write(&tmp_sl, &output);
@@ -2358,27 +3136,66 @@ fn main() {
                     }
                 }
             } else if post_live {
-                let slug = repo_slug_opt.or_else(|| infer_github_slug_from_dir(&path));
-                if let (Some(repo_slug), Some(pr_num)) = (slug, pr_number) {
-                    match upsert_github_pr_comment(&repo_slug, pr_num, &output, &behavior) {
-                        Ok(msg) => {
-                            if !quiet {
-                                eprintln!("✅ {}", msg);
+                if plat_low == "gitlab" || plat_low == "gitlab-ci" {
+                    let proj = repo_slug_opt
+                        .or_else(|| env::var("CI_PROJECT_ID").ok())
+                        .or_else(|| env::var("CI_PROJECT_PATH").ok())
+                        .or_else(|| infer_git_provider_slug_from_dir(&path, "gitlab"));
+                    if let (Some(proj_id), Some(mr_iid)) = (proj, pr_number) {
+                        match upsert_gitlab_mr_note(&proj_id, mr_iid, &output, &behavior) {
+                            Ok(msg) => {
+                                if !quiet {
+                                    eprintln!("✅ {}", msg);
+                                }
                             }
-                        }
-                        Err(err) => {
-                            if !quiet {
-                                eprintln!("⚠️ {}", err);
+                            Err(err) => {
+                                if !quiet {
+                                    eprintln!("⚠️ {}", err);
+                                }
                             }
                         }
                     }
-                    if suggest_fixes && routed_at_minici_md.is_none() {
-                        post_inline_github_pr_review_if_applicable(
-                            &repo_slug,
-                            pr_num,
-                            &path,
-                            compare_to.as_deref(),
-                        );
+                } else if plat_low == "bitbucket" || plat_low == "bitbucket-pipelines" {
+                    let slug = repo_slug_opt
+                        .or_else(|| env::var("BITBUCKET_REPO_FULL_NAME").ok())
+                        .or_else(|| infer_git_provider_slug_from_dir(&path, "bitbucket"));
+                    if let (Some(repo_slug), Some(pr_id)) = (slug, pr_number) {
+                        match upsert_bitbucket_pr_comment(&repo_slug, pr_id, &output, &behavior) {
+                            Ok(msg) => {
+                                if !quiet {
+                                    eprintln!("✅ {}", msg);
+                                }
+                            }
+                            Err(err) => {
+                                if !quiet {
+                                    eprintln!("⚠️ {}", err);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    let slug = repo_slug_opt.or_else(|| infer_github_slug_from_dir(&path));
+                    if let (Some(repo_slug), Some(pr_num)) = (slug, pr_number) {
+                        match upsert_github_pr_comment(&repo_slug, pr_num, &output, &behavior) {
+                            Ok(msg) => {
+                                if !quiet {
+                                    eprintln!("✅ {}", msg);
+                                }
+                            }
+                            Err(err) => {
+                                if !quiet {
+                                    eprintln!("⚠️ {}", err);
+                                }
+                            }
+                        }
+                        if suggest_fixes && routed_at_minici_md.is_none() {
+                            post_inline_github_pr_review_if_applicable(
+                                &repo_slug,
+                                pr_num,
+                                &path,
+                                compare_to.as_deref(),
+                            );
+                        }
                     }
                 }
             }
@@ -2388,6 +3205,65 @@ fn main() {
         }
 
         "permissions" => {
+            if rest.first().map(|s| s.as_str()) == Some("consent") {
+                let action = rest.get(1).map(|s| s.as_str()).unwrap_or("list");
+                let consent_path = permissions::default_consent_file_path();
+                match action {
+                    "grant" | "allow" => {
+                        let target = rest.get(2).map(|s| s.as_str()).unwrap_or("all");
+                        match permissions::set_provider_consent_in_file(&consent_path, target, true) {
+                            Ok(()) => println!(
+                                "✅ Granted MiniCI ambient credential consent for `{}` -> {}",
+                                target,
+                                consent_path.display()
+                            ),
+                            Err(e) => eprintln!("⚠️ Failed to save consent: {}", e),
+                        }
+                    }
+                    "revoke" | "deny" | "reset" => {
+                        let target = rest.get(2).map(|s| s.as_str()).unwrap_or("all");
+                        if target.eq_ignore_ascii_case("all") {
+                            let _ = fs::remove_file(&consent_path);
+                            println!("✅ Revoked all stored ambient credential consents ({})", consent_path.display());
+                        } else {
+                            match permissions::set_provider_consent_in_file(&consent_path, target, false) {
+                                Ok(()) => println!(
+                                    "✅ Revoked ambient credential consent for `{}` ({})",
+                                    target,
+                                    consent_path.display()
+                                ),
+                                Err(e) => eprintln!("⚠️ Failed to update consent: {}", e),
+                            }
+                        }
+                    }
+                    _ => {
+                        let want_json = rest.iter().any(|a| a == "json");
+                        let entries = permissions::list_consents_in_file(&consent_path);
+                        if want_json {
+                            let items: Vec<String> = entries
+                                .iter()
+                                .map(|(k, v)| format!("\"{}\":{}", engine::json_escape(k), v))
+                                .collect();
+                            println!(
+                                "{{\"consent_file\":\"{}\",\"consents\":{{{}}}}}",
+                                engine::json_escape(&consent_path.display().to_string()),
+                                items.join(",")
+                            );
+                        } else if entries.is_empty() {
+                            println!(
+                                "🔒 MiniCI Ambient Credential Consents ({}): none stored (default deny unless --consent / MINICI_CONSENT=1 / interactive TTY approval).",
+                                consent_path.display()
+                            );
+                        } else {
+                            println!("🔒 MiniCI Ambient Credential Consents ({}):", consent_path.display());
+                            for (prov, granted) in entries {
+                                println!("  • {}: {}", prov, if granted { "GRANTED" } else { "DENIED" });
+                            }
+                        }
+                    }
+                }
+                return;
+            }
             let mut repo_slug: Option<String> = None;
             let mut vendor_opt: Option<String> = None;
             let mut token_opt: Option<String> = None;
@@ -2608,13 +3484,19 @@ fn main() {
             }
         }
 
-        "shrink" | "migrate" => {
+        "shrink" | "migrate" | "accelerate" => {
             let mut path = PathBuf::from(".");
-            let mut target_mode = "arm64".to_string();
+            let mut target_mode = if sub == "accelerate" {
+                "rust-everywhere".to_string()
+            } else {
+                "arm64".to_string()
+            };
             let mut from_vendor: Option<String> = None;
             let mut out_file: Option<PathBuf> = None;
             let mut security_mode = false;
             let mut with_fixer = false;
+            let mut rust_tools = sub == "accelerate";
+            let mut rust_everywhere = sub == "accelerate";
             let mut apply = false;
             let mut format = "table".to_string();
             let mut i = 0;
@@ -2649,6 +3531,11 @@ fn main() {
                         security_mode = true;
                         with_fixer = true;
                     }
+                    "--rust-tools" => rust_tools = true,
+                    "--rust-everywhere" => {
+                        rust_tools = true;
+                        rust_everywhere = true;
+                    }
                     "--apply" | "--write" => apply = true,
                     "--suggest-pr" | "--pr-suggestions" => format = "markdown".to_string(),
                     "--format" => {
@@ -2674,6 +3561,8 @@ fn main() {
                     out_file,
                     security_mode,
                     with_fixer,
+                    rust_tools,
+                    rust_everywhere,
                 },
             );
             let out = match format.as_str() {
@@ -2896,15 +3785,23 @@ fn main() {
                     idx += 1;
                 }
                 if live_flag {
-                    let mut synced_live = 0usize;
-                    for cloud in catalog::INFRACOST_CLOUD_CATALOG {
-                        let r = providers::resolve_cloud_instance_price(cloud.instance_type, "us-east-1", true);
-                        if r.source == "live_cloud_graphql" {
-                            synced_live += 1;
+                    let mut synced_live = providers::batch_sync_cloud_catalog_via_iac_cli();
+                    if synced_live == 0 {
+                        for cloud in catalog::INFRACOST_CLOUD_CATALOG {
+                            let r = providers::resolve_cloud_instance_price(cloud.instance_type, "us-east-1", true);
+                            if r.source == "live_cloud_graphql" || r.source == "live_cloud_iac" {
+                                synced_live += 1;
+                            }
+                        }
+                    } else {
+                        for cloud in catalog::INFRACOST_CLOUD_CATALOG {
+                            if providers::load_cached_cloud_price(cloud.instance_type, "us-east-1").is_none() {
+                                let _ = providers::resolve_cloud_instance_price(cloud.instance_type, "us-east-1", false);
+                            }
                         }
                     }
                     println!(
-                        "✅ Synced {} Cloud VM & Spot SKUs -> ~/.minici/cloud_prices.json ({} live GraphQL, {} embedded seed)",
+                        "✅ Synced {} Cloud VM & Spot SKUs -> ~/.minici/cloud_prices.json ({} live cloud quotes, {} embedded seed)",
                         catalog::INFRACOST_CLOUD_CATALOG.len(),
                         synced_live,
                         catalog::INFRACOST_CLOUD_CATALOG.len().saturating_sub(synced_live)
@@ -3007,13 +3904,25 @@ fn main() {
                     ov_path.display()
                 );
             } else if action == "set" && rest.len() >= 3 {
-                let sku = &rest[1];
-                let new_rate: f64 = rest[2].parse().unwrap_or(0.008);
+                let sku = rest[1].trim();
+                let clean_rate_str = rest[2].trim().trim_start_matches('$');
+                let new_rate: f64 = match clean_rate_str.parse::<f64>() {
+                    Ok(v) if v.is_finite() && v >= 0.0 && v <= 25.0 => v,
+                    _ => {
+                        eprintln!(
+                            "❌ Invalid rate '{}' for `minici catalog set` (expected finite USD/min between 0.0 and 25.0, e.g. 0.0045).",
+                            rest[2]
+                        );
+                        std::process::exit(1);
+                    }
+                };
                 let ov_path = catalog::overrides_file_path();
+                let prev_ov_raw = fs::read_to_string(&ov_path).unwrap_or_default();
                 if let Some(parent) = ov_path.parent() {
                     let _ = fs::create_dir_all(parent);
                 }
                 let mut entries = Vec::new();
+                let mut seen_keys: Vec<String> = Vec::new();
                 let mut matched = false;
                 for spec in catalog::EMBEDDED_SKU_CATALOG {
                     let mut c = spec.clone();
@@ -3022,6 +3931,7 @@ fn main() {
                         c.rate_per_min_usd = new_rate;
                         matched = true;
                     }
+                    seen_keys.push(c.sku_label.to_ascii_lowercase());
                     entries.push(format!("  \"{}\": {:.4}", c.sku_label, c.rate_per_min_usd));
                 }
                 for cloud in catalog::INFRACOST_CLOUD_CATALOG {
@@ -3031,10 +3941,30 @@ fn main() {
                         c.rate_per_min_usd = new_rate;
                         matched = true;
                     }
+                    seen_keys.push(cloud.instance_type.to_ascii_lowercase());
                     entries.push(format!("  \"{}\": {:.5}", cloud.instance_type, c.rate_per_min_usd));
                 }
+                // Preserve any previously registered custom enterprise runner labels (`D-43`)
+                for line in prev_ov_raw.lines() {
+                    let t = line.trim().trim_end_matches(',');
+                    if let Some((k, v)) = t.split_once(':') {
+                        let ck = k.trim().trim_matches('"');
+                        if !ck.is_empty()
+                            && !ck.starts_with('_')
+                            && !seen_keys.contains(&ck.to_ascii_lowercase())
+                            && !ck.eq_ignore_ascii_case(sku)
+                        {
+                            if let Ok(pr) = v.trim().parse::<f64>() {
+                                if pr.is_finite() && pr >= 0.0 && pr <= 25.0 {
+                                    seen_keys.push(ck.to_ascii_lowercase());
+                                    entries.push(format!("  \"{}\": {:.4}", engine::json_escape(ck), pr));
+                                }
+                            }
+                        }
+                    }
+                }
                 if !matched {
-                    entries.push(format!("  \"{}\": {:.4}", sku, new_rate));
+                    entries.push(format!("  \"{}\": {:.4}", engine::json_escape(sku), new_rate));
                 }
                 let payload = format!(
                     "{{\n  \"_synced_source\": \"Live Hot-Reload Override (0-Recompile)\",\n{}\n}}\n",
@@ -3155,7 +4085,7 @@ fn main() {
             if !quiet {
                 println!("⏳ [3/4] Verifying embedded self-hosted Cloud VM & Spot Instance SKU catalog...");
             }
-            let cloud_catalog_ver = format!("embedded-cloud-catalog-v0.9.0 ({} SKUs)", catalog::INFRACOST_CLOUD_CATALOG.len());
+            let cloud_catalog_ver = format!("embedded-cloud-catalog-v0.9.1 ({} SKUs)", catalog::INFRACOST_CLOUD_CATALOG.len());
 
             if !quiet {
                 println!("⏳ [4/4] Verifying binary installation target ({} — override with --install-dir <DIR>)...", install_dir.join("minici").display());
@@ -3206,6 +4136,7 @@ fn main() {
             println!("  1. Shift-Left CLI Hooks  : {} (.agents/hooks.json + .claude/settings.json)", hooks_file.display());
             println!("  2. Universal Agent MCP   : {} (+ .vscode/mcp.json LSP stdio)", mcp_file.display());
             println!("  3. GitHub Action Workflow: {} (PR sticky cost comment + @minici bot)", gh_action_file.display());
+            println!("  4. Multi-Agent Skill     : {} (.agents, .claude, .cursor, .github)", target.join(".agents/skills/minici-cost/SKILL.md").display());
             println!("+====================================================================================+");
         }
 
@@ -3222,6 +4153,341 @@ fn main() {
             let stdin = std::io::stdin();
             let stdout = std::io::stdout();
             run_mcp_stdio_stream(stdin.lock(), stdout.lock(), &default_path);
+        }
+
+        "login" => {
+            let mut key_arg: Option<String> = None;
+            let mut api_url = default_cloud_api_url();
+            let mut logout = false;
+            let mut status_only = false;
+            let mut quiet = false;
+            let mut i = 0;
+            while i < rest.len() {
+                match rest[i].as_str() {
+                    "--key" | "--token" => {
+                        if i + 1 < rest.len() {
+                            key_arg = Some(rest[i + 1].clone());
+                            i += 1;
+                        }
+                    }
+                    "--api-url" | "--url" => {
+                        if i + 1 < rest.len() {
+                            api_url = rest[i + 1].trim_end_matches('/').to_string();
+                            i += 1;
+                        }
+                    }
+                    "--logout" => logout = true,
+                    "--status" => status_only = true,
+                    "--quiet" | "-q" => quiet = true,
+                    arg if !arg.starts_with('-') && key_arg.is_none() => {
+                        key_arg = Some(arg.to_string());
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            if logout {
+                let p = minici_credentials_path();
+                let _ = fs::remove_file(&p);
+                if !quiet {
+                    println!("✅ Removed saved MiniCI Cloud key ({}). Local CLI & MCP remain 100% Free.", p.display());
+                }
+                return;
+            }
+            let (saved_k, saved_u) = load_saved_cloud_credentials();
+            let active_key = key_arg.clone().or(saved_k);
+            if api_url == default_cloud_api_url() && !saved_u.is_empty() && key_arg.is_none() {
+                api_url = saved_u;
+            }
+            let Some(k) = active_key else {
+                println!(
+                    "MiniCI Local CLI, MCP & GitHub Action are 100% Free ($0) with no login required.\n\
+                     To enable optional Cloud Sync (`minici share`, 30d/365d trend badges, Friday Slack digests):\n\
+                     1. Get a $1 Starter, $10 Pro, or Team Flex key at https://polar.sh/minici\n\
+                     2. Run: minici login <MINICI_KEY>"
+                );
+                return;
+            };
+
+            if !status_only && key_arg.is_some() {
+                if let Ok(saved_path) = save_cloud_credentials(&k, &api_url) {
+                    if !quiet {
+                        println!("✅ Saved MiniCI Cloud credentials -> {}", saved_path.display());
+                    }
+                }
+            }
+
+            let auth_hdr = format!("Authorization: Bearer {}", k.trim());
+            let me_url = format!("{}/v1/cloud/me", api_url);
+            if let Ok(out) = Command::new("curl")
+                .args(["-fsSL", "--connect-timeout", "4", "-m", "10", "-H", &auth_hdr, &me_url])
+                .output()
+            {
+                if out.status.success() {
+                    let raw = String::from_utf8_lossy(&out.stdout);
+                    let plan = extract_json_str(&raw, "plan").unwrap_or_else(|| "starter".to_string());
+                    let ret = extract_json_u32(&raw, "retention_days").unwrap_or(30);
+                    let max_r = extract_json_u32(&raw, "max_repos").unwrap_or(3);
+                    if !quiet {
+                        println!(
+                            "✅ Verified MiniCI Cloud Plan: `{}` (up to {} repo(s) • {}d retention • {})",
+                            plan, max_r, ret, api_url
+                        );
+                    }
+                } else if !quiet {
+                    eprintln!("⚠️ Could not verify key online against {} (saved locally for next cloud sync).", me_url);
+                }
+            }
+        }
+
+        "share" => {
+            let mut path = PathBuf::from(".");
+            let mut api_url_override: Option<String> = None;
+            let mut key_override: Option<String> = None;
+            let mut format = "text".to_string();
+            let mut quiet = false;
+            let mut i = 0;
+            while i < rest.len() {
+                match rest[i].as_str() {
+                    "--path" | "--repo" => {
+                        if i + 1 < rest.len() {
+                            path = PathBuf::from(&rest[i + 1]);
+                            i += 1;
+                        }
+                    }
+                    "--key" => {
+                        if i + 1 < rest.len() {
+                            key_override = Some(rest[i + 1].clone());
+                            i += 1;
+                        }
+                    }
+                    "--api-url" | "--url" => {
+                        if i + 1 < rest.len() {
+                            api_url_override = Some(rest[i + 1].trim_end_matches('/').to_string());
+                            i += 1;
+                        }
+                    }
+                    "--format" => {
+                        if i + 1 < rest.len() {
+                            format = rest[i + 1].clone();
+                            i += 1;
+                        }
+                    }
+                    "--quiet" | "-q" => quiet = true,
+                    _ => {}
+                }
+                i += 1;
+            }
+            let (saved_k, saved_u) = load_saved_cloud_credentials();
+            let api_url = api_url_override.unwrap_or(saved_u);
+            let Some(cloud_key) = key_override.or(saved_k) else {
+                eprintln!(
+                    "ℹ️ `minici share` uploads an unlisted cloud permalink (Starter $1/mo+).\n\
+                     For $0 offline sharing, run: `minici breakdown --path {} --report report.html`\n\
+                     Or connect a key via: `minici login <MINICI_KEY>` (https://polar.sh/minici)",
+                    path.display()
+                );
+                return;
+            };
+
+            let report = load_or_analyze_ext(&path, None, false, true);
+            let repo_slug = detect_any_repo_slug_for_cloud(&path);
+            let prov = report
+                .detected_providers
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "github-actions".to_string());
+            let html = render_breakdown_html(&report);
+            let compact_js = report.to_compact_json();
+            let payload = format!(
+                "{{\"repo\":\"{}\",\"provider\":\"{}\",\"gross_monthly_usd\":{:.2},\"net_monthly_usd\":{:.2},\"dev_wait_monthly_usd\":{:.2},\"report_json\":{},\"report_html\":\"{}\"}}",
+                engine::json_escape(&repo_slug),
+                engine::json_escape(&prov),
+                report.gross_monthly_compute_cost_usd,
+                report.net_billed_monthly_compute_cost_usd,
+                report.monthly_dev_wait_cost_usd,
+                compact_js,
+                engine::json_escape(&html)
+            );
+            let tmp_p = env::temp_dir().join(format!("minici_share_{}.json", std::process::id()));
+            let _ = fs::write(&tmp_p, &payload);
+            let data_arg = format!("@{}", tmp_p.display());
+            let auth_hdr = format!("Authorization: Bearer {}", cloud_key.trim());
+            let endpoint = format!("{}/v1/cloud/share", api_url);
+            let out = Command::new("curl")
+                .args([
+                    "-fsSL",
+                    "--connect-timeout",
+                    "5",
+                    "-m",
+                    "15",
+                    "-X",
+                    "POST",
+                    "-H",
+                    "Content-Type: application/json",
+                    "-H",
+                    &auth_hdr,
+                    "--data-binary",
+                    &data_arg,
+                    &endpoint,
+                ])
+                .output();
+            let _ = fs::remove_file(&tmp_p);
+
+            match out {
+                Ok(o) if o.status.success() => {
+                    let raw = String::from_utf8_lossy(&o.stdout);
+                    if format == "json" {
+                        println!("{}", raw.trim());
+                    } else {
+                        let share_url = extract_json_str(&raw, "share_url").unwrap_or_default();
+                        let badge_url = extract_json_str(&raw, "badge_url").unwrap_or_default();
+                        if quiet {
+                            println!("{}", share_url);
+                        } else {
+                            println!("✅ Unlisted Cloud FinOps Report : {}", share_url);
+                            println!("   Live Trend SVG Badge         : ![MiniCI Cost]({})", badge_url);
+                        }
+                    }
+                }
+                _ => {
+                    if !quiet {
+                        eprintln!("⚠️ Could not upload shared report to {} (check MINICI_KEY or network).", endpoint);
+                    }
+                }
+            }
+        }
+
+        "cloud-sync" => {
+            let mut path = PathBuf::from(".");
+            let mut compare_to: Option<PathBuf> = None;
+            let mut api_url_override: Option<String> = None;
+            let mut key_override: Option<String> = None;
+            let mut enforce_policy = false;
+            let mut format = "text".to_string();
+            let mut quiet = false;
+            let mut i = 0;
+            while i < rest.len() {
+                match rest[i].as_str() {
+                    "--path" | "--repo" => {
+                        if i + 1 < rest.len() {
+                            path = PathBuf::from(&rest[i + 1]);
+                            i += 1;
+                        }
+                    }
+                    "--compare-to" => {
+                        if i + 1 < rest.len() {
+                            compare_to = Some(PathBuf::from(&rest[i + 1]));
+                            i += 1;
+                        }
+                    }
+                    "--key" => {
+                        if i + 1 < rest.len() {
+                            key_override = Some(rest[i + 1].clone());
+                            i += 1;
+                        }
+                    }
+                    "--api-url" | "--url" => {
+                        if i + 1 < rest.len() {
+                            api_url_override = Some(rest[i + 1].trim_end_matches('/').to_string());
+                            i += 1;
+                        }
+                    }
+                    "--enforce-policy" => enforce_policy = true,
+                    "--format" => {
+                        if i + 1 < rest.len() {
+                            format = rest[i + 1].clone();
+                            i += 1;
+                        }
+                    }
+                    "--quiet" | "-q" => quiet = true,
+                    _ => {}
+                }
+                i += 1;
+            }
+
+            let (saved_k, saved_u) = load_saved_cloud_credentials();
+            let api_url = api_url_override.unwrap_or(saved_u);
+            let Some(cloud_key) = key_override.or(saved_k) else {
+                if !quiet {
+                    eprintln!("ℹ️ No MINICI_KEY configured — skipping optional cloud ledger sync (`minici login <KEY>`).");
+                }
+                return;
+            };
+
+            let report = load_or_analyze_ext(&path, None, false, true);
+            let pr_delta_usd = if let Some(ref cmp) = compare_to {
+                let base = load_or_analyze_in_repo(cmp, Some(&path), None, false, true);
+                compute_diff(&base, &report).delta_monthly_compute_usd
+            } else {
+                0.0
+            };
+            let repo_slug = detect_any_repo_slug_for_cloud(&path);
+            let (branch, commit_sha) = detect_git_branch_and_sha(&path);
+            let prov = report
+                .detected_providers
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "github-actions".to_string());
+
+            let payload = format!(
+                "{{\"repo\":\"{}\",\"provider\":\"{}\",\"branch\":\"{}\",\"commit_sha\":\"{}\",\"expanded_jobs\":{},\"billed_mins_per_run\":{:.2},\"gross_monthly_usd\":{:.2},\"net_billed_monthly_usd\":{:.2},\"dev_wait_monthly_usd\":{:.2},\"cost_per_pr_usd\":{:.2},\"spend_anomaly_active\":{},\"pr_delta_monthly_usd\":{:.2}}}",
+                engine::json_escape(&repo_slug),
+                engine::json_escape(&prov),
+                engine::json_escape(&branch),
+                engine::json_escape(&commit_sha),
+                report.total_expanded_matrix_jobs,
+                report.billed_mins_per_run,
+                report.gross_monthly_compute_cost_usd,
+                report.net_billed_monthly_compute_cost_usd,
+                report.monthly_dev_wait_cost_usd,
+                report.cost_components.cost_per_merged_pr_usd,
+                report.cost_components.spend_anomaly_alert_active,
+                pr_delta_usd
+            );
+            let tmp_p = env::temp_dir().join(format!("minici_ingest_{}.json", std::process::id()));
+            let _ = fs::write(&tmp_p, &payload);
+            let data_arg = format!("@{}", tmp_p.display());
+            let auth_hdr = format!("Authorization: Bearer {}", cloud_key.trim());
+            let endpoint = format!("{}/v1/cloud/ingest", api_url);
+            let out = Command::new("curl")
+                .args([
+                    "-fsSL",
+                    "--connect-timeout",
+                    "5",
+                    "-m",
+                    "12",
+                    "-X",
+                    "POST",
+                    "-H",
+                    "Content-Type: application/json",
+                    "-H",
+                    &auth_hdr,
+                    "--data-binary",
+                    &data_arg,
+                    &endpoint,
+                ])
+                .output();
+            let _ = fs::remove_file(&tmp_p);
+
+            if let Ok(o) = out {
+                if o.status.success() {
+                    let raw = String::from_utf8_lossy(&o.stdout);
+                    if format == "json" {
+                        println!("{}", raw.trim());
+                    } else if !quiet {
+                        let badge_url = extract_json_str(&raw, "badge_url").unwrap_or_default();
+                        println!(
+                            "✅ Synced CI KPIs to MiniCI Cloud (`{}` • `${:.2}/mo`) -> {}",
+                            repo_slug, report.gross_monthly_compute_cost_usd, badge_url
+                        );
+                    }
+                    if enforce_policy && raw.contains("\"exceeded\":true") {
+                        eprintln!("❌ Org FinOps Policy Gate: PR monthly delta (+${:.2}/mo) exceeds configured org threshold.", pr_delta_usd);
+                        std::process::exit(1);
+                    }
+                }
+            }
         }
 
         "launch-pack" => {
@@ -3554,6 +4820,7 @@ jobs:
                 "permissions",
                 "sync",
                 "shrink",
+                "accelerate",
                 "migrate",
                 "ask",
                 "catalog",
@@ -3562,6 +4829,9 @@ jobs:
                 "mcp",
                 "self-update",
                 "init-hooks",
+                "login",
+                "share",
+                "cloud-sync",
                 "launch-pack"
             ],
             "AI DRIFT BLOCKED: CLI subcommands changed from locked contract!"
@@ -3584,6 +4854,9 @@ jobs:
                 "--billing-csv",
                 "--refresh",
                 "--format",
+                "--compact",
+                "--all",
+                "--ascii",
                 "--report",
                 "--out-file",
                 "--tier",
@@ -4328,6 +5601,8 @@ jobs:
         let jobs = vec![engine::ExpandedJobCost {
             workflow_file: ".gitlab-ci.yml".to_string(),
             job_id: "test".to_string(),
+            line_start: 1,
+            line_end: 10,
             matrix_combination_count: 1,
             runner_label: "saas-linux-small-amd64".to_string(),
             provider: "gitlab-ci".to_string(),
@@ -4346,6 +5621,7 @@ jobs:
             uses_cache: true,
             uploads_artifacts: false,
             artifact_retention_days: None,
+            monthly_runs_for_job: None,
         }];
         // Private repo (`auto` tier): 10m * 100 runs = 1,000 compute mins (400 free -> 600 overage * $0.01 = $6.00)
         let priv_led = gl.compute_invoice_ledger(&jobs, 100.0, "auto", providers::RepoVisibility::Private);
@@ -5046,6 +6322,31 @@ jobs:
         assert!(inline_rev.contains("```suggestion\\n"));
         assert!(inline_rev.contains("\"side\":\"RIGHT\""));
 
+        // Verify HTTP 422 diff-hunk guard: untouched lines outside PR diff hunks are filtered out!
+        let out_of_hunk = parse_changed_right_hunk_ranges(
+            "--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -99,1 +99,2 @@\n+      - run: echo hi\n",
+        );
+        assert_eq!(out_of_hunk, vec![(".github/workflows/ci.yml".to_string(), 99, 100)]);
+        assert!(
+            build_inline_pr_review_suggestions_json_with_hunks(
+                &dir,
+                &[".github/workflows/ci.yml".to_string()],
+                Some(&out_of_hunk),
+            )
+            .is_none()
+        );
+        let in_hunk = parse_changed_right_hunk_ranges(
+            "--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -1,8 +1,8 @@\n",
+        );
+        assert!(
+            build_inline_pr_review_suggestions_json_with_hunks(
+                &dir,
+                &[".github/workflows/ci.yml".to_string()],
+                Some(&in_hunk),
+            )
+            .is_some()
+        );
+
         // Verify `init-hooks` scaffolds `fetch-depth: 0`, `suggest-fixes: "true"`, and `issue_comment` `@minici` bot!
         let (hooks_f, mcp_f, wf_f) = scaffold_init_hooks(&dir);
         assert!(hooks_f.is_file() && mcp_f.is_file() && wf_f.is_file());
@@ -5160,12 +6461,417 @@ jobs:
         assert_eq!(csv_snap.workflow_monthly_runs.len(), 2);
         assert_eq!(csv_snap.invoice_net_billed_usd, Some(19.50));
 
-        // 3. Verify 4-IDE `scaffold_init_hooks` (Bug #11): Antigravity, Claude Code, VS Code, and Git pre-commit!
+        // 3. Verify 4-IDE `scaffold_init_hooks` (Bug #11) + Multi-Agent `SKILL.md` bundles:
         let _ = scaffold_init_hooks(&dir);
         assert!(dir.join(".agents/hooks.json").is_file());
         assert!(dir.join(".claude/settings.json").is_file());
         assert!(dir.join(".vscode/mcp.json").is_file());
+        assert!(dir.join(".cursor/mcp.json").is_file());
         assert!(dir.join(".git/hooks/pre-commit").is_file());
+        assert!(dir.join(".agents/skills/minici-cost/SKILL.md").is_file());
+        assert!(dir.join(".agents/skills/minici-cost/agents/openai.yaml").is_file());
+        assert!(dir.join(".claude/skills/minici-cost/SKILL.md").is_file());
+        assert!(dir.join(".cursor/skills/minici-cost/SKILL.md").is_file());
+        assert!(dir.join(".github/skills/minici-cost/SKILL.md").is_file());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_human_and_agent_readability_all_surfaces() {
+        let dir = std::env::temp_dir().join("minici_all_surfaces_readability_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join(".github/workflows")).unwrap();
+
+        // Create 18 jobs so Top-15 truncation + collapsible `<details>` + `--all` expansion are all exercised
+        let mut wf_yml = String::from("name: Monorepo CI\non: [push, pull_request]\njobs:\n");
+        for idx in 1..=18 {
+            let runner = if idx == 1 { "macos-latest" } else { "ubuntu-latest" };
+            wf_yml.push_str(&format!(
+                "  job_{:02}:\n    runs-on: {}\n    steps:\n      - uses: actions/checkout@v4\n      - run: cargo test\n",
+                idx, runner
+            ));
+        }
+        fs::write(dir.join(".github/workflows/ci.yml"), wf_yml).unwrap();
+
+        let rep = analyze_path(&dir, None);
+        assert_eq!(rep.jobs.len(), 18);
+        assert!(rep.jobs[0].line_start >= 4 && rep.jobs[0].line_end > rep.jobs[0].line_start);
+
+        // 1. Default CLI summary truncates to Top 15 + summary row; `--all` shows all 18
+        let cli_def = renderer::render_cli_compact_summary_with_opts(&rep, false, false);
+        assert!(cli_def.contains("... +3 lower-cost job(s) (--all)"));
+        assert!(cli_def.contains("OVERALL TOTAL"));
+        let cli_full = renderer::render_cli_compact_summary_with_opts(&rep, false, true);
+        assert!(!cli_full.contains("lower-cost job(s) (--all)"));
+        assert!(cli_full.contains("job_18"));
+
+        // 2. Portable ASCII mode emits pure 7-bit ASCII (Windows/legacy terminal safe)
+        let cli_ascii = renderer::render_cli_compact_summary_with_opts(&rep, true, false);
+        assert!(cli_ascii.is_ascii(), "ASCII mode contained non-ASCII bytes: {}", cli_ascii);
+        let diff_same = compute_diff(&rep, &rep);
+        let diff_ascii = renderer::render_cli_compact_diff_with_opts(&diff_same, true);
+        assert!(diff_ascii.is_ascii(), "ASCII diff contained non-ASCII bytes: {}", diff_ascii);
+
+        // 3. Windows backslash normalization
+        assert_eq!(
+            short_workflow_label(".github\\workflows\\release.yml"),
+            "release.yml"
+        );
+
+        // 4. Markdown Breakdown (`$GITHUB_STEP_SUMMARY`) includes collapsible `<details>` and `minici-agent-meta`
+        let md_bd = render_breakdown_markdown(&rep);
+        assert!(md_bd.contains("| Workflow | Job ID |"));
+        assert!(md_bd.contains("<details>"));
+        assert!(md_bd.contains("<!-- minici-agent-meta:"));
+        assert!(md_bd.contains("- **Recommendation:**"));
+
+        // 5. Platform-specific PR/MR comments: GitHub, GitLab (Merge Request), Bitbucket (no raw HTML `<details>`)
+        let mut diff_many = diff_same.clone();
+        diff_many.job_changes = (1..=14).map(|n| format!("Added job_{:02}", n)).collect();
+        let gh_md = render_diff_markdown_for_platform(&diff_many, "github");
+        assert!(gh_md.contains("MiniCI Pull Request CI/CD Cost Diff"));
+        assert!(gh_md.contains("<details>"));
+        assert!(gh_md.contains("<!-- minici-agent-meta:"));
+
+        let gl_md = render_diff_markdown_for_platform(&diff_many, "gitlab");
+        assert!(gl_md.contains("MiniCI Merge Request CI/CD Cost Diff"));
+        assert!(gl_md.contains("MR Branch (Head)"));
+
+        let bb_md = render_diff_markdown_for_platform(&diff_many, "bitbucket");
+        assert!(!bb_md.contains("<details>"), "Bitbucket Cloud strips HTML <details>");
+        assert!(!bb_md.contains("<!--"), "Bitbucket Cloud comment should avoid raw HTML comments");
+
+        // 6. Slack Block Kit breakdown & diff payloads
+        let sl_bd = render_slack_breakdown_payload(&rep);
+        assert!(sl_bd.contains("\"type\": \"header\""));
+        assert!(sl_bd.contains("*Top Cost Driver:*"));
+        assert!(sl_bd.contains("\"type\": \"context\""));
+        let sl_df = render_slack_payload(&diff_many);
+        assert!(sl_df.contains("*Key Driver:*"));
+        assert!(sl_df.contains("\"type\": \"context\""));
+
+        // 7. JSON & MCP compact vs full agent_digest
+        let full_json = rep.to_json();
+        let compact_json = rep.to_compact_json();
+        assert!(full_json.contains("\"agent_digest\":"));
+        assert!(full_json.contains("\"line_start\":"));
+        assert!(compact_json.contains("\"schema\": \"minici.compact.v1\""));
+        assert!(compact_json.len() < full_json.len() / 2);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_cloud_credentials_save_load_and_permissions() {
+        let dir = std::env::temp_dir().join("minici_cloud_creds_unit_test");
+        let _ = fs::remove_dir_all(&dir);
+        let cred_file = dir.join(".minici").join("credentials.json");
+        save_cloud_credentials_at(
+            &cred_file,
+            "MINICI-PRO-TEST-KEY-777",
+            "https://minici.is-a.dev/",
+        )
+        .unwrap();
+        let (loaded_k, loaded_u) =
+            load_cloud_credentials_from(&cred_file, "https://default.example.com");
+        assert_eq!(loaded_k.as_deref(), Some("MINICI-PRO-TEST-KEY-777"));
+        assert_eq!(loaded_u, "https://minici.is-a.dev");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&cred_file).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_v090_bot_loop_guard_bitbucket_sticky_uv_cache_and_spot_applicability() {
+        let dir = std::env::temp_dir().join("minici_v090_deep_qa_guards_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join(".github/workflows")).unwrap();
+
+        // 1. Repo managed by `uv.lock` + `pyproject.toml` (no requirements.txt) using BOTH `setup-uv` and `setup-python`
+        fs::write(dir.join("pyproject.toml"), "[project]\nname = \"demo\"\n").unwrap();
+        fs::write(dir.join("uv.lock"), "version = 1\n").unwrap();
+        let wf = "\
+name: UV CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: uv run pytest
+";
+        fs::write(dir.join(".github/workflows/ci.yml"), wf).unwrap();
+
+        let shrink_plan = optimizer::run_surgical_optimizer(&dir, "shrink", "hygiene", false);
+        for edit in &shrink_plan.edits {
+            assert!(
+                !edit.replacement_snippet.contains("cache: 'pip'"),
+                "uv-managed job must never inject cache: 'pip' onto actions/setup-python: {:?}",
+                edit
+            );
+        }
+
+        // 2. Bot self-comment infinite-loop & backtick/blockquote prose guard (`D-34`)
+        let own_sticky_comment = "<!-- minici-cost-comment -->\n### 💰 MiniCI Pull Request CI/CD Cost Diff\n> 💬 **Interactive `@minici` Bot:** Comment `@minici shrink` on this PR.";
+        assert!(
+            route_at_minici_comment_command_with_base(own_sticky_comment, &dir, None).is_none(),
+            "Bot's own sticky comment must NEVER re-trigger @minici command routing!"
+        );
+        let prose_backtick = "Hey team, you can type `@minici shrink` later if needed, LGTM!";
+        assert!(
+            route_at_minici_comment_command_with_base(prose_backtick, &dir, None).is_none(),
+            "Backtick-quoted @minici mention in human prose must not trigger bot!"
+        );
+        let blockquote_mention = "> @minici shrink\nLooks good to me!";
+        assert!(
+            route_at_minici_comment_command_with_base(blockquote_mention, &dir, None).is_none(),
+            "Blockquoted @minici mention must not trigger bot!"
+        );
+        let real_invocation = "Please run @minici shrink";
+        assert!(
+            route_at_minici_comment_command_with_base(real_invocation, &dir, None).is_some(),
+            "Direct human @minici shrink invocation must route cleanly!"
+        );
+
+        // 3. Bitbucket Cloud sticky comment ID parser (`D-31`)
+        let bb_list_json = r####"{"values":[{"id":40912,"content":{"raw":"### 💰 MiniCI Pull Request CI/CD Cost Diff (`320 µs` • Non-Blocking)\n| Metric | Base |"}}]}"####;
+        assert_eq!(find_sticky_comment_id_in_bitbucket_json(bb_list_json), Some(40912));
+        assert_eq!(find_sticky_comment_id_in_bitbucket_json(r#"{"values":[{"id":99,"content":{"raw":"LGTM"}}]}"#), None);
+
+        // 4. Spot applicability guard (`D-35`): never print `saves $0.00/mo` for Cloud Spot
+        let mut rep = analyze_path(&dir, None);
+        rep.exceeds_5000m_self_hosted_breakeven = true;
+        rep.monthly_billed_mins = 5200.0;
+        rep.gross_monthly_compute_cost_usd = 31.18;
+        rep.monthly_blacksmith_cost_usd = 25.00; // < $20 savings
+        rep.monthly_self_hosted_spot_cost_usd = 36.15; // costs MORE than hosted!
+        let cli_out = renderer::render_cli_compact_summary(&rep);
+        assert!(
+            !cli_out.contains("saves $0.00/mo"),
+            "Recommendation must never suggest moving to Spot with $0.00/mo savings: {}",
+            cli_out
+        );
+
+        // 5. CircleCI -> GitHub Actions 7x7 IR translation guards (`D-39`, `D-40`, `D-41`)
+        let cci_dir = std::env::temp_dir().join("minici_cci_7x7_guard_test");
+        let _ = fs::remove_dir_all(&cci_dir);
+        fs::create_dir_all(cci_dir.join(".circleci")).unwrap();
+        let cci_yml = "\
+version: 2.1
+jobs:
+  android-gradle-release:
+    docker:
+      - image: cimg/android:2026.01
+    resource_class: xlarge
+    steps:
+      - checkout
+      - run: ./gradlew assembleRelease
+      - run: echo status: ok
+workflows:
+  mobile-ci:
+    jobs:
+      - android-gradle-release
+";
+        fs::write(cci_dir.join(".circleci/config.yml"), cci_yml).unwrap();
+        let mig = optimizer::run_surgical_optimizer(&cci_dir, "migrate", "github-actions", false);
+        let preview = mig.converted_github_workflow_preview.unwrap_or_default();
+        assert!(!preview.contains("run: run:"), "Must never emit double 'run: run:': {}", preview);
+        assert!(preview.contains("\"echo status: ok\""), "Commands containing ': ' must be YAML-quoted: {}", preview);
+        assert!(!preview.contains("\n  build:\n"), "CircleCI workflows: block must not spawn phantom 'build:' job: {}", preview);
+        assert!(!preview.contains("android-gradle-release:"), "Must not emit duplicate hyphenated job alongside normalized job: {}", preview);
+        let _ = fs::remove_dir_all(&cci_dir);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_v091_rust_toolchain_swapper_and_rust_everywhere_ci_converter() {
+        let dir = std::env::temp_dir().join("minici_v091_rust_everywhere_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join(".github/workflows")).unwrap();
+        fs::create_dir_all(dir.join("scripts")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+
+        // Application source file (`src/app.py`) MUST NEVER be converted or modified!
+        fs::write(dir.join("src/app.py"), "def main():\n    return 'customer_app_untouched'\n").unwrap();
+        fs::write(dir.join("requirements.txt"), "pytest==8.3.0\n").unwrap();
+        fs::write(dir.join("Cargo.toml"), "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
+
+        // Bespoke standalone CI helper script (`scripts/verify_release_manifest.py`) — no off-the-shelf Rust replacement!
+        let ci_helper_py = "\
+import os, sys
+if not os.path.exists('requirements.txt'):
+    sys.exit(1)
+# Check conflict markers
+for line in open('requirements.txt'):
+    if line.startswith('<<<<<<<'):
+        sys.exit(1)
+print('manifest verified')
+";
+        fs::write(dir.join("scripts/verify_release_manifest.py"), ci_helper_py).unwrap();
+
+        let wf_yml = "\
+name: Polyglot CI
+on: [push, pull_request]
+jobs:
+  python_and_js_quality:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        py: ['3.11', '3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+      - name: Legacy Python lint & format
+        run: flake8 . && black --check .
+      - name: Legacy JS lint & format
+        run: npx eslint . && npx prettier --check .
+      - name: Legacy pre-commit
+        run: pre-commit run --all-files
+      - name: Bespoke CI manifest check (no existing Rust tool)
+        run: python3 scripts/verify_release_manifest.py --strict
+      - name: Application runtime step (must NOT be converted)
+        run: python3 src/app.py
+      - run: pytest
+  rust_tests:
+    runs-on: ubuntu-4-core
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --workspace
+";
+        fs::write(dir.join(".github/workflows/ci.yml"), wf_yml).unwrap();
+
+        // 1. Verify `@minici accelerate` bot routing works dry-run without touching disk
+        let bot_reply = route_at_minici_comment_command("@minici accelerate", &dir)
+            .expect("Expected @minici accelerate reply");
+        assert!(bot_reply.contains("MINICI-RUST-012A"));
+        assert!(bot_reply.contains("MINICI-RUST-EVERYWHERE-013"));
+        assert!(!dir.join(".minici/rust-everywhere").exists(), "Dry-run must not write crate to disk");
+
+        // 2. Apply `accelerate` (`MINICI-RUST-012` + `MINICI-RUST-EVERYWHERE-013`) and verify real build & execution!
+        let receipt = optimizer::run_surgical_optimizer_with_opts(
+            &dir,
+            "accelerate",
+            "rust-everywhere",
+            true,
+            optimizer::MigrateOptions {
+                rust_tools: true,
+                rust_everywhere: true,
+                ..Default::default()
+            },
+        );
+        assert!(receipt.applied_to_disk);
+        assert!(
+            receipt.verified_diff.delta_monthly_compute_usd < 0.0,
+            "Expected negative compute delta from Rust CI acceleration, got {:.2}",
+            receipt.verified_diff.delta_monthly_compute_usd
+        );
+
+        let patched = fs::read_to_string(dir.join(".github/workflows/ci.yml")).unwrap();
+        assert!(patched.contains("uv pip install --system -r requirements.txt"));
+        assert!(patched.contains("uvx ruff check . && uvx ruff format --check ."));
+        assert!(patched.contains("npx --yes @biomejs/biome ci ."));
+        assert!(patched.contains("uvx prek run --all-files"));
+        assert!(patched.contains("cargo nextest run --workspace && cargo test --doc"));
+        assert!(patched.contains(".minici/rust-everywhere/re_verify_release_manifest/target/release/re_verify_release_manifest --strict"));
+        // Customer's application code (`src/app.py`) MUST remain untouched!
+        assert!(patched.contains("run: python3 src/app.py"));
+        assert_eq!(
+            fs::read_to_string(dir.join("src/app.py")).unwrap(),
+            "def main():\n    return 'customer_app_untouched'\n"
+        );
+
+        // 3. Compile & execute the generated `.minici/rust-everywhere/re_verify_release_manifest` native Rust binary!
+        let gen_manifest = dir.join(".minici/rust-everywhere/re_verify_release_manifest/Cargo.toml");
+        assert!(gen_manifest.is_file(), "Generated rust-everywhere Cargo.toml must exist on disk");
+        let build_status = Command::new("cargo")
+            .args(["build", "--release", "--manifest-path", &gen_manifest.to_string_lossy(), "--quiet"])
+            .status()
+            .expect("cargo build on generated rust-everywhere crate");
+        assert!(build_status.success(), "Generated rust-everywhere crate must compile cleanly in release mode");
+
+        let bin_path = dir.join(".minici/rust-everywhere/re_verify_release_manifest/target/release/re_verify_release_manifest");
+        let run_out = Command::new(&bin_path)
+            .current_dir(&dir)
+            .arg("--strict")
+            .output()
+            .expect("run generated rust-everywhere binary");
+        assert!(run_out.status.success());
+        let stdout_s = String::from_utf8_lossy(&run_out.stdout);
+        assert!(stdout_s.contains("Native Rust CI check passed"));
+
+        // 4. Strict YAML 1.2 AST check (`Psych.parse_file` via ruby if installed)
+        if let Ok(rb) = Command::new("ruby")
+            .args([
+                "-ryaml",
+                "-e",
+                "Psych.parse_file(ARGV[0])",
+                &dir.join(".github/workflows/ci.yml").to_string_lossy(),
+            ])
+            .output()
+        {
+            assert!(
+                rb.status.success(),
+                "Patched workflow failed strict libyaml AST parse: {}",
+                String::from_utf8_lossy(&rb.stderr)
+            );
+        }
+
+        // 5. Verify external `RUST_EVERYWHERE_BIN` CLI delegation path (`external-rust-everywhere-cli`)!
+        let ext_dir = std::env::temp_dir().join("minici_v091_ext_re_bin_test");
+        let _ = fs::remove_dir_all(&ext_dir);
+        fs::create_dir_all(ext_dir.join(".github/workflows")).unwrap();
+        fs::create_dir_all(ext_dir.join("tools")).unwrap();
+        fs::write(ext_dir.join("tools/custom_gate.sh"), "#!/bin/sh\necho ok\n").unwrap();
+        fs::write(
+            ext_dir.join(".github/workflows/gate.yml"),
+            "name: Gate\non: [push]\njobs:\n  gate:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tools/custom_gate.sh\n",
+        )
+        .unwrap();
+        let mock_re_bin = ext_dir.join("mock-rust-everywhere.sh");
+        let mock_script = "#!/bin/sh\nOUT=\"$4\"\nmkdir -p \"$OUT/src\"\ncat > \"$OUT/Cargo.toml\" <<'EOF'\n[package]\nname = \"re_custom_gate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\nEOF\ncat > \"$OUT/src/main.rs\" <<'EOF'\nfn main() { println!(\"external rust-everywhere ok\"); }\nEOF\n";
+        fs::write(&mock_re_bin, mock_script).unwrap();
+        let _ = Command::new("chmod").args(["+x", &mock_re_bin.to_string_lossy()]).status();
+
+        std::env::set_var("RUST_EVERYWHERE_BIN", &mock_re_bin);
+        let ext_receipt = optimizer::run_surgical_optimizer_with_opts(
+            &ext_dir,
+            "accelerate",
+            "rust-everywhere",
+            true,
+            optimizer::MigrateOptions {
+                rust_tools: true,
+                rust_everywhere: true,
+                ..Default::default()
+            },
+        );
+        std::env::remove_var("RUST_EVERYWHERE_BIN");
+        assert!(
+            ext_receipt
+                .edits
+                .iter()
+                .any(|e| e.description.contains("external-rust-everywhere-cli")),
+            "Expected external-rust-everywhere-cli delegation, got: {:?}",
+            ext_receipt.edits
+        );
+        let _ = fs::remove_dir_all(&ext_dir);
+
+        // 6. Verify `codebuild-github-runner` 1-line `runs-on:` migration preserves GitHub Actions YAML!
+        let cb_mig = optimizer::run_surgical_optimizer(&dir, "migrate", "codebuild-github-runner", false);
+        assert!(cb_mig.edits.iter().any(|e| e.replacement_snippet.contains("codebuild-arm1-small-")));
+        assert!(cb_mig.verified_diff.delta_monthly_compute_usd < 0.0);
 
         let _ = fs::remove_dir_all(&dir);
     }

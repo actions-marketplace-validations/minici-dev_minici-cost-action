@@ -22,6 +22,7 @@
   <a href="#what-your-team-sees-on-every-pull-request">PR Preview</a> &middot;
   <a href="#15-second-github-action-quickstart">Action Quickstart</a> &middot;
   <a href="#local-cli-quickstart-zero-clone-audit">CLI Quickstart</a> &middot;
+  <a href="#ai-agent-skill--plugin-all-agents">AI Agent Skill</a> &middot;
   <a href="#permissions--zero-egress-security">Permissions &amp; Security</a> &middot;
   <a href="#action-inputs--outputs">Inputs &amp; Outputs</a> &middot;
   <a href="#troubleshooting">Troubleshooting</a> &middot;
@@ -107,7 +108,7 @@ jobs:
 <details>
 <summary><strong>Enable Interactive <code>@minici</code> PR Bot + Slack Alerts</strong></summary>
 
-Reply `@minici shrink`, `@minici migrate arm64`, `@minici permissions`, or `@minici ask "<question>"` directly on any PR:
+Reply `@minici shrink`, `@minici accelerate`, `@minici migrate arm64`, `@minici permissions`, or `@minici ask "<question>"` directly on any PR (or wire org-wide across GitHub App `/webhooks/github`, Slack `/slack/interactions`, Linear `/webhooks/linear`, Jira `/webhooks/jira`, and Google Chat `/webhooks/gchat`):
 
 ```yaml
 name: CI Cost Diff & @minici Bot
@@ -131,6 +132,8 @@ jobs:
     if: >-
       github.event_name != 'issue_comment' ||
       (github.event.issue.pull_request &&
+       github.event.comment.user.type != 'Bot' &&
+       !contains(github.event.comment.body, '<!-- minici-') &&
        contains(github.event.comment.body, '@minici') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
@@ -185,6 +188,7 @@ minici breakdown --repo astral-sh/uv             # Audit any public repo remotel
 minici breakdown --path .                        # Full repo cost, wait-time & phase breakdown (< 2 ms)
 minici diff --path . --compare-to main           # Preview branch cost delta before opening a PR
 minici shrink --path . --apply                   # Apply comment-preserving YAML fixes in place
+minici accelerate --path . --apply               # Swap CI tools to Rust (uv/ruff/biome/nextest) + rust-everywhere CI converter
 minici migrate --path . --to github-arm64        # Check 6-gate ARM64 savings or cross-vendor CI migration
 minici init-hooks --path .                       # Wire Antigravity, Claude Code, VS Code, Git & PR hooks
 ```
@@ -197,10 +201,10 @@ Reproduce any row below in seconds with `minici breakdown --repo <owner/repo>`:
 
 | Repository | Workflows / Matrix Jobs | Engine Time | Monthly Gross Compute | Primary Optimization Uncovered |
 | :--- | :---: | :---: | ---: | :--- |
-| `astral-sh/uv` | 47 wf / 243 jobs | ~34 ms | `$3,737.66/mo` | macOS & Linux matrix right-sizing + cache reuse |
-| `denoland/deno` | 11 wf / 162 jobs | ~16 ms | `$13,179.22/mo` | Heavy multi-OS build matrix & ARM64 runner savings |
-| `pydantic/pydantic` | 12 wf / 175 jobs | ~7 ms | `$5,395.87/mo` | Matrix fan-out ceiling rounding & selective path filters |
-| `microsoft/vscode` | 5 wf / 36 jobs | ~4 ms | `$4,316.14/mo` | Critical-path wait reduction & concurrency guards |
+| `denoland/deno` | 11 wf / 162 jobs | ~20 ms | `$10,109.35/mo` | Heavy multi-OS build matrix & ARM64 runner savings |
+| `microsoft/vscode` | 5 wf / 36 jobs | ~4 ms | `$4,287.57/mo` | Critical-path wait reduction & concurrency guards |
+| `pydantic/pydantic` | 12 wf / 173 jobs | ~7 ms | `$3,306.73/mo` | Matrix fan-out ceiling rounding & selective path filters |
+| `ggml-org/llama.cpp` | 62 wf / 148 jobs | ~30 ms | `$3,226.86/mo` | Multi-arch build caching & Spot/ARM64 right-sizing |
 
 <details>
 <summary><strong>Full CLI Subcommand Reference (15 Subcommands)</strong></summary>
@@ -209,8 +213,9 @@ Reproduce any row below in seconds with `minici breakdown --repo <owner/repo>`:
 | :--- | :--- |
 | `breakdown` | Compute CI/CD cost, quota burn, phase breakdown, and unit economics (`table`, `markdown`, `json`, `html`, `csv`) |
 | `diff` | Compare base vs. head Git refs or directories to quantify Pull Request matrix & dollar deltas |
-| `shrink` | Generate or apply comment-preserving YAML optimizations (`--apply`, `--security`, `--suggest-pr`) |
-| `migrate` | Run 6-gate runner right-sizing (`github-arm64`, `ubuntu-slim`, `aws-spot`) and 7×7 cross-vendor translation |
+| `shrink` | Generate or apply comment-preserving YAML optimizations (`--apply`, `--rust-tools`, `--rust-everywhere`, `--security`, `--suggest-pr`) |
+| `accelerate` | Two-tier Rust CI acceleration: drop-in Rust toolchains (`uv`, `ruff`, `@biomejs/biome`, `prek`, `cargo nextest`) + scoped `rust-everywhere` bespoke CI-script converter (`.minici/rust-everywhere/<tool>/`) |
+| `migrate` | Run 6-gate runner right-sizing (`github-arm64`, `ubuntu-slim`, `codebuild-github-runner`, `aws-spot`) and 7×7 cross-vendor translation |
 | `ask` | Answer natural-language CI FinOps questions backed by deterministic Rust math |
 | `comment` | Render or post sticky GitHub PR comments, inline suggestions, and Slack Block Kit notifications |
 | `permissions` | Audit read-only token scopes and progressive telemetry coverage |
@@ -219,11 +224,37 @@ Reproduce any row below in seconds with `minici breakdown --repo <owner/repo>`:
 | `catalog` | Inspect, filter, or override 227+ runner and cloud VM rates (`~/.minici/pricing_overrides.json`) |
 | `cloud-price` | Query On-Demand and Spot VM pricing across AWS EC2, GCP, and Azure across 26 regions |
 | `mcp` | Launch the 8-tool stdio MCP server for Claude Code, Antigravity, Cursor, Windsurf, and VS Code |
-| `init-hooks` | Scaffold `.github/workflows/minici-cost.yml`, `.mcp.json`, `.agents/hooks.json`, `.claude/settings.json`, `.vscode/mcp.json`, and `.git/hooks/pre-commit` |
+| `init-hooks` | Scaffold `.github/workflows/minici-cost.yml`, `.mcp.json`, `.agents/hooks.json`, `.claude/settings.json`, `.vscode/mcp.json`, `.git/hooks/pre-commit`, and multi-agent `SKILL.md` bundles |
 | `self-update` | Verify zero SKU catalog drift and update the local `minici` binary |
 | `launch-pack` | Export structured repository FinOps summary profiles |
 
 </details>
+
+---
+
+## AI Agent Skill & Plugin (All Agents)
+
+Give any AI coding assistant deterministic sub-millisecond CI/CD FinOps math, PR cost diffs, `ARM64` runner right-sizing, and comment-preserving YAML fixes via the bundled [`skills/minici-cost/SKILL.md`](https://github.com/minici-dev/minici-cost-action/blob/main/skills/minici-cost/SKILL.md) skill and native plugin manifests:
+
+```bash
+# Universal Open Agent Skills CLI (Claude Code, Cursor, Codex, Copilot, Antigravity, Windsurf, Cline, Goose, Amp)
+npx skills add minici-dev/minici-cost-action
+
+# Claude Code Plugin Marketplace (1-step install)
+/plugin install minici-cost --marketplace minici-dev/minici-cost-action
+
+# Or wire workspace Skills + MCP + Shift-Left Hooks + GitHub Action in one command
+minici init-hooks --path .
+```
+
+| AI Agent / Ecosystem | Included Manifest / Path | What It Enables |
+| :--- | :--- | :--- |
+| **35+ Agents (`skills.sh`)** | [`skills/minici-cost/SKILL.md`](https://github.com/minici-dev/minici-cost-action/blob/main/skills/minici-cost/SKILL.md) | Progressive-disclosure CI FinOps runbook + auto-bootstrap installer |
+| **Google Antigravity** | [`plugin.json`](https://github.com/minici-dev/minici-cost-action/blob/main/plugin.json) + `.agents/skills/minici-cost/` | Native plugin card, starter prompts, `SKILL.md`, and `PreToolUse`/`PostToolUse` hooks |
+| **Claude Code** | [`.claude-plugin/plugin.json`](https://github.com/minici-dev/minici-cost-action/blob/main/.claude-plugin/plugin.json) + [`.mcp.json`](https://github.com/minici-dev/minici-cost-action/blob/main/.mcp.json) | 1-step `/plugin install`, `/minici-cost` skill, and 8-tool stdio MCP server |
+| **Cursor** | [`.cursor-plugin/plugin.json`](https://github.com/minici-dev/minici-cost-action/blob/main/.cursor-plugin/plugin.json) + `.cursor/skills/` | Native Cursor plugin bundle (`skills/` + `.mcp.json`) |
+| **OpenAI Codex & ChatGPT** | [`skills/minici-cost/agents/openai.yaml`](https://github.com/minici-dev/minici-cost-action/blob/main/skills/minici-cost/agents/openai.yaml) + `.agents/skills/` | `$minici-cost` UI card, implicit workflow invocation, and starter prompt |
+| **GitHub Copilot & VS Code** | `.github/skills/minici-cost/SKILL.md` + `.vscode/mcp.json` | Workspace Copilot skill + stdio MCP server |
 
 ---
 

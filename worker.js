@@ -1,4 +1,4 @@
-const RATES_ETAG = "\"minici-rates-v0.9.0\"";
+const RATES_ETAG = "\"minici-rates-v0.9.1\"";
 
 const CORS_HEADERS = {
   "access-control-allow-origin": "*",
@@ -8,7 +8,7 @@ const CORS_HEADERS = {
 
 const OFFICIAL_RATES_FEED = {
   schema_version: "1.0",
-  catalog_version: "2026.11-v0.9.0",
+  catalog_version: "2026.11-v0.9.1",
   updated_at: "2026-11-20T00:00:00Z",
   github_actions: {
     "ubuntu-latest": 0.006,
@@ -188,7 +188,7 @@ async function fetchLiveGitHubRepoSummary(slug, ghToken, windowDays = 30) {
   const clampedDays = Math.max(1, Math.min(365, Number(windowDays) || 30));
   const headers = {
     accept: "application/vnd.github+json",
-    "user-agent": "minici-worker/0.9.0"
+    "user-agent": "minici-worker/0.9.1"
   };
   if (ghToken) headers.authorization = `Bearer ${ghToken}`;
 
@@ -674,11 +674,247 @@ async function evaluateSystemOneEdge(req, env, ctx) {
   };
 }
 
+async function hmacSha256Hex(secret, message) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(String(secret || "")),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, enc.encode(String(message || "")));
+  return Array.from(new Uint8Array(mac))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function timingSafeEqualAscii(a, b) {
+  const sa = String(a || "");
+  const sb = String(b || "");
+  if (sa.length !== sb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < sa.length; i++) {
+    diff |= sa.charCodeAt(i) ^ sb.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+async function verifyGitHubWebhookSignature(request, rawBody, secret, allowUnsignedDev = false) {
+  if (!secret) return Boolean(allowUnsignedDev);
+  const sigHeader = (request.headers.get("x-hub-signature-256") || "").trim();
+  if (!sigHeader.startsWith("sha256=")) return false;
+  const expected = `sha256=${await hmacSha256Hex(secret, rawBody)}`;
+  return timingSafeEqualAscii(expected, sigHeader.toLowerCase());
+}
+
+async function verifyLinearWebhookSignature(request, rawBody, secret, allowUnsignedDev = false) {
+  if (!secret) return Boolean(allowUnsignedDev);
+  const sigHeader = (request.headers.get("linear-signature") || "").trim().toLowerCase();
+  if (!sigHeader) return false;
+  const expected = await hmacSha256Hex(secret, rawBody);
+  return timingSafeEqualAscii(expected, sigHeader);
+}
+
+function stripBackticksAndBlockquotes(rawText) {
+  const lines = String(rawText || "").split(/\r?\n/);
+  const kept = [];
+  for (const line of lines) {
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith(">")) continue;
+    let out = "";
+    let inTick = false;
+    for (let i = 0; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (ch === "`") {
+        inTick = !inTick;
+      } else if (!inTick) {
+        out += ch;
+      }
+    }
+    kept.push(out);
+  }
+  return kept.join("\n");
+}
+
+function parseOmnichannelAtMiniciCommand(rawText, requireMention = true) {
+  const body = String(rawText || "");
+  if (
+    body.includes("<!-- minici-") ||
+    body.includes("MiniCI Pull Request CI/CD Cost Diff") ||
+    body.includes("MiniCI Merge Request CI/CD Cost Diff")
+  ) {
+    return null;
+  }
+  const cleaned = stripBackticksAndBlockquotes(body);
+  const low = cleaned.toLowerCase();
+  let tail = cleaned.trim();
+  if (requireMention) {
+    const idx = low.indexOf("@minici");
+    if (idx === -1) return null;
+    tail = cleaned.slice(idx + "@minici".length).trim();
+  } else {
+    const idx = low.indexOf("@minici");
+    if (idx !== -1) tail = cleaned.slice(idx + "@minici".length).trim();
+  }
+  const tokens = tail.split(/\s+/).filter(Boolean);
+  const rawSub = (tokens[0] || "breakdown").toLowerCase();
+  const repoMatch = tokens.find((t) => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(t));
+  const arg1 = (tokens[1] || "arm64").toLowerCase();
+  let action = "breakdown";
+  if (["shrink", "optimize", "fix"].includes(rawSub)) action = "shrink";
+  else if (["accelerate", "rust-everywhere", "rust-tools"].includes(rawSub)) action = "accelerate";
+  else if (["migrate", "switch"].includes(rawSub)) action = "migrate";
+  else if (["permissions", "security", "trust"].includes(rawSub)) action = "permissions";
+  else if (["why", "anomalies", "anomaly"].includes(rawSub)) action = "why";
+
+  return {
+    action,
+    rawSub,
+    targetArg: arg1,
+    repoSlug: repoMatch || null,
+    fullTail: tail
+  };
+}
+
+async function buildOmnichannelMiniciReply(cmdObj, fallbackRepo, env, ctx) {
+  const repo = (cmdObj && cmdObj.repoSlug) || fallbackRepo || "owner/repo";
+  const validSlug = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo);
+  const { data: live } = validSlug
+    ? await getRepoReportThreeLayer(repo, 30, env, ctx, false).catch(() => ({ data: null }))
+    : { data: null };
+
+  const grossStr = live ? `$${live.grossMonthlyUsd.toFixed(2)}/mo` : "run local CLI for static YAML audit";
+  const netStr = live ? `$${live.netMonthlyUsd.toFixed(2)}/mo` : "$0.00/mo";
+  const action = (cmdObj && cmdObj.action) || "breakdown";
+
+  if (action === "permissions") {
+    const md =
+      `<!-- minici-bot-reply -->\n### 🔒 MiniCI Least-Privilege Security & Coverage Receipt (\`${repo}\`)\n\n` +
+      `- **Public Repository Scope:** \`Contents: None\` (\`63.0%\` telemetry attributes with zero token)\n` +
+      `- **Private Workflow YAML Scope:** \`Actions: Read\` + \`Contents: Read\` (\`82.4%\` coverage, zero source-code AST read)\n` +
+      `- **Write Scopes Required:** \`None\` (\`100%\` read-only by default)\n` +
+      `- **Local Verification (<1 ms):** \`minici permissions check --repo ${repo}\``;
+    return { action, repo, live, markdown: md, plainText: `MiniCI Security Receipt for ${repo}: 100% read-only` };
+  }
+
+  if (action === "accelerate") {
+    const estSave = live ? `~$${(live.grossMonthlyUsd * 0.28).toFixed(2)}/mo` : "20%-45% CI minutes";
+    const md =
+      `<!-- minici-bot-reply -->\n### ⚡ MiniCI Two-Tier Rust CI Acceleration Plan (\`${repo}\`)\n\n` +
+      `- **Current Compute Baseline:** \`${grossStr}\` gross (\`${netStr}\` net)\n` +
+      `- **Estimated Acceleration Savings:** **\`${estSave}\`** via whole-minute \`ceil(60s)\` boundary reductions\n` +
+      `- **Tier 1 — Drop-In Rust Toolchains (\`MINICI-RUST-012\`):**\n` +
+      `  - \`pip install\` → \`astral-sh/setup-uv@v5\` + \`uv pip install --system\` (\`10x-50x\` faster)\n` +
+      `  - \`flake8\` / \`black\` / \`isort\` → \`uvx ruff check\` & \`ruff format --check\` (\`50x-150x\` faster)\n` +
+      `  - \`eslint\` / \`prettier\` → \`npx --yes @biomejs/biome ci .\` (\`15x-25x\` faster)\n` +
+      `  - \`cargo test\` → \`cargo nextest run\` + \`cargo test --doc\` (\`2x-3x\` faster)\n` +
+      `- **Tier 2 — Scoped \`rust-everywhere\` Bespoke CI-Tool Converter (\`MINICI-RUST-EVERYWHERE-013\`):**\n` +
+      `  - Converts standalone repo CI scripts (\`scripts/*.py\`, \`tools/*.js\`, \`ci/*.sh\`) with no existing Rust equivalent into \`cargo check\`-verified native binaries under \`.minici/rust-everywhere/<tool>/\` (\`0\` app source files touched).\n\n` +
+      `Run locally to apply with shadow \`DiffReport\` verification:\n\`\`\`bash\nminici accelerate --path . --apply\n\`\`\``;
+    return { action, repo, live, markdown: md, plainText: `MiniCI Rust CI Acceleration Plan for ${repo} (${estSave})` };
+  }
+
+  if (action === "shrink") {
+    const estSave = live ? `~$${(live.grossMonthlyUsd * 0.22).toFixed(2)}/mo` : "15%-35% CI waste";
+    const md =
+      `<!-- minici-bot-reply -->\n### ✂️ MiniCI Surgical Workflow \`shrink\` Plan (\`${repo}\`)\n\n` +
+      `- **Current Compute Baseline:** \`${grossStr}\` gross (\`${netStr}\` net)\n` +
+      `- **Estimated Hygiene Savings:** **\`${estSave}\`** (superseded PR \`concurrency\` cancel, \`timeout-minutes: 30\` guard, shallow \`fetch-depth: 1\` clone, \`retention-days: 7\`, and lockfile caching)\n\n` +
+      `Run locally or generate committable PR suggestions:\n\`\`\`bash\nminici shrink --path . --suggest-pr\nminici shrink --path . --apply\n\`\`\``;
+    return { action, repo, live, markdown: md, plainText: `MiniCI Surgical Shrink Plan for ${repo} (${estSave})` };
+  }
+
+  if (action === "migrate") {
+    const targetMode = (cmdObj && cmdObj.targetArg) || "github-arm64";
+    const estSave = live ? `~$${(live.grossMonthlyUsd * 0.25).toFixed(2)}/mo` : "17%-43% runner rate drop";
+    const md =
+      `<!-- minici-bot-reply -->\n### 🚀 MiniCI 6-Gate Runner Migration Receipt (\`${repo}\` → \`${targetMode}\`)\n\n` +
+      `- **Current Compute Baseline:** \`${grossStr}\` gross (\`${netStr}\` net)\n` +
+      `- **Projected Right-Sizing Delta:** **\`${estSave}\`** (guards against x86/KVM/GPU/macOS incompatibilities)\n\n` +
+      `Preview or apply locally:\n\`\`\`bash\nminici migrate --path . --to ${targetMode}\n\`\`\``;
+    return { action, repo, live, markdown: md, plainText: `MiniCI Runner Migration (${repo} -> ${targetMode}): ${estSave}` };
+  }
+
+  const md = live
+    ? `<!-- minici-bot-reply -->\n### 💰 MiniCI Live FinOps Receipt (\`${repo}\`)\n\n` +
+      `- **Gross Compute Run-Rate:** \`$${live.grossMonthlyUsd.toFixed(2)}/mo\`\n` +
+      `- **Net Billed (${live.isPublic ? "Public OSS" : "Private"}):** **\`$${live.netMonthlyUsd.toFixed(2)}/mo\`**\n` +
+      `- **Workflows / Jobs / Cadence:** \`${live.workflows}\` wf • \`${live.jobs}\` jobs • \`${live.monthlyRuns} runs/mo\` (\`${live.billedMins.toFixed(1)}m/run\`)\n` +
+      `- **Next Actions:** Comment \`@minici shrink\`, \`@minici accelerate\`, or \`@minici migrate arm64\`.`
+    : `<!-- minici-bot-reply -->\n### 💰 MiniCI FinOps Receipt (\`${repo}\`)\n\n` +
+      `- Run \`minici breakdown --repo ${repo} --live\` or comment \`@minici shrink\` / \`@minici accelerate\`.`;
+  return {
+    action,
+    repo,
+    live,
+    markdown: md,
+    plainText: live
+      ? `MiniCI Breakdown for ${repo}: $${live.grossMonthlyUsd.toFixed(2)}/mo gross ($${live.netMonthlyUsd.toFixed(2)}/mo net)`
+      : `MiniCI FinOps Receipt for ${repo}`
+  };
+}
+
+function buildSlackInteractiveActionsRow(targetRepo) {
+  const safeTarget = String(targetRepo || "owner/repo").slice(0, 120);
+  return {
+    type: "actions",
+    elements: [
+      {
+        type: "button",
+        style: "primary",
+        text: { type: "plain_text", text: "✂️ Surgical Shrink Plan" },
+        action_id: "minici_action_shrink",
+        value: safeTarget
+      },
+      {
+        type: "button",
+        text: { type: "plain_text", text: "⚡ Rust-Everywhere Accelerate" },
+        action_id: "minici_action_accelerate",
+        value: safeTarget
+      },
+      {
+        type: "button",
+        text: { type: "plain_text", text: "🚀 ARM64 Right-Size" },
+        action_id: "minici_action_arm64",
+        value: safeTarget
+      }
+    ]
+  };
+}
+
 async function buildSlackFinOpsBlocks(commandText, env, ctx) {
   const cleaned = (commandText || "").replace(/<@[^>]+>/g, "").trim();
   const tokens = cleaned.split(/\s+/).filter(Boolean);
   const sub = (tokens[0] || "breakdown").toLowerCase();
   const target = tokens[1] || "owner/repo";
+
+  if (["shrink", "accelerate", "rust-everywhere", "migrate"].includes(sub)) {
+    const reply = await buildOmnichannelMiniciReply(
+      { action: sub === "rust-everywhere" ? "accelerate" : sub, targetArg: tokens[2] || "github-arm64", repoSlug: target },
+      target,
+      env,
+      ctx
+    );
+    return {
+      response_type: "in_channel",
+      text: reply.plainText,
+      blocks: [
+        {
+          type: "header",
+          text: { type: "plain_text", text: `MiniCI — ${reply.action.toUpperCase()} (${reply.repo})`.slice(0, 145) }
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: reply.markdown.replace(/<!--[^>]+-->\n?/g, "").slice(0, 2900)
+          }
+        },
+        buildSlackInteractiveActionsRow(reply.repo)
+      ]
+    };
+  }
 
   if (sub === "permissions" || sub === "security") {
     return {
@@ -712,7 +948,7 @@ async function buildSlackFinOpsBlocks(commandText, env, ctx) {
       blocks: [
         {
           type: "header",
-          text: { type: "plain_text", text: `MiniCI — Live FinOps Receipt (${target})` }
+          text: { type: "plain_text", text: `MiniCI — Live FinOps Receipt (${target})`.slice(0, 145) }
         },
         {
           type: "section",
@@ -738,7 +974,8 @@ async function buildSlackFinOpsBlocks(commandText, env, ctx) {
             type: "mrkdwn",
             text: `*Full 24-Model Local Receipt (<1 ms):* \`minici breakdown --repo ${target} --live --days ${live.windowDays}\``
           }
-        }
+        },
+        buildSlackInteractiveActionsRow(target)
       ]
     };
   }
@@ -749,20 +986,378 @@ async function buildSlackFinOpsBlocks(commandText, env, ctx) {
     blocks: [
       {
         type: "header",
-        text: { type: "plain_text", text: `MiniCI — CI/CD FinOps (${sub})` }
+        text: { type: "plain_text", text: `MiniCI — CI/CD FinOps (${sub})`.slice(0, 145) }
       },
       {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `*Target:* \`${target}\`\nRun locally or in CI in \`< 1 ms\`:\n\`minici breakdown --repo ${target} --live\`\n\`minici shrink --path .\` • \`minici migrate --path . --to github-arm64\` • \`minici ask "why did CI spend spike?"\``
+          text: `*Target:* \`${target}\`\nRun locally or in CI in \`< 1 ms\`:\n\`minici breakdown --repo ${target} --live\`\n\`minici shrink --path .\` • \`minici accelerate --path .\` • \`minici migrate --path . --to github-arm64\``
         }
-      }
+      },
+      buildSlackInteractiveActionsRow(target)
     ]
   };
 }
 
+const EDGE_MEM_SHARES = new Map();
+const EDGE_MEM_ENTITLEMENTS = new Map();
+const EDGE_MEM_LEDGER = new Map();
+
+function planDefaults(planName) {
+  const p = String(planName || "starter").toLowerCase();
+  if (p === "custom" || p === "team" || p === "enterprise" || p.includes("flex")) {
+    return { plan: "custom", max_repos: 9999, retention_days: 365 };
+  }
+  if (p === "pro" || p.includes("pro")) {
+    return { plan: "pro", max_repos: 15, retention_days: 365 };
+  }
+  return { plan: "starter", max_repos: 3, retention_days: 30 };
+}
+
+function escapeXml(str) {
+  return String(str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function renderFinOpsBadgeSvg(label, valueText, colorHex = "#10b981") {
+  const safeLbl = escapeXml(label);
+  const safeVal = escapeXml(valueText);
+  const lblW = Math.max(48, safeLbl.length * 6.8 + 16);
+  const valW = Math.max(76, safeVal.length * 6.8 + 18);
+  const totalW = Math.round(lblW + valW);
+  const lw = Math.round(lblW);
+  const vw = totalW - lw;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="20" role="img" aria-label="${safeLbl}: ${safeVal}">
+  <linearGradient id="s" x2="0" y2="100%">
+    <stop offset="0" stop-color="#bbb" stop-opacity=".1"/>
+    <stop offset="1" stop-opacity=".1"/>
+  </linearGradient>
+  <clipPath id="r"><rect width="${totalW}" height="20" rx="3" fill="#fff"/></clipPath>
+  <g clip-path="url(#r)">
+    <rect width="${lw}" height="20" fill="#0f172a"/>
+    <rect x="${lw}" width="${vw}" height="20" fill="${colorHex}"/>
+    <rect width="${totalW}" height="20" fill="url(#s)"/>
+  </g>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="11">
+    <text x="${Math.round(lw / 2)}" y="14">${safeLbl}</text>
+    <text x="${lw + Math.round(vw / 2)}" y="14" font-weight="bold">${safeVal}</text>
+  </g>
+</svg>`;
+}
+
+async function verifyPolarWebhookSignature(request, rawBody, webhookSecret) {
+  if (!webhookSecret) return false;
+  const msgId = request.headers.get("webhook-id") || "";
+  const msgTs = request.headers.get("webhook-timestamp") || "";
+  const sigHeader = request.headers.get("webhook-signature") || "";
+  if (!msgId || !msgTs || !sigHeader) return false;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const tsNum = Number(msgTs);
+  if (!Number.isFinite(tsNum) || Math.abs(nowSec - tsNum) > 300) return false;
+
+  // Standard Webhooks secret may start with `whsec_` (base64) or raw UTF-8 secret
+  let keyBytes;
+  const trimmed = String(webhookSecret).trim();
+  if (trimmed.startsWith("whsec_")) {
+    try {
+      const b64 = trimmed.slice(6);
+      const binStr = atob(b64);
+      keyBytes = Uint8Array.from(binStr, (c) => c.charCodeAt(0));
+    } catch {
+      keyBytes = new TextEncoder().encode(trimmed);
+    }
+  } else {
+    keyBytes = new TextEncoder().encode(trimmed);
+  }
+
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    keyBytes,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const toSign = new TextEncoder().encode(`${msgId}.${msgTs}.${rawBody}`);
+  const mac = await crypto.subtle.sign("HMAC", cryptoKey, toSign);
+  const expectedB64 = btoa(String.fromCharCode(...new Uint8Array(mac)));
+
+  const candidates = sigHeader.split(/\s+/).map((part) => part.replace(/^v1,/, "").trim());
+  return candidates.some((cand) => cand === expectedB64);
+}
+
+async function ensureCloudTablesIfD1(env) {
+  if (!env || !env.MINICI_D1) return;
+  await env.MINICI_D1.batch([
+    env.MINICI_D1.prepare(
+      `CREATE TABLE IF NOT EXISTS cloud_entitlements (
+        key_sha256 TEXT PRIMARY KEY,
+        key_hint TEXT NOT NULL DEFAULT '',
+        plan TEXT NOT NULL DEFAULT 'starter',
+        status TEXT NOT NULL DEFAULT 'active',
+        max_repos INTEGER NOT NULL DEFAULT 3,
+        retention_days INTEGER NOT NULL DEFAULT 30,
+        customer_email TEXT NOT NULL DEFAULT '',
+        polar_subscription_id TEXT NOT NULL DEFAULT '',
+        slack_webhook_url TEXT NOT NULL DEFAULT '',
+        custom_rates_json TEXT NOT NULL DEFAULT '{}',
+        max_pr_delta_monthly_usd REAL NOT NULL DEFAULT 0.0,
+        require_timeout_minutes INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`
+    ),
+    env.MINICI_D1.prepare(
+      `CREATE TABLE IF NOT EXISTS shared_reports (
+        share_id TEXT PRIMARY KEY,
+        key_sha256 TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT 'github-actions',
+        gross_monthly_usd REAL NOT NULL DEFAULT 0.0,
+        net_monthly_usd REAL NOT NULL DEFAULT 0.0,
+        dev_wait_monthly_usd REAL NOT NULL DEFAULT 0.0,
+        report_json TEXT NOT NULL,
+        report_html TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+      )`
+    ),
+    env.MINICI_D1.prepare(
+      `CREATE TABLE IF NOT EXISTS cloud_run_ledger (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        key_sha256 TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT 'github-actions',
+        branch TEXT NOT NULL DEFAULT 'main',
+        commit_sha TEXT NOT NULL DEFAULT '',
+        expanded_jobs INTEGER NOT NULL DEFAULT 0,
+        billed_mins_per_run REAL NOT NULL DEFAULT 0.0,
+        gross_monthly_usd REAL NOT NULL DEFAULT 0.0,
+        net_billed_monthly_usd REAL NOT NULL DEFAULT 0.0,
+        dev_wait_monthly_usd REAL NOT NULL DEFAULT 0.0,
+        cost_per_pr_usd REAL NOT NULL DEFAULT 0.0,
+        spend_anomaly_active INTEGER NOT NULL DEFAULT 0,
+        recorded_at INTEGER NOT NULL
+      )`
+    )
+  ]).catch(() => {});
+}
+
+async function persistEntitlement(ent, env) {
+  EDGE_MEM_ENTITLEMENTS.set(ent.key_sha256, ent);
+  if (env && env.MINICI_KV) {
+    await env.MINICI_KV.put(`entitlement:${ent.key_sha256}`, JSON.stringify(ent), {
+      expirationTtl: 86400
+    }).catch(() => {});
+  }
+  if (env && env.MINICI_D1) {
+    await ensureCloudTablesIfD1(env);
+    await env.MINICI_D1.prepare(
+      `INSERT OR REPLACE INTO cloud_entitlements (
+         key_sha256, key_hint, plan, status, max_repos, retention_days,
+         customer_email, polar_subscription_id, slack_webhook_url, custom_rates_json,
+         max_pr_delta_monthly_usd, require_timeout_minutes, created_at, updated_at
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`
+    )
+      .bind(
+        ent.key_sha256,
+        ent.key_hint || "",
+        ent.plan,
+        ent.status,
+        ent.max_repos,
+        ent.retention_days,
+        ent.customer_email || "",
+        ent.polar_subscription_id || "",
+        ent.slack_webhook_url || "",
+        ent.custom_rates_json || "{}",
+        Number(ent.max_pr_delta_monthly_usd || 0),
+        ent.require_timeout_minutes ? 1 : 0,
+        ent.created_at,
+        ent.updated_at
+      )
+      .run()
+      .catch(() => {});
+  }
+}
+
+function extractBearerKey(request) {
+  const auth = request.headers.get("authorization") || "";
+  if (auth.toLowerCase().startsWith("bearer ")) {
+    return auth.slice(7).trim();
+  }
+  return (request.headers.get("x-minici-key") || "").trim();
+}
+
+async function resolveCloudEntitlement(rawKey, env) {
+  if (!rawKey || rawKey.length < 6) return null;
+  const keyHash = await sha256Hex(rawKey);
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  if (env && env.MINICI_DEV_TEST_KEY && rawKey === env.MINICI_DEV_TEST_KEY) {
+    return {
+      key_sha256: keyHash,
+      key_hint: rawKey.slice(0, 8),
+      plan: "custom",
+      status: "active",
+      max_repos: 9999,
+      retention_days: 365,
+      customer_email: "dev@minici.local",
+      polar_subscription_id: "sub_dev",
+      slack_webhook_url: "",
+      custom_rates_json: "{}",
+      max_pr_delta_monthly_usd: 0.0,
+      require_timeout_minutes: 0,
+      created_at: nowSec,
+      updated_at: nowSec
+    };
+  }
+
+  if (env && env.MINICI_KV) {
+    const kvRaw = await env.MINICI_KV.get(`entitlement:${keyHash}`).catch(() => null);
+    if (kvRaw) {
+      try {
+        const parsed = JSON.parse(kvRaw);
+        if (parsed && parsed.status === "active") return parsed;
+        if (parsed && parsed.status === "revoked") return null;
+      } catch {}
+    }
+  }
+
+  if (env && env.MINICI_D1) {
+    const row = await env.MINICI_D1.prepare(
+      "SELECT * FROM cloud_entitlements WHERE key_sha256 = ?1"
+    )
+      .bind(keyHash)
+      .first()
+      .catch(() => null);
+    if (row) {
+      if (row.status !== "active") return null;
+      return row;
+    }
+  }
+
+  if (EDGE_MEM_ENTITLEMENTS.has(keyHash)) {
+    const mem = EDGE_MEM_ENTITLEMENTS.get(keyHash);
+    return mem && mem.status === "active" ? mem : null;
+  }
+
+  // Live fallback: Validate Polar.sh `MINICI-...` License Key directly via Polar Customer Portal API
+  const polarOrgId = (env && env.POLAR_ORGANIZATION_ID) || "";
+  if (polarOrgId || rawKey.toUpperCase().startsWith("MINICI")) {
+    const validateBody = { key: rawKey };
+    if (polarOrgId) validateBody.organization_id = polarOrgId;
+    const polarResp = await fetch(
+      "https://api.polar.sh/v1/customer-portal/license-keys/validate",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(validateBody)
+      }
+    ).catch(() => null);
+
+    if (polarResp && polarResp.ok) {
+      const data = await polarResp.json().catch(() => null);
+      if (data && (data.status === "granted" || data.status === "active" || data.id)) {
+        const benefitDesc = String(
+          (data.benefit && data.benefit.description) ||
+            (data.customer && data.customer.metadata && data.customer.metadata.plan) ||
+            "starter"
+        );
+        const defs = planDefaults(benefitDesc);
+        const ent = {
+          key_sha256: keyHash,
+          key_hint: rawKey.slice(0, 10),
+          plan: defs.plan,
+          status: "active",
+          max_repos: defs.max_repos,
+          retention_days: defs.retention_days,
+          customer_email: String((data.customer && data.customer.email) || ""),
+          polar_subscription_id: String(data.subscription_id || ""),
+          slack_webhook_url: "",
+          custom_rates_json: "{}",
+          max_pr_delta_monthly_usd: 0.0,
+          require_timeout_minutes: 0,
+          created_at: nowSec,
+          updated_at: nowSec
+        };
+        await persistEntitlement(ent, env);
+        return ent;
+      }
+    }
+  }
+
+  return null;
+}
+
+async function dispatchFridayFinOpsDigests(env) {
+  if (!env || !env.MINICI_D1) return { sent: 0 };
+  await ensureCloudTablesIfD1(env);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const weekAgo = nowSec - 7 * 86400;
+  const ents = await env.MINICI_D1.prepare(
+    "SELECT key_sha256, plan, slack_webhook_url FROM cloud_entitlements WHERE status = 'active' AND plan IN ('pro', 'custom') AND slack_webhook_url != ''"
+  )
+    .all()
+    .catch(() => ({ results: [] }));
+  const rows = (ents && ents.results) || [];
+  let sent = 0;
+
+  for (const ent of rows) {
+    const agg = await env.MINICI_D1.prepare(
+      `SELECT COUNT(DISTINCT repo) AS repo_count,
+              COUNT(*) AS runs_synced,
+              AVG(gross_monthly_usd) AS avg_gross_usd,
+              AVG(net_billed_monthly_usd) AS avg_net_usd,
+              AVG(dev_wait_monthly_usd) AS avg_wait_usd
+         FROM cloud_run_ledger
+        WHERE key_sha256 = ?1 AND recorded_at >= ?2`
+    )
+      .bind(ent.key_sha256, weekAgo)
+      .first()
+      .catch(() => null);
+    if (!agg || !agg.runs_synced) continue;
+
+    const slackMsg = {
+      text: `MiniCI Weekly Friday FinOps Digest (${ent.plan.toUpperCase()}): ${agg.repo_count} repo(s), $${Number(agg.avg_gross_usd || 0).toFixed(2)}/mo run-rate`,
+      blocks: [
+        {
+          type: "header",
+          text: { type: "plain_text", text: "MiniCI — Weekly Friday FinOps Digest" }
+        },
+        {
+          type: "section",
+          fields: [
+            { type: "mrkdwn", text: `*Tracked Repos (7d):*\n\`${agg.repo_count}\` (` + "`" + `${agg.runs_synced}` + "`" + ` syncs)` },
+            { type: "mrkdwn", text: `*Avg Gross Run-Rate:*\n\`$${Number(agg.avg_gross_usd || 0).toFixed(2)}/mo\`` },
+            { type: "mrkdwn", text: `*Avg Net Billed:*\n\`$${Number(agg.avg_net_usd || 0).toFixed(2)}/mo\`` },
+            { type: "mrkdwn", text: `*Avg Dev Wait Impact:*\n\`$${Number(agg.avg_wait_usd || 0).toFixed(2)}/mo\`` }
+          ]
+        }
+      ]
+    };
+    const resp = await fetch(ent.slack_webhook_url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(slackMsg)
+    }).catch(() => null);
+    if (resp && resp.ok) sent += 1;
+  }
+  return { sent };
+}
+
 export default {
+  async scheduled(event, env, ctx) {
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(dispatchFridayFinOpsDigests(env));
+    } else {
+      await dispatchFridayFinOpsDigests(env);
+    }
+  },
+
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
@@ -774,7 +1369,10 @@ export default {
         url.pathname === "/v1/pricing/catalog" ||
         url.pathname === "/v1/systemone" ||
         url.pathname.startsWith("/v1/report/") ||
-        url.pathname.startsWith("/v1/jev/"))
+        url.pathname.startsWith("/v1/jev/") ||
+        url.pathname.startsWith("/v1/cloud/") ||
+        url.pathname.startsWith("/v1/badge/") ||
+        url.pathname.startsWith("/r/"))
     ) {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
@@ -784,7 +1382,7 @@ export default {
         JSON.stringify({
           status: "ok",
           service: "minici-cost-action",
-          version: "0.9.0",
+          version: "0.9.1",
           engine: "Pure Rust std-only (<1ms)",
           cache_layers: [
             "L1:caches.default",
@@ -806,7 +1404,7 @@ export default {
       const inmMatched = inm
         .split(",")
         .map((t) => t.trim().replace(/^W\//i, ""))
-        .some((t) => t === "*" || t === RATES_ETAG || t === "minici-rates-v0.9.0");
+        .some((t) => t === "*" || t === RATES_ETAG || t === "minici-rates-v0.9.1");
       if (inmMatched) {
         return new Response(null, {
           status: 304,
@@ -878,15 +1476,89 @@ export default {
       });
     }
 
-    // GitHub Webhook Invalidation & D1/KV Refresh (`workflow_run.completed` / `push`)
-    if (url.pathname === "/v1/webhook/github" && request.method === "POST") {
+    // GitHub App & Repo Webhook Router (`POST /webhooks/github` & `/v1/webhook/github`)
+    // Supports org-wide `@minici` issue/PR comments with zero YAML edits, D-34 bot-loop guard,
+    // threshold-gated Slack PR alerts, and L1/L2 report cache invalidation.
+    if ((url.pathname === "/v1/webhook/github" || url.pathname === "/webhooks/github") && request.method === "POST") {
+      const rawBody = await request.text();
+      if (env && env.GITHUB_WEBHOOK_SECRET) {
+        const allowDev = Boolean(env.ALLOW_UNSIGNED_GITHUB_DEV === "true");
+        const sigOk = await verifyGitHubWebhookSignature(
+          request,
+          rawBody,
+          env.GITHUB_WEBHOOK_SECRET,
+          allowDev
+        );
+        if (!sigOk) {
+          return new Response(JSON.stringify({ error: "invalid_github_webhook_signature" }), {
+            status: 401,
+            headers: { "content-type": "application/json; charset=utf-8" }
+          });
+        }
+      }
+
       let body = {};
       try {
-        body = JSON.parse((await request.text()) || "{}");
+        body = JSON.parse(rawBody || "{}");
       } catch {
         return new Response(JSON.stringify({ error: "invalid_json" }), { status: 400 });
       }
+
+      const ghEvent = (request.headers.get("x-github-event") || "").toLowerCase();
+      const senderType = String((body && body.sender && body.sender.type) || "");
+      const senderLogin = String((body && body.sender && body.sender.login) || "").toLowerCase();
       const slug = body && body.repository && body.repository.full_name;
+      const ghApiBase = String((env && env.GITHUB_API_URL) || "https://api.github.com").replace(/\/+$/, "");
+      const ghToken = (env && (env.GITHUB_APP_TOKEN || env.GITHUB_TOKEN)) || "";
+
+      // D-34 Bot-Loop Guard: never trigger `@minici` replies on Bot-authored events
+      if (ghEvent === "issue_comment" && (senderType === "Bot" || senderLogin.endsWith("[bot]"))) {
+        return new Response(JSON.stringify({ ok: true, ignored: true, reason: "bot_author_loop_guard" }), {
+          headers: { "content-type": "application/json; charset=utf-8" }
+        });
+      }
+
+      if (ghEvent === "issue_comment" && (!body.action || body.action === "created")) {
+        const commentBody = String((body.comment && body.comment.body) || "");
+        const parsedCmd = parseOmnichannelAtMiniciCommand(commentBody, true);
+        if (!parsedCmd) {
+          return new Response(JSON.stringify({ ok: true, ignored: true, reason: "no_direct_at_minici_mention" }), {
+            headers: { "content-type": "application/json; charset=utf-8" }
+          });
+        }
+        const reply = await buildOmnichannelMiniciReply(parsedCmd, slug || "owner/repo", env, ctx);
+        let postedCommentId = null;
+        const issueNum = body.issue && body.issue.number;
+        if (ghToken && slug && issueNum) {
+          const postResp = await fetch(`${ghApiBase}/repos/${slug}/issues/${issueNum}/comments`, {
+            method: "POST",
+            headers: {
+              accept: "application/vnd.github+json",
+              authorization: `Bearer ${ghToken}`,
+              "content-type": "application/json; charset=utf-8",
+              "user-agent": "minici-worker/0.9.1"
+            },
+            body: JSON.stringify({ body: reply.markdown })
+          }).catch(() => null);
+          if (postResp && postResp.ok) {
+            const pj = await postResp.json().catch(() => null);
+            if (pj && pj.id) postedCommentId = pj.id;
+          }
+        }
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            channel: "github",
+            handled: "issue_comment",
+            repo: reply.repo,
+            action: reply.action,
+            posted_comment_id: postedCommentId,
+            reply_markdown: reply.markdown
+          }),
+          { headers: { "content-type": "application/json; charset=utf-8" } }
+        );
+      }
+
       if (slug && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(slug)) {
         const edgeCache = typeof caches !== "undefined" && caches.default ? caches.default : null;
         for (const d of [7, 30, 60, 90]) {
@@ -898,6 +1570,43 @@ export default {
           if (env && env.MINICI_KV) {
             await env.MINICI_KV.delete(`report:${slug}:${d}d`).catch(() => {});
           }
+        }
+        if (
+          ghEvent === "pull_request" &&
+          ["opened", "synchronize", "reopened"].includes(String(body.action || ""))
+        ) {
+          const reply = await buildOmnichannelMiniciReply(
+            { action: "breakdown", repoSlug: slug },
+            slug,
+            env,
+            ctx
+          );
+          let slackAlertSent = false;
+          if (
+            env &&
+            env.SLACK_WEBHOOK_URL &&
+            reply.live &&
+            Number(reply.live.grossMonthlyUsd || 0) >= 50
+          ) {
+            const slackBlocks = await buildSlackFinOpsBlocks(`breakdown ${slug}`, env, ctx);
+            const sr = await fetch(env.SLACK_WEBHOOK_URL, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(slackBlocks)
+            }).catch(() => null);
+            slackAlertSent = Boolean(sr && sr.ok);
+          }
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              channel: "github",
+              handled: "pull_request",
+              refreshed_repo: slug,
+              slack_threshold_alert_sent: slackAlertSent,
+              preview_markdown: reply.markdown
+            }),
+            { headers: { "content-type": "application/json; charset=utf-8" } }
+          );
         }
         if (ctx && typeof ctx.waitUntil === "function") {
           ctx.waitUntil(getRepoReportThreeLayer(slug, 30, env, ctx, true));
@@ -1106,6 +1815,857 @@ export default {
       return new Response(JSON.stringify({ ok: true, ignored: true }), {
         headers: { "content-type": "application/json; charset=utf-8" }
       });
+    }
+
+    // Slack Block Kit Interactive Buttons Handler (`POST /slack/interactions`)
+    if (url.pathname === "/slack/interactions" && request.method === "POST") {
+      const rawBody = await request.text();
+      const allowDev = Boolean(env && env.ALLOW_UNSIGNED_SLACK_DEV === "true");
+      const valid = await verifySlackSignature(
+        request,
+        rawBody,
+        env && env.SLACK_SIGNING_SECRET,
+        allowDev
+      );
+      if (!valid) {
+        return new Response(JSON.stringify({ error: "invalid_slack_signature" }), {
+          status: 401,
+          headers: { "content-type": "application/json; charset=utf-8" }
+        });
+      }
+      let payload = {};
+      try {
+        if (rawBody.trim().startsWith("{")) {
+          payload = JSON.parse(rawBody);
+        } else {
+          const params = new URLSearchParams(rawBody);
+          payload = JSON.parse(params.get("payload") || "{}");
+        }
+      } catch {
+        return new Response(JSON.stringify({ error: "invalid_interaction_payload" }), {
+          status: 400,
+          headers: { "content-type": "application/json; charset=utf-8" }
+        });
+      }
+      const firstAction = (Array.isArray(payload.actions) && payload.actions[0]) || {};
+      const actionId = String(firstAction.action_id || "");
+      const repoTarget = String(firstAction.value || "owner/repo");
+      const actorName = String((payload.user && (payload.user.username || payload.user.name)) || "engineer");
+
+      if (actionId === "minici_action_ack_spike") {
+        const ackCard = {
+          response_type: "in_channel",
+          replace_original: false,
+          text: `CI spend delta on ${repoTarget} acknowledged by @${actorName}.`
+        };
+        if (payload.response_url && /^https:\/\/hooks\.slack\.com\//.test(String(payload.response_url))) {
+          await fetch(payload.response_url, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(ackCard)
+          }).catch(() => {});
+        }
+        return new Response(JSON.stringify({ ok: true, action_id: actionId, repo: repoTarget, reply: ackCard }), {
+          headers: { "content-type": "application/json; charset=utf-8" }
+        });
+      }
+
+      let mappedSub = "breakdown";
+      if (actionId === "minici_action_shrink" || actionId === "minici_open_fix_pr") mappedSub = "shrink";
+      else if (actionId === "minici_action_accelerate") mappedSub = "accelerate";
+      else if (actionId === "minici_action_arm64") mappedSub = "migrate";
+
+      const replyBlocks = await buildSlackFinOpsBlocks(`${mappedSub} ${repoTarget} github-arm64`, env, ctx);
+      if (payload.response_url && /^https:\/\/hooks\.slack\.com\//.test(String(payload.response_url))) {
+        await fetch(payload.response_url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ...replyBlocks, replace_original: false })
+        }).catch(() => {});
+      }
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          channel: "slack_interactions",
+          action_id: actionId,
+          mapped_command: mappedSub,
+          repo: repoTarget,
+          reply: replyBlocks
+        }),
+        { headers: { "content-type": "application/json; charset=utf-8" } }
+      );
+    }
+
+    // Linear Native Agent API (`actor=app`) & Issue Comment Webhook (`POST /webhooks/linear`)
+    if (url.pathname === "/webhooks/linear" && request.method === "POST") {
+      const rawBody = await request.text();
+      if (env && env.LINEAR_WEBHOOK_SECRET) {
+        const allowDev = Boolean(env.ALLOW_UNSIGNED_LINEAR_DEV === "true");
+        const sigOk = await verifyLinearWebhookSignature(
+          request,
+          rawBody,
+          env.LINEAR_WEBHOOK_SECRET,
+          allowDev
+        );
+        if (!sigOk) {
+          return new Response(JSON.stringify({ error: "invalid_linear_webhook_signature" }), {
+            status: 401,
+            headers: { "content-type": "application/json; charset=utf-8" }
+          });
+        }
+      }
+      let ev = {};
+      try {
+        ev = JSON.parse(rawBody || "{}");
+      } catch {
+        return new Response(JSON.stringify({ error: "invalid_json" }), { status: 400 });
+      }
+      const evType = String(ev.type || "");
+      const data = ev.data || {};
+      const isAgentSession = evType === "AgentSessionEvent";
+      const promptText = String(data.prompt || data.body || ev.prompt || "");
+      const parsedCmd = parseOmnichannelAtMiniciCommand(promptText, !isAgentSession);
+      if (!parsedCmd) {
+        return new Response(JSON.stringify({ ok: true, ignored: true, reason: "no_minici_invocation" }), {
+          headers: { "content-type": "application/json; charset=utf-8" }
+        });
+      }
+      const fallbackRepo = String(data.repository || (env && env.DEFAULT_REPO_SLUG) || "owner/repo");
+      const reply = await buildOmnichannelMiniciReply(parsedCmd, fallbackRepo, env, ctx);
+      let linearCommentPosted = false;
+      const issueId = data.issueId || (data.issue && data.issue.id);
+      if (env && env.LINEAR_API_KEY && issueId) {
+        const gqlResp = await fetch("https://api.linear.app/graphql", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: env.LINEAR_API_KEY
+          },
+          body: JSON.stringify({
+            query: "mutation MiniCIComment($issueId: String!, $body: String!) { commentCreate(input: { issueId: $issueId, body: $body }) { success } }",
+            variables: { issueId: String(issueId), body: reply.markdown }
+          })
+        }).catch(() => null);
+        linearCommentPosted = Boolean(gqlResp && gqlResp.ok);
+      }
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          channel: "linear",
+          event_type: evType || "Comment",
+          action: reply.action,
+          repo: reply.repo,
+          comment_posted: linearCommentPosted,
+          reply_markdown: reply.markdown
+        }),
+        { headers: { "content-type": "application/json; charset=utf-8" } }
+      );
+    }
+
+    // Jira Cloud Automation `@minici` Webhook (`POST /webhooks/jira` -> ADF + Markdown)
+    if (url.pathname === "/webhooks/jira" && request.method === "POST") {
+      let body = {};
+      try {
+        body = JSON.parse((await request.text()) || "{}");
+      } catch {
+        return new Response(JSON.stringify({ error: "invalid_json" }), { status: 400 });
+      }
+      const commentText = String((body.comment && body.comment.body) || body.text || "");
+      const parsedCmd = parseOmnichannelAtMiniciCommand(commentText, true);
+      if (!parsedCmd) {
+        return new Response(JSON.stringify({ ok: true, ignored: true }), {
+          headers: { "content-type": "application/json; charset=utf-8" }
+        });
+      }
+      const reply = await buildOmnichannelMiniciReply(
+        parsedCmd,
+        String(body.repo || "owner/repo"),
+        env,
+        ctx
+      );
+      const adf = {
+        version: 1,
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: reply.plainText }]
+          },
+          {
+            type: "codeBlock",
+            attrs: { language: "markdown" },
+            content: [{ type: "text", text: reply.markdown.replace(/<!--[^>]+-->\n?/g, "") }]
+          }
+        ]
+      };
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          channel: "jira",
+          action: reply.action,
+          repo: reply.repo,
+          reply_markdown: reply.markdown,
+          adf
+        }),
+        { headers: { "content-type": "application/json; charset=utf-8" } }
+      );
+    }
+
+    // Google Workspace Chat Synchronous `@minici` App (`POST /webhooks/gchat` -> `cardsV2`)
+    if (url.pathname === "/webhooks/gchat" && request.method === "POST") {
+      let body = {};
+      try {
+        body = JSON.parse((await request.text()) || "{}");
+      } catch {
+        return new Response(JSON.stringify({ error: "invalid_json" }), { status: 400 });
+      }
+      const argText = String(
+        (body.message && (body.message.argumentText || body.message.text)) || body.text || "breakdown"
+      ).trim();
+      const parsedCmd =
+        parseOmnichannelAtMiniciCommand(argText, false) || { action: "breakdown", repoSlug: "owner/repo" };
+      const reply = await buildOmnichannelMiniciReply(parsedCmd, "owner/repo", env, ctx);
+      return new Response(
+        JSON.stringify({
+          text: reply.plainText,
+          cardsV2: [
+            {
+              cardId: `minici-${reply.action}`,
+              card: {
+                header: {
+                  title: `MiniCI — ${reply.action.toUpperCase()}`,
+                  subtitle: reply.repo
+                },
+                sections: [
+                  {
+                    widgets: [
+                      {
+                        textParagraph: {
+                          text: reply.markdown.replace(/<!--[^>]+-->\n?/g, "")
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }),
+        { headers: { "content-type": "application/json; charset=utf-8" } }
+      );
+    }
+
+    // 1. Smart Polar.sh Checkout Redirects (`/v1/checkout/starter` -> $1, `/pro` -> $10, `/custom` -> Team Flex)
+    if (url.pathname.startsWith("/v1/checkout/") && request.method === "GET") {
+      const planSlug = url.pathname.slice("/v1/checkout/".length).trim().toLowerCase();
+      let dest = "https://polar.sh/minici";
+      if (planSlug === "starter" && env && env.POLAR_CHECKOUT_STARTER_URL) {
+        dest = env.POLAR_CHECKOUT_STARTER_URL;
+      } else if (planSlug === "pro" && env && env.POLAR_CHECKOUT_PRO_URL) {
+        dest = env.POLAR_CHECKOUT_PRO_URL;
+      } else if ((planSlug === "custom" || planSlug === "flex") && env && env.POLAR_CHECKOUT_CUSTOM_URL) {
+        dest = env.POLAR_CHECKOUT_CUSTOM_URL;
+      }
+      return Response.redirect(dest, 302);
+    }
+
+    // 2. Polar.sh Webhook (`POST /v1/webhook/polar`) — Automatic $1 / $10 / Custom License Entitlement Sync
+    if (url.pathname === "/v1/webhook/polar" && request.method === "POST") {
+      const rawBody = await request.text();
+      const allowUnsigned = Boolean(env && env.ALLOW_UNSIGNED_POLAR_DEV === "true");
+      const sigOk = allowUnsigned
+        ? true
+        : await verifyPolarWebhookSignature(request, rawBody, env && env.POLAR_WEBHOOK_SECRET);
+      if (!sigOk) {
+        return new Response(JSON.stringify({ error: "invalid_polar_webhook_signature" }), {
+          status: 401,
+          headers: { "content-type": "application/json; charset=utf-8" }
+        });
+      }
+      let ev = {};
+      try {
+        ev = JSON.parse(rawBody || "{}");
+      } catch {
+        return new Response(JSON.stringify({ error: "invalid_json" }), { status: 400 });
+      }
+      const evType = String(ev.type || "");
+      const data = ev.data || {};
+      const props = data.properties || {};
+      const licenseKey = String(
+        props.granted_key || props.key || data.key || data.license_key || ""
+      ).trim();
+
+      if (licenseKey) {
+        const keyHash = await sha256Hex(licenseKey);
+        const nowSec = Math.floor(Date.now() / 1000);
+        const rawPlan = String(
+          (data.product && data.product.metadata && data.product.metadata.minici_plan) ||
+            (data.product && data.product.name) ||
+            (data.metadata && data.metadata.minici_plan) ||
+            "starter"
+        );
+        const defs = planDefaults(rawPlan);
+        const revoked =
+          evType.includes("revoked") ||
+          evType.includes("canceled") ||
+          String(data.status || "").toLowerCase() === "revoked";
+        const ent = {
+          key_sha256: keyHash,
+          key_hint: licenseKey.slice(0, 10),
+          plan: defs.plan,
+          status: revoked ? "revoked" : "active",
+          max_repos: defs.max_repos,
+          retention_days: defs.retention_days,
+          customer_email: String((data.customer && data.customer.email) || data.user_email || ""),
+          polar_subscription_id: String(data.subscription_id || data.id || ""),
+          slack_webhook_url: "",
+          custom_rates_json: "{}",
+          max_pr_delta_monthly_usd: 0.0,
+          require_timeout_minutes: 0,
+          created_at: nowSec,
+          updated_at: nowSec
+        };
+        await persistEntitlement(ent, env);
+        return new Response(
+          JSON.stringify({ ok: true, event: evType, plan: ent.plan, status: ent.status }),
+          { headers: { "content-type": "application/json; charset=utf-8" } }
+        );
+      }
+      return new Response(JSON.stringify({ ok: true, event: evType, note: "acknowledged" }), {
+        headers: { "content-type": "application/json; charset=utf-8" }
+      });
+    }
+
+    // 3. Unlisted Shared Report Viewer (`GET /r/:id` & `/r/:id.json`) — Starter ($1/mo+)
+    if (url.pathname.startsWith("/r/") && request.method === "GET") {
+      const rawTail = url.pathname.slice("/r/".length).trim();
+      const wantJson = rawTail.endsWith(".json");
+      const shareId = (wantJson ? rawTail.slice(0, -5) : rawTail).replace(/[^A-Za-z0-9_-]/g, "");
+      if (!shareId) {
+        return new Response("Invalid report ID", { status: 400 });
+      }
+      let record = EDGE_MEM_SHARES.get(shareId) || null;
+      if (!record && env && env.MINICI_KV) {
+        const kvStr = await env.MINICI_KV.get(`share:${shareId}`).catch(() => null);
+        if (kvStr) {
+          try {
+            record = JSON.parse(kvStr);
+          } catch {}
+        }
+      }
+      if (!record && env && env.MINICI_D1) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        record = await env.MINICI_D1.prepare(
+          "SELECT * FROM shared_reports WHERE share_id = ?1 AND expires_at > ?2"
+        )
+          .bind(shareId, nowSec)
+          .first()
+          .catch(() => null);
+      }
+      if (!record) {
+        return new Response(JSON.stringify({ error: "shared_report_not_found_or_expired", id: shareId }), {
+          status: 404,
+          headers: { "content-type": "application/json; charset=utf-8", ...CORS_HEADERS }
+        });
+      }
+      if (wantJson) {
+        return new Response(record.report_json || "{}", {
+          headers: { "content-type": "application/json; charset=utf-8", ...CORS_HEADERS }
+        });
+      }
+      return new Response(record.report_html || "<p>Report empty</p>", {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "content-security-policy":
+            "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data: https:; font-src data:; base-uri 'none'; form-action 'none'",
+          "x-content-type-options": "nosniff",
+          "referrer-policy": "no-referrer",
+          "x-robots-tag": "noindex, nofollow",
+          ...CORS_HEADERS
+        }
+      });
+    }
+
+    // 4. Live Dynamic README / PR Cost & 30d Trend SVG Badge (`GET /v1/badge/:owner/:repo.svg`)
+    if (url.pathname.startsWith("/v1/badge/") && request.method === "GET") {
+      const rawSlug = url.pathname
+        .slice("/v1/badge/".length)
+        .replace(/\.svg$/i, "")
+        .replace(/^\/+|\/+$/g, "");
+      let badgeVal = "audit ready";
+      let badgeColor = "#10b981";
+
+      const memRows = EDGE_MEM_LEDGER.get(rawSlug) || [];
+      let latestUsd = null;
+      let oldestUsd = null;
+      if (memRows.length > 0) {
+        latestUsd = memRows[memRows.length - 1].gross_monthly_usd;
+        oldestUsd = memRows[0].gross_monthly_usd;
+      } else if (env && env.MINICI_D1) {
+        const res = await env.MINICI_D1.prepare(
+          "SELECT gross_monthly_usd FROM cloud_run_ledger WHERE repo = ?1 ORDER BY recorded_at DESC LIMIT 30"
+        )
+          .bind(rawSlug)
+          .all()
+          .catch(() => null);
+        const pts = (res && res.results) || [];
+        if (pts.length > 0) {
+          latestUsd = Number(pts[0].gross_monthly_usd || 0);
+          oldestUsd = Number(pts[pts.length - 1].gross_monthly_usd || latestUsd);
+        }
+      }
+      if (latestUsd === null && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(rawSlug)) {
+        const { data } = await getRepoReportThreeLayer(rawSlug, 30, env, ctx, false).catch(() => ({
+          data: null
+        }));
+        if (data) {
+          latestUsd = Number(data.grossMonthlyUsd || 0);
+          oldestUsd = latestUsd;
+        }
+      }
+      if (latestUsd !== null) {
+        let trendSuffix = "";
+        if (oldestUsd && oldestUsd > 0 && Math.abs(latestUsd - oldestUsd) >= 0.5) {
+          const pct = ((latestUsd - oldestUsd) / oldestUsd) * 100.0;
+          trendSuffix = ` (${pct >= 0 ? "+" : ""}${pct.toFixed(0)}% 30d)`;
+          if (pct > 15) badgeColor = "#f59e0b";
+        }
+        badgeVal = `$${latestUsd.toFixed(2)}/mo${trendSuffix}`;
+      }
+
+      return new Response(renderFinOpsBadgeSvg("MiniCI", badgeVal, badgeColor), {
+        headers: {
+          "content-type": "image/svg+xml; charset=utf-8",
+          "cache-control": "public, max-age=300, s-maxage=600",
+          ...CORS_HEADERS
+        }
+      });
+    }
+
+    // 5. Authenticated MiniCI Cloud Endpoints (`/v1/cloud/*` — Starter $1 / Pro $10 / Custom Team Flex)
+    if (url.pathname.startsWith("/v1/cloud/")) {
+      const rawKey = extractBearerKey(request);
+      const ent = await resolveCloudEntitlement(rawKey, env);
+      if (!ent) {
+        return new Response(
+          JSON.stringify({
+            error: "cloud_key_required_or_invalid",
+            message:
+              "Local CLI, MCP & GitHub Action remain 100% Free ($0). To use hosted Cloud Sync, `minici share`, or Friday Slack digests, get a $1 Starter or $10 Pro key at https://polar.sh/minici and run `minici login <KEY>`."
+          }),
+          {
+            status: 401,
+            headers: { "content-type": "application/json; charset=utf-8", ...CORS_HEADERS }
+          }
+        );
+      }
+
+      // 5a. `GET /v1/cloud/me` — Verify key & return entitlement + custom enterprise rate overrides
+      if (url.pathname === "/v1/cloud/me" && request.method === "GET") {
+        let customRates = {};
+        try {
+          customRates = JSON.parse(ent.custom_rates_json || "{}");
+        } catch {}
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            plan: ent.plan,
+            status: ent.status,
+            max_repos: ent.max_repos,
+            retention_days: ent.retention_days,
+            max_pr_delta_monthly_usd: Number(ent.max_pr_delta_monthly_usd || 0),
+            require_timeout_minutes: Boolean(ent.require_timeout_minutes),
+            custom_rates: customRates
+          }),
+          { headers: { "content-type": "application/json; charset=utf-8", ...CORS_HEADERS } }
+        );
+      }
+
+      // 5b. `POST /v1/cloud/share` — Create unlisted permalink FinOps report (`Starter $1+`)
+      if (url.pathname === "/v1/cloud/share" && request.method === "POST") {
+        const rawShareText = await request.text();
+        if (rawShareText.length > 524288) {
+          return new Response(
+            JSON.stringify({ error: "payload_too_large", max_bytes: 524288 }),
+            { status: 413, headers: { "content-type": "application/json; charset=utf-8", ...CORS_HEADERS } }
+          );
+        }
+        let body = {};
+        try {
+          body = JSON.parse(rawShareText || "{}");
+        } catch {
+          return new Response(JSON.stringify({ error: "invalid_json" }), { status: 400 });
+        }
+        const nowSec = Math.floor(Date.now() / 1000);
+        const ttlSec = Math.max(1, Number(ent.retention_days || 30)) * 86400;
+        const expiresAt = nowSec + ttlSec;
+        const seedHash = await sha256Hex(
+          `${ent.key_sha256}:${nowSec}:${Math.random()}:${String(body.repo || "")}`
+        );
+        const shareId = seedHash.slice(0, 14);
+        const repo = String(body.repo || "local-repo").slice(0, 140);
+        const provider = String(body.provider || "github-actions").slice(0, 40);
+        const grossUsd = Number(body.gross_monthly_usd || 0);
+        const netUsd = Number(body.net_monthly_usd || 0);
+        const waitUsd = Number(body.dev_wait_monthly_usd || 0);
+        const reportJson =
+          typeof body.report_json === "string"
+            ? body.report_json
+            : JSON.stringify(body.report_json || {});
+        const reportHtml = String(body.report_html || "<p>MiniCI Shared Report</p>");
+
+        const record = {
+          share_id: shareId,
+          key_sha256: ent.key_sha256,
+          repo,
+          provider,
+          gross_monthly_usd: grossUsd,
+          net_monthly_usd: netUsd,
+          dev_wait_monthly_usd: waitUsd,
+          report_json: reportJson,
+          report_html: reportHtml,
+          created_at: nowSec,
+          expires_at: expiresAt
+        };
+        EDGE_MEM_SHARES.set(shareId, record);
+        if (env && env.MINICI_KV) {
+          await env.MINICI_KV.put(`share:${shareId}`, JSON.stringify(record), {
+            expirationTtl: ttlSec
+          }).catch(() => {});
+        }
+        if (env && env.MINICI_D1) {
+          await ensureCloudTablesIfD1(env);
+          await env.MINICI_D1.prepare(
+            `INSERT OR REPLACE INTO shared_reports (
+               share_id, key_sha256, repo, provider, gross_monthly_usd,
+               net_monthly_usd, dev_wait_monthly_usd, report_json, report_html,
+               created_at, expires_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
+          )
+            .bind(
+              shareId,
+              ent.key_sha256,
+              repo,
+              provider,
+              grossUsd,
+              netUsd,
+              waitUsd,
+              reportJson,
+              reportHtml,
+              nowSec,
+              expiresAt
+            )
+            .run()
+            .catch(() => {});
+        }
+
+        const baseOrigin = `${url.protocol}//${url.host}`;
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            share_id: shareId,
+            plan: ent.plan,
+            retention_days: ent.retention_days,
+            share_url: `${baseOrigin}/r/${shareId}`,
+            json_url: `${baseOrigin}/r/${shareId}.json`,
+            badge_url: `${baseOrigin}/v1/badge/${repo}.svg`
+          }),
+          { headers: { "content-type": "application/json; charset=utf-8", ...CORS_HEADERS } }
+        );
+      }
+
+      // 5c. `POST /v1/cloud/ingest` — Cross-run ledger sync (`Starter $1+`) + Real-Time Anomaly Alert (`Pro $10+`)
+      if (url.pathname === "/v1/cloud/ingest" && request.method === "POST") {
+        let body = {};
+        try {
+          body = JSON.parse((await request.text()) || "{}");
+        } catch {
+          return new Response(JSON.stringify({ error: "invalid_json" }), { status: 400 });
+        }
+        const repo = String(body.repo || "local-repo").slice(0, 140);
+        const nowSec = Math.floor(Date.now() / 1000);
+
+        // Enforce distinct repo cap (`3` Starter, `15` Pro, `9999` Custom)
+        if (env && env.MINICI_D1) {
+          await ensureCloudTablesIfD1(env);
+          const existingRepos = await env.MINICI_D1.prepare(
+            "SELECT DISTINCT repo FROM cloud_run_ledger WHERE key_sha256 = ?1"
+          )
+            .bind(ent.key_sha256)
+            .all()
+            .catch(() => ({ results: [] }));
+          const knownSet = new Set(((existingRepos && existingRepos.results) || []).map((r) => r.repo));
+          if (!knownSet.has(repo) && knownSet.size >= Number(ent.max_repos || 3)) {
+            return new Response(
+              JSON.stringify({
+                error: "repo_limit_reached",
+                plan: ent.plan,
+                max_repos: ent.max_repos,
+                message: `Your ${ent.plan} plan includes up to ${ent.max_repos} synced repositories. Upgrade at https://polar.sh/minici/portal.`
+              }),
+              {
+                status: 403,
+                headers: { "content-type": "application/json; charset=utf-8", ...CORS_HEADERS }
+              }
+            );
+          }
+        }
+
+        const entry = {
+          repo,
+          provider: String(body.provider || "github-actions"),
+          branch: String(body.branch || "main"),
+          commit_sha: String(body.commit_sha || "").slice(0, 40),
+          expanded_jobs: Number(body.expanded_jobs || 0),
+          billed_mins_per_run: Number(body.billed_mins_per_run || 0),
+          gross_monthly_usd: Number(body.gross_monthly_usd || 0),
+          net_billed_monthly_usd: Number(body.net_billed_monthly_usd || 0),
+          dev_wait_monthly_usd: Number(body.dev_wait_monthly_usd || 0),
+          cost_per_pr_usd: Number(body.cost_per_pr_usd || 0),
+          spend_anomaly_active: Boolean(body.spend_anomaly_active),
+          recorded_at: nowSec
+        };
+
+        const memArr = EDGE_MEM_LEDGER.get(repo) || [];
+        memArr.push(entry);
+        if (memArr.length > 60) memArr.shift();
+        EDGE_MEM_LEDGER.set(repo, memArr);
+
+        if (env && env.MINICI_D1) {
+          await env.MINICI_D1.prepare(
+            `INSERT INTO cloud_run_ledger (
+               key_sha256, repo, provider, branch, commit_sha, expanded_jobs,
+               billed_mins_per_run, gross_monthly_usd, net_billed_monthly_usd,
+               dev_wait_monthly_usd, cost_per_pr_usd, spend_anomaly_active, recorded_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`
+          )
+            .bind(
+              ent.key_sha256,
+              entry.repo,
+              entry.provider,
+              entry.branch,
+              entry.commit_sha,
+              entry.expanded_jobs,
+              entry.billed_mins_per_run,
+              entry.gross_monthly_usd,
+              entry.net_billed_monthly_usd,
+              entry.dev_wait_monthly_usd,
+              entry.cost_per_pr_usd,
+              entry.spend_anomaly_active ? 1 : 0,
+              nowSec
+            )
+            .run()
+            .catch(() => {});
+        }
+
+        // Pro ($10+) & Custom: Real-time Slack alert when 7d spend velocity anomaly triggers
+        let alertDispatched = false;
+        if (
+          (ent.plan === "pro" || ent.plan === "custom") &&
+          entry.spend_anomaly_active &&
+          ent.slack_webhook_url
+        ) {
+          const alertMsg = {
+            text: `MiniCI Spend Anomaly Alert on ${repo}: $${entry.gross_monthly_usd.toFixed(2)}/mo run-rate`,
+            blocks: [
+              {
+                type: "header",
+                text: {
+                  type: "plain_text",
+                  text: `MiniCI — Spend Velocity Spike (${repo})`.slice(0, 145)
+                }
+              },
+              {
+                type: "section",
+                fields: [
+                  { type: "mrkdwn", text: `*Gross Run-Rate:*\n\`$${entry.gross_monthly_usd.toFixed(2)}/mo\`` },
+                  { type: "mrkdwn", text: `*Net Billed:*\n\`$${entry.net_billed_monthly_usd.toFixed(2)}/mo\`` },
+                  { type: "mrkdwn", text: `*Branch / Commit:*\n\`${entry.branch}\` (\`${entry.commit_sha.slice(0, 7) || "HEAD"}\`)` },
+                  { type: "mrkdwn", text: `*Cost / PR:*\n\`$${entry.cost_per_pr_usd.toFixed(2)}\`` }
+                ]
+              }
+            ]
+          };
+          const sr = await fetch(ent.slack_webhook_url, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(alertMsg)
+          }).catch(() => null);
+          alertDispatched = Boolean(sr && sr.ok);
+        }
+
+        // Custom (Team Flex): Evaluate central org PR budget gate policy
+        const maxDelta = Number(ent.max_pr_delta_monthly_usd || 0);
+        const prDelta = Number(body.pr_delta_monthly_usd || 0);
+        const policyExceeded = ent.plan === "custom" && maxDelta > 0 && prDelta > maxDelta;
+
+        const baseOrigin = `${url.protocol}//${url.host}`;
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            plan: ent.plan,
+            repo,
+            badge_url: `${baseOrigin}/v1/badge/${repo}.svg`,
+            trends_url: `${baseOrigin}/v1/cloud/trends/${repo}`,
+            anomaly_alert_dispatched: alertDispatched,
+            policy_gate: {
+              enforced: ent.plan === "custom" && maxDelta > 0,
+              max_pr_delta_monthly_usd: maxDelta,
+              observed_pr_delta_monthly_usd: prDelta,
+              exceeded: policyExceeded
+            }
+          }),
+          { headers: { "content-type": "application/json; charset=utf-8", ...CORS_HEADERS } }
+        );
+      }
+
+      // 5d. `GET /v1/cloud/trends/:owner/:repo` — 30d/365d Cross-Run Ledger (`Starter $1+`)
+      if (url.pathname.startsWith("/v1/cloud/trends/") && request.method === "GET") {
+        const repoSlug = url.pathname.slice("/v1/cloud/trends/".length).replace(/^\/+|\/+$/g, "");
+        let points = EDGE_MEM_LEDGER.get(repoSlug) || [];
+        if (env && env.MINICI_D1) {
+          const cutoff = Math.floor(Date.now() / 1000) - Number(ent.retention_days || 30) * 86400;
+          const res = await env.MINICI_D1.prepare(
+            "SELECT branch, commit_sha, expanded_jobs, billed_mins_per_run, gross_monthly_usd, net_billed_monthly_usd, dev_wait_monthly_usd, cost_per_pr_usd, recorded_at FROM cloud_run_ledger WHERE key_sha256 = ?1 AND repo = ?2 AND recorded_at >= ?3 ORDER BY recorded_at ASC LIMIT 365"
+          )
+            .bind(ent.key_sha256, repoSlug, cutoff)
+            .all()
+            .catch(() => null);
+          if (res && Array.isArray(res.results) && res.results.length > 0) {
+            points = res.results;
+          }
+        }
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            repo: repoSlug,
+            plan: ent.plan,
+            retention_days: ent.retention_days,
+            points_count: points.length,
+            points
+          }),
+          { headers: { "content-type": "application/json; charset=utf-8", ...CORS_HEADERS } }
+        );
+      }
+
+      // 5e. `GET /v1/cloud/dashboard` — Multi-Repo Team Dashboard (`Pro $10+` & `Custom`)
+      if (url.pathname === "/v1/cloud/dashboard" && request.method === "GET") {
+        if (ent.plan === "starter") {
+          return new Response(
+            JSON.stringify({
+              error: "pro_plan_required",
+              message: "Multi-repo team dashboard requires MiniCI Pro ($10/mo) or Team Flex."
+            }),
+            {
+              status: 403,
+              headers: { "content-type": "application/json; charset=utf-8", ...CORS_HEADERS }
+            }
+          );
+        }
+        let repos = [];
+        if (env && env.MINICI_D1) {
+          const res = await env.MINICI_D1.prepare(
+            `SELECT repo, provider,
+                    MAX(recorded_at) AS last_synced_at,
+                    AVG(gross_monthly_usd) AS avg_gross_monthly_usd,
+                    AVG(net_billed_monthly_usd) AS avg_net_monthly_usd,
+                    AVG(cost_per_pr_usd) AS avg_cost_per_pr_usd
+               FROM cloud_run_ledger
+              WHERE key_sha256 = ?1
+              GROUP BY repo, provider
+              ORDER BY avg_gross_monthly_usd DESC`
+          )
+            .bind(ent.key_sha256)
+            .all()
+            .catch(() => null);
+          repos = (res && res.results) || [];
+        } else {
+          for (const [rName, pts] of EDGE_MEM_LEDGER.entries()) {
+            if (pts.length > 0) {
+              const last = pts[pts.length - 1];
+              repos.push({
+                repo: rName,
+                provider: last.provider,
+                last_synced_at: last.recorded_at,
+                avg_gross_monthly_usd: last.gross_monthly_usd,
+                avg_net_monthly_usd: last.net_billed_monthly_usd,
+                avg_cost_per_pr_usd: last.cost_per_pr_usd
+              });
+            }
+          }
+        }
+        return new Response(
+          JSON.stringify({ ok: true, plan: ent.plan, repos_count: repos.length, repos }),
+          { headers: { "content-type": "application/json; charset=utf-8", ...CORS_HEADERS } }
+        );
+      }
+
+      // 5f. `GET/POST /v1/cloud/policy` — Org Governance & Custom Enterprise Rates (`Pro $10+` Slack hook / `Custom` Policy)
+      if (url.pathname === "/v1/cloud/policy") {
+        if (request.method === "GET") {
+          let customRates = {};
+          try {
+            customRates = JSON.parse(ent.custom_rates_json || "{}");
+          } catch {}
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              plan: ent.plan,
+              slack_webhook_configured: Boolean(ent.slack_webhook_url),
+              max_pr_delta_monthly_usd: Number(ent.max_pr_delta_monthly_usd || 0),
+              require_timeout_minutes: Boolean(ent.require_timeout_minutes),
+              custom_rates: customRates
+            }),
+            { headers: { "content-type": "application/json; charset=utf-8", ...CORS_HEADERS } }
+          );
+        }
+        if (request.method === "POST") {
+          if (ent.plan === "starter") {
+            return new Response(
+              JSON.stringify({
+                error: "pro_or_custom_required",
+                message: "Slack digest webhooks require Pro ($10/mo); central org policies require Team Flex (Custom)."
+              }),
+              {
+                status: 403,
+                headers: { "content-type": "application/json; charset=utf-8", ...CORS_HEADERS }
+              }
+            );
+          }
+          let body = {};
+          try {
+            body = JSON.parse((await request.text()) || "{}");
+          } catch {
+            return new Response(JSON.stringify({ error: "invalid_json" }), { status: 400 });
+          }
+          const updated = { ...ent, updated_at: Math.floor(Date.now() / 1000) };
+          if (typeof body.slack_webhook_url === "string") {
+            updated.slack_webhook_url = body.slack_webhook_url.trim();
+          }
+          if (ent.plan === "custom") {
+            if (body.max_pr_delta_monthly_usd !== undefined) {
+              updated.max_pr_delta_monthly_usd = Math.max(0, Number(body.max_pr_delta_monthly_usd || 0));
+            }
+            if (body.require_timeout_minutes !== undefined) {
+              updated.require_timeout_minutes = body.require_timeout_minutes ? 1 : 0;
+            }
+            if (body.custom_rates && typeof body.custom_rates === "object") {
+              updated.custom_rates_json = JSON.stringify(body.custom_rates);
+            }
+          }
+          await persistEntitlement(updated, env);
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              plan: updated.plan,
+              slack_webhook_configured: Boolean(updated.slack_webhook_url),
+              max_pr_delta_monthly_usd: updated.max_pr_delta_monthly_usd,
+              require_timeout_minutes: Boolean(updated.require_timeout_minutes)
+            }),
+            { headers: { "content-type": "application/json; charset=utf-8", ...CORS_HEADERS } }
+          );
+        }
+      }
     }
 
     return env.ASSETS.fetch(request);

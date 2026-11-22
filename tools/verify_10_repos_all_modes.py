@@ -850,7 +850,7 @@ def main():
     md_path = Path(args.markdown_baseline)
     locked_deterministic = {
         "schema_version": "1.6.0",
-        "minici_version": "0.9.0",
+        "minici_version": "0.9.1",
         "repos": {r["repo"]: extract_locked_kpi(r) for r in results},
         "fresh_10_repos": {r["repo"]: extract_locked_kpi(r) for r in fresh_results},
         "edge_case_repos": {

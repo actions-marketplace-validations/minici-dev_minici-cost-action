@@ -69,6 +69,9 @@ pub trait CiProvider {
     fn is_non_allowance_larger_runner(&self, job: &ExpandedJobCost) -> bool;
     fn is_third_party_or_self_hosted(&self, job: &ExpandedJobCost) -> bool;
     fn os_pool_multiplier(&self, os: &str) -> f64;
+    fn job_pool_multiplier(&self, job: &ExpandedJobCost) -> f64 {
+        self.os_pool_multiplier(&job.os)
+    }
     fn plan_pool_minutes(&self, tier_mode: &str) -> f64;
     fn plan_included_storage_gb(&self, tier_mode: &str) -> f64;
     fn concurrency_caps(&self) -> (usize, usize);
@@ -80,12 +83,20 @@ pub trait CiProvider {
         tier_mode: &str,
         visibility: RepoVisibility,
     ) -> ProviderInvoiceReceipt {
-        let gross_per_run: f64 = jobs.iter().map(|j| j.run_compute_cost_usd).sum();
-        let gross_monthly = ((gross_per_run * monthly_runs) * 100.0).round() / 100.0;
+        let mut gross_monthly_raw = 0.0_f64;
+        let mut any_positive_runs = false;
+        for j in jobs {
+            let jr = j.monthly_runs_for_job.unwrap_or(monthly_runs).max(0.0);
+            if jr > 0.0 {
+                any_positive_runs = true;
+            }
+            gross_monthly_raw += j.run_compute_cost_usd * jr;
+        }
+        let mut gross_monthly = (gross_monthly_raw * 100.0).round() / 100.0;
         let pool_limit = self.plan_pool_minutes(tier_mode);
         let storage_gb = self.plan_included_storage_gb(tier_mode);
 
-        if jobs.is_empty() || monthly_runs <= 0.0 {
+        if jobs.is_empty() || !any_positive_runs {
             return ProviderInvoiceReceipt {
                 provider_id: self.provider_id(),
                 free_tier_included_mins: pool_limit,
@@ -97,6 +108,8 @@ pub trait CiProvider {
                 effective_tier: match tier_mode {
                     "free" => "free".to_string(),
                     "paid" => "paid".to_string(),
+                    "pro" | "team" | "enterprise" | "premium" | "ultimate" | "standard"
+                    | "performance" => format!("{} (within included quota)", tier_mode),
                     _ => "free (within included quota)".to_string(),
                 },
                 gross_monthly_compute_cost_usd: 0.0,
@@ -108,29 +121,44 @@ pub trait CiProvider {
         }
 
         let mut hosted_std_mins_per_run = 0.0_f64;
-        let mut os_weighted_per_run = 0.0_f64;
+        let mut os_weighted_per_run_raw = 0.0_f64;
+        let mut os_weighted_monthly_raw = 0.0_f64;
         let mut third_party_self_mo = 0.0_f64;
         let mut larger_non_allow_mo = 0.0_f64;
-        // Collect allowance-eligible jobs `(monthly_billed_mins, os_mult, sticker_rate_per_min)`
-        let mut eligible_buckets: Vec<(f64, f64, f64)> = Vec::new();
+        // Collect allowance-eligible jobs `(monthly_pool_units_pre_gl, monthly_gross_usd_pre_gl)`
+        let mut eligible_buckets: Vec<(f64, f64)> = Vec::new();
 
         for j in jobs {
-            let job_mo_usd = j.run_compute_cost_usd * monthly_runs;
-            let job_mo_mins = j.total_billed_mins_all_matrix * monthly_runs;
+            let job_runs = j.monthly_runs_for_job.unwrap_or(monthly_runs).max(0.0);
+            let job_mo_usd = j.run_compute_cost_usd * job_runs;
+            let _job_mo_mins = j.total_billed_mins_all_matrix * job_runs;
             if self.is_third_party_or_self_hosted(j) {
                 third_party_self_mo += job_mo_usd;
             } else if self.is_non_allowance_larger_runner(j) {
                 larger_non_allow_mo += job_mo_usd;
             } else {
-                let mult = self.os_pool_multiplier(&j.os);
+                let mult = self.job_pool_multiplier(j);
                 hosted_std_mins_per_run += j.total_billed_mins_all_matrix;
-                os_weighted_per_run += j.total_billed_mins_all_matrix * mult;
-                eligible_buckets.push((job_mo_mins, mult, j.rate_per_min_usd));
+                let flat_fee_per_run =
+                    (j.run_compute_cost_usd - j.total_billed_mins_all_matrix * j.rate_per_min_usd)
+                        .max(0.0);
+                // On CircleCI, flat per-job fees like 200-credit ($0.12) DLC draw from the credit pool ($0.006 / pool-min)
+                let flat_pool_per_run = if self.provider_id() == "circleci" && flat_fee_per_run > 0.0 {
+                    flat_fee_per_run / 0.006
+                } else {
+                    0.0
+                };
+                let pool_per_run = j.total_billed_mins_all_matrix * mult + flat_pool_per_run;
+                os_weighted_per_run_raw += pool_per_run;
+                os_weighted_monthly_raw += pool_per_run * job_runs;
+                eligible_buckets.push((pool_per_run * job_runs, job_mo_usd));
             }
         }
 
-        // Public repository exemption for GitHub standard hosted runners ($0.00 unlimited!)
-        if visibility == RepoVisibility::Public && self.provider_id() == "github-actions" {
+        // Public repository exemption for GitHub standard hosted runners & Azure MS-hosted jobs ($0.00 unlimited!)
+        if visibility == RepoVisibility::Public
+            && (self.provider_id() == "github-actions" || self.provider_id() == "azure-pipelines")
+        {
             let net_public =
                 ((third_party_self_mo + larger_non_allow_mo) * 100.0).round() / 100.0;
             let discount = ((gross_monthly - net_public).max(0.0) * 100.0).round() / 100.0;
@@ -166,8 +194,10 @@ pub trait CiProvider {
         } else {
             1.0
         };
-        let os_weighted_per_run = ((os_weighted_per_run * gl_cost_factor) * 100.0).round() / 100.0;
-        let monthly_os_weighted_pool = ((os_weighted_per_run * monthly_runs) * 100.0).round() / 100.0;
+        let os_weighted_per_run =
+            ((os_weighted_per_run_raw * gl_cost_factor) * 100.0).round() / 100.0;
+        let monthly_os_weighted_pool =
+            ((os_weighted_monthly_raw * gl_cost_factor) * 100.0).round() / 100.0;
 
         let burn_pct = if pool_limit > 0.0 && !pool_limit.is_infinite() {
             ((monthly_os_weighted_pool / pool_limit) * 100.0 * 10.0).round() / 10.0
@@ -175,11 +205,19 @@ pub trait CiProvider {
             0.0
         };
 
+        let within_quota = monthly_os_weighted_pool <= pool_limit && larger_non_allow_mo <= 0.0;
         let effective_tier = match tier_mode {
             "free" => "free".to_string(),
             "paid" => "paid".to_string(),
+            "pro" | "team" | "enterprise" | "premium" | "ultimate" | "standard" | "performance" => {
+                if within_quota {
+                    format!("{} (within included quota)", tier_mode)
+                } else {
+                    format!("{} (exceeds included quota)", tier_mode)
+                }
+            }
             _ => {
-                if monthly_os_weighted_pool <= pool_limit && larger_non_allow_mo <= 0.0 {
+                if within_quota {
                     "free (within included quota)".to_string()
                 } else {
                     "paid (exceeds free quota)".to_string()
@@ -187,25 +225,44 @@ pub trait CiProvider {
             }
         };
 
-        let mut remaining_pool = if tier_mode == "paid" {
-            0.0
-        } else {
-            pool_limit
-        };
+        let available_pool = if tier_mode == "paid" { 0.0 } else { pool_limit };
 
-        let mut overage_std_usd = 0.0_f64;
-        for (job_mins, mult, rate) in eligible_buckets {
-            let m = (mult * gl_cost_factor).max(0.0001);
-            let needed_pool = job_mins * m;
-            if remaining_pool >= needed_pool {
-                remaining_pool -= needed_pool;
+        // Order-invariant proportional pool deduction (or parallel-slot step billing on Azure Pipelines)
+        let overage_std_usd = if self.provider_id() == "azure-pipelines" {
+            if monthly_os_weighted_pool <= 0.0 {
+                0.0
+            } else if tier_mode != "paid" && monthly_os_weighted_pool <= available_pool {
+                0.0
             } else {
-                let covered_job_mins = remaining_pool / m;
-                remaining_pool = 0.0;
-                let billable_overage_mins = (job_mins - covered_job_mins).max(0.0);
-                overage_std_usd += billable_overage_mins * rate * gl_cost_factor;
+                let paid_slots = ((monthly_os_weighted_pool / 7500.0).ceil() as usize).max(1);
+                (paid_slots as f64) * 40.0
             }
-        }
+        } else {
+            let total_needed_pool: f64 = eligible_buckets
+                .iter()
+                .map(|(p, _)| *p * gl_cost_factor)
+                .sum();
+            let total_eligible_usd: f64 = eligible_buckets
+                .iter()
+                .map(|(_, u)| *u * gl_cost_factor)
+                .sum();
+            if total_needed_pool <= available_pool || total_needed_pool <= 0.0 {
+                let non_pool_fees: f64 = eligible_buckets
+                    .iter()
+                    .filter(|(p, u)| *p <= 0.0 && *u > 0.0)
+                    .map(|(_, u)| *u * gl_cost_factor)
+                    .sum();
+                if available_pool <= 0.0 {
+                    non_pool_fees
+                } else {
+                    0.0
+                }
+            } else {
+                let uncovered_ratio =
+                    ((total_needed_pool - available_pool) / total_needed_pool).clamp(0.0, 1.0);
+                total_eligible_usd * uncovered_ratio
+            }
+        };
 
         let net_billed = if tier_mode == "free" {
             // Explicit `--tier free` caps standard hosted overage at $0 (hard spending limit $0),
@@ -214,6 +271,9 @@ pub trait CiProvider {
         } else {
             ((overage_std_usd + third_party_self_mo + larger_non_allow_mo) * 100.0).round() / 100.0
         };
+        if net_billed > gross_monthly {
+            gross_monthly = net_billed;
+        }
         let discount = ((gross_monthly - net_billed).max(0.0) * 100.0).round() / 100.0;
 
         ProviderInvoiceReceipt {
@@ -248,6 +308,7 @@ pub fn is_third_party_microvm_job(j: &ExpandedJobCost) -> bool {
         || j.provider == "third-party-microvm"
         || rl.contains("blacksmith")
         || rl.contains("warpbuild")
+        || rl.starts_with("warp-")
         || rl.contains("buildjet")
         || rl.contains("depot")
         || rl.contains("namespace")
@@ -293,7 +354,9 @@ impl CiProvider for GitHubProvider {
         "github-actions"
     }
     fn round_job_minutes(&self, raw_mins: f64, ceil_flag: bool) -> f64 {
-        if ceil_flag {
+        if raw_mins <= 0.0 {
+            0.0
+        } else if ceil_flag {
             raw_mins.ceil().max(1.0)
         } else {
             raw_mins
@@ -354,7 +417,11 @@ impl CiProvider for GitLabProvider {
         "gitlab-ci"
     }
     fn round_job_minutes(&self, raw_mins: f64, _ceil_flag: bool) -> f64 {
-        raw_mins.max(0.02)
+        if raw_mins <= 0.0 {
+            0.0
+        } else {
+            raw_mins
+        }
     }
     fn is_non_allowance_larger_runner(&self, _job: &ExpandedJobCost) -> bool {
         false
@@ -368,6 +435,13 @@ impl CiProvider for GitLabProvider {
             plan.map(|p| p.os_mult_macos).unwrap_or(6.0)
         } else {
             plan.map(|p| p.os_mult_linux).unwrap_or(1.0)
+        }
+    }
+    fn job_pool_multiplier(&self, job: &ExpandedJobCost) -> f64 {
+        if job.rate_per_min_usd > 0.0 {
+            (job.rate_per_min_usd / 0.010).max(0.1)
+        } else {
+            self.os_pool_multiplier(&job.os)
         }
     }
     fn plan_pool_minutes(&self, tier_mode: &str) -> f64 {
@@ -400,7 +474,11 @@ impl CiProvider for CircleCIProvider {
         "circleci"
     }
     fn round_job_minutes(&self, raw_mins: f64, _ceil_flag: bool) -> f64 {
-        raw_mins.max(0.02)
+        if raw_mins <= 0.0 {
+            0.0
+        } else {
+            raw_mins
+        }
     }
     fn is_non_allowance_larger_runner(&self, _job: &ExpandedJobCost) -> bool {
         false
@@ -418,9 +496,20 @@ impl CiProvider for CircleCIProvider {
             1.0
         }
     }
-    fn plan_pool_minutes(&self, _tier_mode: &str) -> f64 {
-        // 30,000 free credits / 10 credits per docker-medium minute = 3,000 Linux-equiv minutes
-        3000.0
+    fn job_pool_multiplier(&self, job: &ExpandedJobCost) -> f64 {
+        if job.rate_per_min_usd > 0.0 {
+            (job.rate_per_min_usd / 0.006).max(0.1)
+        } else {
+            self.os_pool_multiplier(&job.os)
+        }
+    }
+    fn plan_pool_minutes(&self, tier_mode: &str) -> f64 {
+        if tier_mode == "scale" {
+            0.0
+        } else {
+            // 30,000 free/Performance credits / 10 credits per docker-medium minute = 3,000 Linux-equiv minutes
+            3000.0
+        }
     }
     fn plan_included_storage_gb(&self, _tier_mode: &str) -> f64 {
         0.0
@@ -435,7 +524,11 @@ impl CiProvider for BitbucketProvider {
         "bitbucket"
     }
     fn round_job_minutes(&self, raw_mins: f64, _ceil_flag: bool) -> f64 {
-        raw_mins.ceil().max(1.0)
+        if raw_mins <= 0.0 {
+            0.0
+        } else {
+            raw_mins.ceil().max(1.0)
+        }
     }
     fn is_non_allowance_larger_runner(&self, _job: &ExpandedJobCost) -> bool {
         false
@@ -445,6 +538,13 @@ impl CiProvider for BitbucketProvider {
     }
     fn os_pool_multiplier(&self, _os: &str) -> f64 {
         1.0
+    }
+    fn job_pool_multiplier(&self, job: &ExpandedJobCost) -> f64 {
+        if job.rate_per_min_usd > 0.0 {
+            (job.rate_per_min_usd / 0.010).max(1.0)
+        } else {
+            1.0
+        }
     }
     fn plan_pool_minutes(&self, tier_mode: &str) -> f64 {
         let pname = match tier_mode {
@@ -476,14 +576,30 @@ impl CiProvider for CloudBuildProvider {
         self.id
     }
     fn round_job_minutes(&self, raw_mins: f64, ceil_flag: bool) -> f64 {
-        if ceil_flag {
+        if raw_mins <= 0.0 {
+            0.0
+        } else if self.id == "azure-pipelines" || ceil_flag {
             raw_mins.ceil().max(1.0)
         } else {
-            raw_mins.max(0.1)
+            raw_mins
         }
     }
-    fn is_non_allowance_larger_runner(&self, _job: &ExpandedJobCost) -> bool {
-        false
+    fn is_non_allowance_larger_runner(&self, job: &ExpandedJobCost) -> bool {
+        let rl = job.runner_label.to_ascii_lowercase();
+        match self.id {
+            "gcp-cloud-build" => {
+                // Google Cloud Build grants 2,500 free mins strictly on default-pool e2-standard-2 (<=2 vCPUs)
+                job.vcpus > 2
+                    || rl.contains("highcpu")
+                    || rl.contains("private")
+                    || rl.contains("gpu")
+            }
+            "aws-codebuild" => {
+                // AWS CodeBuild grants 100 free mins on general1.small / arm1.small (2 vCPUs) or 6,000s on lambda.1GB
+                job.vcpus > 2 || (rl.contains("lambda") && job.rate_per_min_usd > 0.0010)
+            }
+            _ => false,
+        }
     }
     fn is_third_party_or_self_hosted(&self, job: &ExpandedJobCost) -> bool {
         is_self_hosted_job(job) || is_third_party_microvm_job(job)
@@ -561,29 +677,488 @@ pub fn cloud_prices_cache_path() -> PathBuf {
 }
 
 fn discover_upstream_cloud_api_key() -> Option<String> {
-    if let Ok(k) = env::var("MINICI_CLOUD_PRICING_API_KEY").or_else(|_| env::var("INFRACOST_API_KEY")) {
-        let trimmed = k.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
+    let mut saw_explicit_empty = false;
+    for var in ["MINICI_CLOUD_PRICING_API_KEY", "INFRACOST_API_KEY"] {
+        if let Ok(k) = env::var(var) {
+            let trimmed = k.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+            saw_explicit_empty = true;
         }
     }
+    if saw_explicit_empty {
+        return None;
+    }
     if let Ok(home) = env::var("HOME").or_else(|_| env::var("USERPROFILE")) {
-        let cred_path = Path::new(&home)
-            .join(".config")
-            .join("infracost")
-            .join("credentials.yml");
-        if let Ok(raw) = fs::read_to_string(cred_path) {
-            for line in raw.lines() {
-                if let Some(rest) = line.trim().strip_prefix("api_key:") {
-                    let key = rest.trim().trim_matches('"').trim_matches('\'');
-                    if !key.is_empty() {
-                        return Some(key.to_string());
+        let h = Path::new(&home);
+        for cred_path in [
+            h.join(".config").join("infracost").join("credentials.yml"),
+            h.join("Library")
+                .join("Application Support")
+                .join("infracost")
+                .join("credentials.yml"),
+        ] {
+            if let Ok(raw) = fs::read_to_string(cred_path) {
+                for line in raw.lines() {
+                    if let Some(rest) = line.trim().strip_prefix("api_key:") {
+                        let key = rest.trim().trim_matches('"').trim_matches('\'');
+                        if !key.is_empty() {
+                            if crate::permissions::check_or_prompt_provider_consent(
+                                "cloud-iac",
+                                "local cloud IaC credentials.yml",
+                                "live cloud VM pricing",
+                            ) {
+                                return Some(key.to_string());
+                            }
+                            return None;
+                        }
                     }
                 }
             }
         }
+        if let Some(secret_key) = crate::permissions::read_env_kv_from_file(
+            &h.join(".minici").join("test-secrets.env"),
+            &["MINICI_CLOUD_PRICING_API_KEY", "INFRACOST_API_KEY"],
+        ) {
+            if crate::permissions::check_or_prompt_provider_consent(
+                "cloud-iac",
+                "~/.minici/test-secrets.env",
+                "live cloud VM pricing",
+            ) {
+                return Some(secret_key);
+            }
+        }
     }
     None
+}
+
+fn discover_iac_scanner_bin() -> Option<(PathBuf, bool)> {
+    if let Ok(custom) = env::var("MINICI_IAC_SCANNER_BIN") {
+        let t = custom.trim();
+        if !t.is_empty() {
+            let p = PathBuf::from(t);
+            if p.exists() {
+                return Some((p, true));
+            }
+        }
+        return None;
+    }
+    for candidate in ["/opt/homebrew/bin/infracost", "/usr/local/bin/infracost"] {
+        let p = PathBuf::from(candidate);
+        if p.is_file() {
+            return Some((p, false));
+        }
+    }
+    if let Ok(path_var) = env::var("PATH") {
+        for dir in env::split_paths(&path_var) {
+            let p = dir.join("infracost");
+            if p.is_file() {
+                return Some((p, false));
+            }
+        }
+    }
+    None
+}
+
+/// Detects major CLI generation (`1` for legacy `v0.x` / `v1.x` `breakdown --format json`,
+/// `2` for `v2.x+` OAuth `scan --json`).
+pub fn detect_iac_scanner_major_version(bin: &Path) -> u32 {
+    if let Ok(out) = Command::new(bin).arg("--version").output() {
+        let combined = format!(
+            "{} {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+        .to_ascii_lowercase();
+        if combined.contains("v0.")
+            || combined.contains(" 0.")
+            || combined.contains("v1.")
+            || combined.contains(" 1.")
+        {
+            return 1;
+        }
+    }
+    2
+}
+
+fn run_iac_scanner_json(bin: &Path, tf_dir: &Path) -> Option<String> {
+    let major = detect_iac_scanner_major_version(bin);
+    if major >= 2 {
+        if let Ok(out) = Command::new(bin)
+            .args(["scan", "--json", "--no-color"])
+            .arg(tf_dir)
+            .output()
+        {
+            let s = String::from_utf8_lossy(&out.stdout).to_string();
+            if s.contains("\"resources\"") {
+                return Some(s);
+            }
+        }
+        if let Ok(out) = Command::new(bin)
+            .arg("breakdown")
+            .arg("--path")
+            .arg(tf_dir)
+            .args(["--format", "json", "--no-color"])
+            .output()
+        {
+            let s = String::from_utf8_lossy(&out.stdout).to_string();
+            if s.contains("\"resources\"") {
+                return Some(s);
+            }
+        }
+    } else {
+        if let Ok(out) = Command::new(bin)
+            .arg("breakdown")
+            .arg("--path")
+            .arg(tf_dir)
+            .args(["--format", "json", "--no-color"])
+            .output()
+        {
+            let s = String::from_utf8_lossy(&out.stdout).to_string();
+            if s.contains("\"resources\"") {
+                return Some(s);
+            }
+        }
+        if let Ok(out) = Command::new(bin)
+            .args(["scan", "--json", "--no-color"])
+            .arg(tf_dir)
+            .output()
+        {
+            let s = String::from_utf8_lossy(&out.stdout).to_string();
+            if s.contains("\"resources\"") {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
+pub fn canonicalize_azure_vm_size(lower_inst: &str) -> String {
+    let parts: Vec<&str> = lower_inst.trim().split('_').collect();
+    if parts.len() >= 2 && parts[0].eq_ignore_ascii_case("standard") {
+        let mut out = Vec::with_capacity(parts.len());
+        out.push("Standard".to_string());
+        let fam = parts[1];
+        let mut fam_norm = String::with_capacity(fam.len());
+        let mut hit_digit = false;
+        for ch in fam.chars() {
+            if ch.is_ascii_digit() {
+                hit_digit = true;
+                fam_norm.push(ch);
+            } else if !hit_digit {
+                fam_norm.push(ch.to_ascii_uppercase());
+            } else {
+                fam_norm.push(ch.to_ascii_lowercase());
+            }
+        }
+        out.push(fam_norm);
+        for tail in &parts[2..] {
+            out.push(tail.to_ascii_lowercase());
+        }
+        return out.join("_");
+    }
+    lower_inst.trim().to_string()
+}
+
+fn normalize_region_for_vendor(vendor: &str, raw_region: &str) -> String {
+    let r = raw_region.trim().to_ascii_lowercase();
+    match vendor {
+        "gcp" => {
+            if r.is_empty() || r.starts_with("us-east-") || r.starts_with("eu-") || r.starts_with("ap-") || r == "eastus" {
+                "us-central1".to_string()
+            } else {
+                r
+            }
+        }
+        "azure" => {
+            if r.is_empty() || r.contains('-') {
+                "eastus".to_string()
+            } else {
+                r
+            }
+        }
+        _ => {
+            if r.is_empty() {
+                "us-east-1".to_string()
+            } else {
+                r
+            }
+        }
+    }
+}
+
+fn append_vm_hcl_resource(hcl: &mut String, vendor: &str, res_id: &str, lower_inst: &str, eff_reg: &str) {
+    match vendor {
+        "gcp" => {
+            hcl.push_str(&format!(
+                "resource \"google_compute_instance\" \"{}\" {{\n  name         = \"{}\"\n  machine_type = \"{}\"\n  zone         = \"{}-a\"\n\n  boot_disk {{\n    initialize_params {{\n      image = \"debian-cloud/debian-12\"\n    }}\n  }}\n\n  network_interface {{\n    network = \"default\"\n  }}\n}}\n\n",
+                res_id, res_id, lower_inst, eff_reg
+            ));
+        }
+        "azure" => {
+            let az_size = canonicalize_azure_vm_size(lower_inst);
+            hcl.push_str(&format!(
+                "resource \"azurerm_linux_virtual_machine\" \"{}\" {{\n  name                  = \"{}\"\n  resource_group_name   = \"ci-rg\"\n  location              = \"{}\"\n  size                  = \"{}\"\n  admin_username        = \"ci\"\n  network_interface_ids = [\"nic\"]\n\n  os_disk {{\n    caching              = \"ReadWrite\"\n    storage_account_type = \"Standard_LRS\"\n  }}\n}}\n\n",
+                res_id, res_id, eff_reg, az_size
+            ));
+        }
+        _ => {
+            hcl.push_str(&format!(
+                "resource \"aws_instance\" \"{}\" {{\n  ami           = \"ami-0c55b159cbfafe1f0\"\n  instance_type = \"{}\"\n}}\n\n",
+                res_id, lower_inst
+            ));
+        }
+    }
+}
+
+fn extract_bracketed_array_slice(s: &str) -> &str {
+    let open = match s.find('[') {
+        Some(o) => o,
+        None => return s,
+    };
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut esc = false;
+    for (idx, ch) in s[open..].char_indices() {
+        if in_str {
+            if esc {
+                esc = false;
+            } else if ch == '\\' {
+                esc = true;
+            } else if ch == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_str = true,
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &s[open..=open + idx];
+                }
+            }
+            _ => {}
+        }
+    }
+    &s[open..]
+}
+
+/// Parses both Infracost `v2.x` (`scan --json` -> `"cost_components"`) and `v0.10.x` / `v1.x`
+/// (`breakdown --format json` -> `"costComponents"`) outputs into `(resource_suffix_id, on_demand_hourly_usd)`
+/// pairs strictly from top-level VM `"unit": "hours"` compute components.
+pub fn parse_iac_scan_vm_hourly_prices(raw_stdout: &str) -> Vec<(String, f64)> {
+    let mut results = Vec::new();
+    let json_slice = match raw_stdout.find("\"resources\"") {
+        Some(idx) => &raw_stdout[idx..],
+        None => return results,
+    };
+    for prefix in [
+        "\"aws_instance.",
+        "\"google_compute_instance.",
+        "\"azurerm_linux_virtual_machine.",
+    ] {
+        let mut search_from = 0usize;
+        while let Some(rel_idx) = json_slice[search_from..].find(prefix) {
+            let start = search_from + rel_idx + prefix.len();
+            let rest = &json_slice[start..];
+            let end_q = match rest.find('"') {
+                Some(e) => e,
+                None => break,
+            };
+            let res_id = &rest[..end_q];
+            let after_name = &rest[end_q..];
+            let subres_bound = after_name.find("\"subresources\"").unwrap_or(after_name.len());
+            let before_subres = &after_name[..subres_bound];
+            let res_window = before_subres
+                .find("\"cost_components\"")
+                .or_else(|| before_subres.find("\"costComponents\""))
+                .map(|c_idx| extract_bracketed_array_slice(&before_subres[c_idx..]))
+                .unwrap_or(before_subres);
+            if let Some(u_idx) = res_window
+                .find("\"unit\": \"hours\"")
+                .or_else(|| res_window.find("\"unit\":\"hours\""))
+            {
+                let comp_tail = &res_window[u_idx..];
+                if let Some(p_idx) = comp_tail.find("\"price\":") {
+                    let after_p = comp_tail[p_idx + 8..].trim_start().trim_start_matches('"');
+                    let num_str: String = after_p
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit() || *c == '.')
+                        .collect();
+                    if let Ok(price_hr) = num_str.parse::<f64>() {
+                        if price_hr > 0.0 && price_hr < 500.0 && !results.iter().any(|(id, _)| id == res_id) {
+                            results.push((res_id.to_string(), (price_hr * 10000.0).round() / 10000.0));
+                        }
+                    }
+                }
+            }
+            search_from = start + end_q;
+        }
+    }
+    results
+}
+
+fn spot_ratio_for_instance(lower_inst: &str) -> f64 {
+    if let Some(seed) = lookup_infracost_cloud_spec(lower_inst) {
+        if seed.on_demand_per_min_usd > 0.0 {
+            return (seed.spot_per_min_usd / seed.on_demand_per_min_usd).clamp(0.15, 1.0);
+        }
+    }
+    if let Some(seed150) = crate::catalog::lookup_seeded_cloud_spec(lower_inst) {
+        if seed150.on_demand_per_min_usd > 0.0 {
+            return (seed150.spot_per_min_usd / seed150.on_demand_per_min_usd).clamp(0.15, 1.0);
+        }
+    }
+    0.33
+}
+
+fn query_cloud_vm_via_iac_cli(vendor: &str, lower_inst: &str, lower_reg: &str) -> Option<(f64, f64)> {
+    query_cloud_vm_via_iac_cli_with_bin(None, vendor, lower_inst, lower_reg)
+}
+
+fn query_cloud_vm_via_iac_cli_with_bin(
+    bin_override: Option<&Path>,
+    vendor: &str,
+    lower_inst: &str,
+    lower_reg: &str,
+) -> Option<(f64, f64)> {
+    let bin = match bin_override {
+        Some(b) => b.to_path_buf(),
+        None => {
+            let (discovered, explicit_bin) = discover_iac_scanner_bin()?;
+            if !explicit_bin
+                && !crate::permissions::check_or_prompt_provider_consent(
+                    "cloud-iac",
+                    "local cloud IaC CLI session",
+                    "live cloud VM pricing",
+                )
+            {
+                return None;
+            }
+            discovered
+        }
+    };
+    let eff_reg = normalize_region_for_vendor(vendor, lower_reg);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp_dir = env::temp_dir().join(format!("minici_iac_vm_{}_{}", std::process::id(), nanos));
+    fs::create_dir_all(&tmp_dir).ok()?;
+
+    let mut hcl = match vendor {
+        "gcp" => format!(
+            "provider \"google\" {{\n  project = \"ci-quote\"\n  region  = \"{}\"\n  zone    = \"{}-a\"\n}}\n\n",
+            eff_reg, eff_reg
+        ),
+        "azure" => "provider \"azurerm\" {\n  features {}\n}\n\n".to_string(),
+        _ => format!("provider \"aws\" {{\n  region = \"{}\"\n}}\n\n", eff_reg),
+    };
+    append_vm_hcl_resource(&mut hcl, vendor, "vm_target", lower_inst, &eff_reg);
+
+    let tf_path = tmp_dir.join("main.tf");
+    if fs::write(&tf_path, hcl).is_err() {
+        let _ = fs::remove_dir_all(&tmp_dir);
+        return None;
+    }
+
+    let stdout_opt = run_iac_scanner_json(&bin, &tmp_dir);
+    let _ = fs::remove_dir_all(&tmp_dir);
+
+    let stdout = stdout_opt?;
+    let parsed = parse_iac_scan_vm_hourly_prices(&stdout);
+    let (_, od_hr) = parsed.into_iter().find(|(id, _)| id == "vm_target")?;
+    let sp_hr = ((od_hr * spot_ratio_for_instance(lower_inst)) * 10000.0).round() / 10000.0;
+    Some((od_hr, sp_hr))
+}
+
+/// Batch-syncs all `INFRACOST_CLOUD_CATALOG` AWS, GCP, and Azure VMs in a single CLI invocation
+/// (`scan --json` on v2.x OAuth or `breakdown --format json` on v0.10/v1.x, ~5s total instead of 76 spawns).
+pub fn batch_sync_cloud_catalog_via_iac_cli() -> usize {
+    if discover_upstream_cloud_api_key().is_some() {
+        return 0;
+    }
+    let (bin, explicit_bin) = match discover_iac_scanner_bin() {
+        Some(pair) => pair,
+        None => return 0,
+    };
+    if !explicit_bin
+        && !crate::permissions::check_or_prompt_provider_consent(
+            "cloud-iac",
+            "local cloud IaC CLI session",
+            "batch cloud VM catalog sync",
+        )
+    {
+        return 0;
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp_dir = env::temp_dir().join(format!("minici_iac_batch_{}_{}", std::process::id(), nanos));
+    if fs::create_dir_all(&tmp_dir).is_err() {
+        return 0;
+    }
+
+    let mut hcl = String::from(
+        "provider \"aws\" {\n  region = \"us-east-1\"\n}\n\nprovider \"google\" {\n  project = \"ci-quote\"\n  region  = \"us-central1\"\n  zone    = \"us-central1-a\"\n}\n\nprovider \"azurerm\" {\n  features {}\n}\n\n",
+    );
+    for (idx, spec) in crate::catalog::INFRACOST_CLOUD_CATALOG.iter().enumerate() {
+        let vendor = if spec.provider.contains("gcp") {
+            "gcp"
+        } else if spec.provider.contains("azure") {
+            "azure"
+        } else {
+            "aws"
+        };
+        let eff_reg = normalize_region_for_vendor(vendor, "us-east-1");
+        let res_id = format!("vm_{}", idx);
+        append_vm_hcl_resource(&mut hcl, vendor, &res_id, spec.instance_type, &eff_reg);
+    }
+
+    if fs::write(tmp_dir.join("main.tf"), hcl).is_err() {
+        let _ = fs::remove_dir_all(&tmp_dir);
+        return 0;
+    }
+
+    let stdout_opt = run_iac_scanner_json(&bin, &tmp_dir);
+    let _ = fs::remove_dir_all(&tmp_dir);
+
+    let stdout = match stdout_opt {
+        Some(s) => s,
+        None => return 0,
+    };
+    let parsed = parse_iac_scan_vm_hourly_prices(&stdout);
+    let cache_path = cloud_prices_cache_path();
+    let mut synced = 0usize;
+    for (res_id, od_hr) in parsed {
+        if let Some(idx_str) = res_id.strip_prefix("vm_") {
+            if let Ok(idx) = idx_str.parse::<usize>() {
+                if let Some(spec) = crate::catalog::INFRACOST_CLOUD_CATALOG.get(idx) {
+                    let vendor = if spec.provider.contains("gcp") {
+                        "gcp"
+                    } else if spec.provider.contains("azure") {
+                        "azure"
+                    } else {
+                        "aws"
+                    };
+                    let eff_reg = normalize_region_for_vendor(vendor, "us-east-1");
+                    let cache_key = format!("{}@{}", spec.instance_type, eff_reg);
+                    let sp_hr = ((od_hr * spot_ratio_for_instance(spec.instance_type)) * 10000.0).round() / 10000.0;
+                    persist_cloud_price_entry(&cache_path, &cache_key, od_hr, sp_hr, spec.vcpus, spec.ram_gb);
+                    if eff_reg != "us-east-1" {
+                        let alias_key = format!("{}@us-east-1", spec.instance_type);
+                        persist_cloud_price_entry(&cache_path, &alias_key, od_hr, sp_hr, spec.vcpus, spec.ram_gb);
+                    }
+                    synced += 1;
+                }
+            }
+        }
+    }
+    synced
 }
 
 pub fn regional_cloud_multiplier(region: &str) -> f64 {
@@ -763,6 +1338,32 @@ pub fn resolve_cloud_instance_price(
                     }
                 }
             }
+        } else if let Some((usd_hr, spot_hr)) =
+            query_cloud_vm_via_iac_cli(detected_vendor, &lower_inst, &lower_reg)
+        {
+            let seed = lookup_infracost_cloud_spec(&lower_inst);
+            let vcpus = seed
+                .map(|s| s.vcpus)
+                .unwrap_or_else(|| resolve_runner_sku(&lower_inst).vcpus);
+            let ram_gb = seed
+                .map(|s| s.ram_gb)
+                .unwrap_or_else(|| resolve_runner_sku(&lower_inst).ram_gb);
+            let eff_reg = normalize_region_for_vendor(detected_vendor, &lower_reg);
+            let eff_key = format!("{}@{}", lower_inst, eff_reg);
+            persist_cloud_price_entry(&cache_path, &eff_key, usd_hr, spot_hr, vcpus, ram_gb);
+            if eff_key != cache_key {
+                persist_cloud_price_entry(&cache_path, &cache_key, usd_hr, spot_hr, vcpus, ram_gb);
+            }
+            return CloudInstanceQuote {
+                vendor: detected_vendor.to_string(),
+                instance_type: lower_inst,
+                region: eff_reg,
+                vcpus,
+                ram_gb,
+                on_demand_hourly_usd: usd_hr,
+                spot_hourly_usd: spot_hr,
+                source: "live_cloud_iac".to_string(),
+            };
         }
         // Persist regional embedded quote into hot-cache so `cloud_prices.json` is populated, while honestly reporting `embedded_seed`
         let reg_mult = crate::catalog::regional_seed_multiplier(&lower_reg);
@@ -879,11 +1480,19 @@ fn extract_num_field(raw: &str, key: &str) -> Option<f64> {
     let needle = format!("\"{}\":", key);
     let idx = raw.find(&needle)?;
     let rest = raw[idx + needle.len()..].trim_start();
-    let num: String = rest
-        .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '.')
-        .collect();
-    num.parse::<f64>().ok()
+    let mut end = 0;
+    for (i, ch) in rest.char_indices() {
+        if ch.is_ascii_digit() || matches!(ch, '.' | '-' | '+' | 'e' | 'E') {
+            end = i + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if end == 0 {
+        None
+    } else {
+        rest[..end].parse::<f64>().ok()
+    }
 }
 
 fn extract_graphql_usd_price(body: &str) -> Option<f64> {
@@ -1013,7 +1622,12 @@ pub fn compute_5layer_platform_switching_tco(
         (2.00, 8500.0)
     };
     let dual_run_overlap_usd = current_monthly_tco_usd * overlap_months;
-    let platform_setup_h = platform_setup_usd / loaded_hourly_rate_usd.max(1.0);
+    let setup_rate_divisor = if loaded_hourly_rate_usd >= 10.0 {
+        loaded_hourly_rate_usd
+    } else {
+        65.0
+    };
+    let platform_setup_h = platform_setup_usd / setup_rate_divisor;
 
     let subtotal_h = conv_h + training_h + platform_setup_h;
     // Layer 5: 20% Unforeseen migration risk & validation buffer
@@ -1057,5 +1671,172 @@ pub fn compute_5layer_platform_switching_tco(
         three_year_net_benefit_usd: three_yr_net,
         meets_2x_annual_rule: worth_2x,
         verdict,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_azure_sku_canonicalization_and_iac_v2_json_parser() {
+        assert_eq!(canonicalize_azure_vm_size("standard_d4s_v5"), "Standard_D4s_v5");
+        assert_eq!(canonicalize_azure_vm_size("standard_d16ads_v5"), "Standard_D16ads_v5");
+        assert_eq!(canonicalize_azure_vm_size("standard_f8s_v2"), "Standard_F8s_v2");
+        assert_eq!(canonicalize_azure_vm_size("Standard_DC4s_v3"), "Standard_DC4s_v3");
+
+        let sample_v2_json = r#"
+  ✔  Plugins up to date
+  ✔  Scan complete
+{
+  "currency": "USD",
+  "projects": [
+    {
+      "resources": [
+        {
+          "name": "aws_instance.vm_target",
+          "type": "aws_instance",
+          "cost_components": [
+            {
+              "name": "Instance usage (Linux/UNIX, on-demand, c7g.2xlarge)",
+              "unit": "hours",
+              "price": "0.29"
+            }
+          ],
+          "subresources": [
+            {
+              "name": "root_block_device",
+              "cost_components": [
+                {
+                  "name": "Storage (gp2)",
+                  "unit": "GB",
+                  "price": "0.1"
+                }
+              ]
+            }
+          ],
+          "metadata": {}
+        },
+        {
+          "name": "azurerm_linux_virtual_machine.vm_1",
+          "type": "azurerm_linux_virtual_machine",
+          "cost_components": [
+            {
+              "name": "Instance usage (Linux, pay as you go, Standard_D4s_v5)",
+              "unit": "hours",
+              "price": "0.192"
+            }
+          ],
+          "metadata": {}
+        },
+        {
+          "name": "google_compute_instance.vm_2",
+          "type": "google_compute_instance",
+          "cost_components": [
+            {
+              "name": "Instance usage (Linux/UNIX, on-demand, e2-standard-4)",
+              "unit": "hours",
+              "price": "0.13402284"
+            },
+            {
+              "name": "Standard provisioned storage",
+              "unit": "GB",
+              "price": "0.04"
+            }
+          ],
+          "metadata": {}
+        }
+      ]
+    }
+  ]
+}
+Update: A new version of Infracost is available: v2.19.0 -> v2.20.0
+"#;
+        let parsed = parse_iac_scan_vm_hourly_prices(sample_v2_json);
+        assert!(parsed.contains(&("vm_target".to_string(), 0.29)));
+        assert!(parsed.contains(&("vm_1".to_string(), 0.192)));
+        assert!(parsed.contains(&("vm_2".to_string(), 0.134)));
+
+        // Also verify legacy v0.10.x / v1.x `breakdown --format json` schema where `"metadata"` precedes `"costComponents"`!
+        let sample_v010_json = r#"{
+  "version": "0.2",
+  "currency": "USD",
+  "projects": [
+    {
+      "breakdown": {
+        "resources": [
+          {
+            "name": "aws_instance.vm_target",
+            "metadata": {"calls": []},
+            "hourlyCost": "0.34",
+            "costComponents": [
+              {
+                "name": "Instance usage (Linux/UNIX, on-demand, m6i.2xlarge)",
+                "unit": "hours",
+                "hourlyQuantity": "1",
+                "price": "0.384"
+              }
+            ],
+            "subresources": [
+              {
+                "name": "root_block_device",
+                "costComponents": [{"unit": "GB", "price": "0.10"}]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}"#;
+        let parsed_v1 = parse_iac_scan_vm_hourly_prices(sample_v010_json);
+        assert_eq!(parsed_v1, vec![("vm_target".to_string(), 0.384)]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_live_cloud_iac_cli_bridge_with_mock_scanner() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = env::temp_dir().join(format!("minici_mock_iac_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        // 1. Mock v2.x scanner (`scan --json`)
+        let mock_v2 = tmp.join("mock_iac_v2.sh");
+        fs::write(
+            &mock_v2,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"Infracost v2.19.0\"; exit 0; fi\ncat <<'EOF'\n{\"projects\":[{\"resources\":[{\"name\":\"aws_instance.vm_target\",\"cost_components\":[{\"unit\":\"hours\",\"price\":\"0.58\"}],\"metadata\":{}}]}]}\nEOF\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&mock_v2).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&mock_v2, perms).unwrap();
+        assert_eq!(detect_iac_scanner_major_version(&mock_v2), 2);
+
+        let (od_hr, spot_hr) =
+            query_cloud_vm_via_iac_cli_with_bin(Some(&mock_v2), "aws", "c7g.4xlarge", "us-east-1")
+                .expect("mock v2 IaC scanner should return live quote");
+        assert!((od_hr - 0.58).abs() < 0.0001);
+        assert!(spot_hr > 0.0 && spot_hr < od_hr);
+
+        // 2. Mock v0.10.39 scanner (`breakdown --path <dir> --format json`)
+        let mock_v1 = tmp.join("mock_iac_v1.sh");
+        fs::write(
+            &mock_v1,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"Infracost v0.10.39\"; exit 0; fi\nif [ \"$1\" = \"breakdown\" ]; then\ncat <<'EOF'\n{\"version\":\"0.2\",\"projects\":[{\"breakdown\":{\"resources\":[{\"name\":\"aws_instance.vm_target\",\"metadata\":{},\"costComponents\":[{\"unit\":\"hours\",\"price\":\"0.384\"}]}]}}]}\nEOF\nexit 0\nfi\nexit 1\n",
+        )
+        .unwrap();
+        let mut perms1 = fs::metadata(&mock_v1).unwrap().permissions();
+        perms1.set_mode(0o755);
+        fs::set_permissions(&mock_v1, perms1).unwrap();
+        assert_eq!(detect_iac_scanner_major_version(&mock_v1), 1);
+
+        let (od_v1, sp_v1) =
+            query_cloud_vm_via_iac_cli_with_bin(Some(&mock_v1), "aws", "m6i.2xlarge", "us-east-1")
+                .expect("mock v0.10 IaC scanner should invoke breakdown --format json");
+        assert!((od_v1 - 0.384).abs() < 0.0001);
+        assert!(sp_v1 > 0.0 && sp_v1 < od_v1);
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

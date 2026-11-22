@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-Automates Polar.sh Storefront & Recurring Tier setup for `minici` via Polar's
-official REST API (`https://api.polar.sh/v1`).
+Automates Polar.sh Storefront, License-Key Benefit, Checkout Links & Recurring Tier setup
+for `minici` ($1 Starter / $10 Pro / Custom Team Flex) via Polar's official REST API (`https://api.polar.sh/v1`).
+
+Keeps 100% of existing local CLI, MCP & GitHub Action features $0 Free Forever (Apache-2.0),
+while issuing automatic `MINICI-...` license keys for hosted Cloud Memory, `/r/:id` sharing,
+30d/365d trend badges, Friday Slack FinOps digests, and org governance policies.
 
 Usage:
   POLAR_OAT="polar_oat_..." python3 tools/setup_polar_storefront.py
@@ -35,6 +39,32 @@ def api_call(method: str, path: str, token: str, payload: dict | None = None) ->
         return json.loads(resp.read().decode("utf-8"))
 
 
+def ensure_license_key_benefit(org_id: str, token: str) -> str:
+    benefits = api_call("GET", f"/benefits/?organization_id={org_id}", token).get("items") or []
+    for b in benefits:
+        if b.get("type") == "license_keys":
+            print(f"Reusing existing Polar License Key benefit: {b.get('description')} (id={b.get('id')})")
+            return str(b["id"])
+
+    created = api_call(
+        "POST",
+        "/benefits/",
+        token,
+        {
+            "type": "license_keys",
+            "organization_id": org_id,
+            "description": "MiniCI Cloud License Key (minici login / MINICI_KEY)",
+            "properties": {
+                "prefix": "MINICI",
+                "activations": {"limit": 25, "enable_customer_admin": True},
+            },
+        },
+    )
+    bid = str(created["id"])
+    print(f"Created Polar License Key benefit (id={bid})")
+    return bid
+
+
 def main() -> None:
     token = os.environ.get("POLAR_OAT") or os.environ.get("POLAR_ACCESS_TOKEN") or ""
     if not token.strip():
@@ -60,38 +90,99 @@ def main() -> None:
         {
             "profile_settings": {
                 "enabled": True,
-                "description": "Sub-millisecond CI/CD Cost Breakdown, Pull Request Cost Diff Action & 8-Tool MCP FinOps Engine.",
+                "description": "Sub-millisecond CI/CD Cost Breakdown, PR Cost Diff Action & 8-Tool MCP FinOps Engine.",
             }
         },
     )
     print("Enabled Polar public storefront -> https://polar.sh/minici")
 
-    # 2. Ensure recurring Sponsor ($15/mo) and Team Pro ($79/mo) products exist
+    # 2. Ensure automatic `MINICI-...` License Key benefit exists
+    benefit_id = ensure_license_key_benefit(org_id, token)
+
+    # 3. Ensure $1 Starter, $10 Pro, and Custom Team Flex recurring products exist
     existing = api_call("GET", f"/products/?organization_id={org_id}", token).get("items") or []
-    existing_names = {p.get("name") for p in existing}
+    by_name = {p.get("name"): p for p in existing}
 
     tiers = [
         {
-            "name": "MiniCI Open-Source Sponsor",
-            "description": "Support open-source Rust std-only CI/CD FinOps research, 7-provider SKU catalog updates, and benchmark studies.",
-            "recurring_interval": "month",
-            "prices": [{"amount_type": "fixed", "price_amount": 1500, "price_currency": "usd"}],
+            "slug_env": "POLAR_CHECKOUT_STARTER_URL",
+            "plan_tag": "starter",
+            "payload": {
+                "name": "MiniCI Starter",
+                "description": (
+                    "Cloud Sync for up to 3 repos: unlisted `minici share` permalink reports (/r/<id>), "
+                    "30-day cross-run CI cost trend ledger, and live README/PR SVG badges."
+                ),
+                "recurring_interval": "month",
+                "prices": [{"amount_type": "fixed", "price_amount": 100, "price_currency": "usd"}],
+                "metadata": {"minici_plan": "starter", "max_repos": 3, "retention_days": 30},
+            },
         },
         {
-            "name": "MiniCI Team Pro (Private Repos & Slack FinOps Bot)",
-            "description": "Priority support, Slack FinOps Bot integration, FOCUS v1.1 CSV reconciliation & multi-repo org governance.",
-            "recurring_interval": "month",
-            "prices": [{"amount_type": "fixed", "price_amount": 7900, "price_currency": "usd"}],
+            "slug_env": "POLAR_CHECKOUT_PRO_URL",
+            "plan_tag": "pro",
+            "payload": {
+                "name": "MiniCI Pro",
+                "description": (
+                    "Automated Team FinOps for up to 15 private repos: scheduled Friday Slack FinOps digest, "
+                    "real-time 1.5x burn-velocity anomaly alerts, and 365-day multi-repo team dashboard."
+                ),
+                "recurring_interval": "month",
+                "prices": [{"amount_type": "fixed", "price_amount": 1000, "price_currency": "usd"}],
+                "metadata": {"minici_plan": "pro", "max_repos": 15, "retention_days": 365},
+            },
+        },
+        {
+            "slug_env": "POLAR_CHECKOUT_CUSTOM_URL",
+            "plan_tag": "custom",
+            "payload": {
+                "name": "MiniCI Team Flex",
+                "description": (
+                    "Pay-what-you-want Org Governance (unlimited repos): central PR budget gate policy, "
+                    "synced custom enterprise runner rate cards across CLI/MCP, and priority support."
+                ),
+                "recurring_interval": "month",
+                "prices": [
+                    {
+                        "amount_type": "custom",
+                        "price_currency": "usd",
+                        "minimum_amount": 2500,
+                        "preset_amount": 4900,
+                    }
+                ],
+                "metadata": {"minici_plan": "custom", "max_repos": 9999, "retention_days": 365},
+            },
         },
     ]
 
+    checkout_urls: dict[str, str] = {}
     for tier in tiers:
-        if tier["name"] in existing_names:
-            print(f"Product already exists: {tier['name']}")
-            continue
-        created = api_call("POST", "/products/", token, {**tier, "organization_id": org_id})
-        print(f"Created Polar product: {created.get('name')} (id={created.get('id')})")
+        body = tier["payload"]
+        prod = by_name.get(body["name"])
+        if prod is None:
+            prod = api_call("POST", "/products/", token, {**body, "organization_id": org_id})
+            print(f"Created Polar product: {prod.get('name')} (id={prod.get('id')})")
+        else:
+            print(f"Product already exists: {prod.get('name')} (id={prod.get('id')})")
 
+        prod_id = prod["id"]
+        api_call("POST", f"/products/{prod_id}/benefits", token, {"benefits": [benefit_id]})
+
+        try:
+            cl = api_call(
+                "POST",
+                "/checkout-links/",
+                token,
+                {"product_id": prod_id, "label": f"minici-{tier['plan_tag']}"},
+            )
+            if cl.get("url"):
+                checkout_urls[tier["slug_env"]] = str(cl["url"])
+        except urllib.error.HTTPError:
+            pass
+
+    print("\nBind these checkout URLs in Cloudflare Worker secrets (or visit https://polar.sh/minici):")
+    for k, url in checkout_urls.items():
+        print(f"  {k}={url}")
     print("Done! Verify live storefront: curl -sI https://polar.sh/minici")
 
 

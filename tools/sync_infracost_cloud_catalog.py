@@ -74,15 +74,65 @@ AZURE_FAMILIES = [
 ]
 
 
+import shutil
+import subprocess
+import tempfile
+
+
 def discover_infracost_api_key() -> str | None:
     if os.environ.get("INFRACOST_API_KEY"):
         return os.environ["INFRACOST_API_KEY"].strip()
-    cred = Path.home() / ".config" / "infracost" / "credentials.yml"
-    if cred.is_file():
-        m = re.search(r"api_key:\s*([^\s#]+)", cred.read_text())
-        if m:
-            return m.group(1).strip().strip('"').strip("'")
+    for cred in (
+        Path.home() / ".config" / "infracost" / "credentials.yml",
+        Path.home() / "Library" / "Application Support" / "infracost" / "credentials.yml",
+    ):
+        if cred.is_file():
+            m = re.search(r"api_key:\s*([^\s#]+)", cred.read_text())
+            if m:
+                return m.group(1).strip().strip('"').strip("'")
     return None
+
+
+def batch_fetch_via_infracost_v2_cli(ec2_types: list[str]) -> dict[str, float]:
+    bin_path = shutil.which("infracost") or ("/opt/homebrew/bin/infracost" if Path("/opt/homebrew/bin/infracost").is_file() else None)
+    if not bin_path or not ec2_types:
+        return {}
+    ver_out = subprocess.run([bin_path, "--version"], capture_output=True, text=True)
+    ver_txt = f"{ver_out.stdout} {ver_out.stderr}".lower()
+    is_legacy_v1 = any(tag in ver_txt for tag in ("v0.", " 0.", "v1.", " 1."))
+    out_map: dict[str, float] = {}
+    with tempfile.TemporaryDirectory() as td:
+        hcl = ['provider "aws" {\n  region = "us-east-1"\n}\n']
+        for i, itype in enumerate(ec2_types):
+            hcl.append(f'resource "aws_instance" "vm_{i}" {{\n  ami           = "ami-0c55b159cbfafe1f0"\n  instance_type = "{itype}"\n}}\n')
+        Path(td, "main.tf").write_text("\n".join(hcl))
+        cmd = (
+            [bin_path, "breakdown", "--path", td, "--format", "json", "--no-color"]
+            if is_legacy_v1
+            else [bin_path, "scan", td, "--json", "--no-color"]
+        )
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        raw = res.stdout
+        idx = raw.find("{")
+        if idx >= 0:
+            end = raw.rfind("}")
+            if end > idx:
+                try:
+                    data = json.loads(raw[idx : end + 1])
+                    for proj in data.get("projects", []):
+                        resources = proj.get("resources") or (proj.get("breakdown") or {}).get("resources") or []
+                        for r in resources:
+                            name = r.get("name", "")
+                            if name.startswith("aws_instance.vm_"):
+                                r_idx = int(name.split("vm_", 1)[1])
+                                comps = r.get("cost_components") or r.get("costComponents") or []
+                                for comp in comps:
+                                    if comp.get("unit") == "hours" and float(comp.get("price") or 0) > 0:
+                                        out_map[ec2_types[r_idx]] = round(float(comp["price"]), 5)
+                                        break
+                except Exception:
+                    pass
+    return out_map
 
 
 def fetch_live_infracost_ec2_quote(api_key: str, instance_type: str, region: str = "us-east-1") -> tuple[float, float] | None:
@@ -123,6 +173,10 @@ def fetch_live_infracost_ec2_quote(api_key: str, instance_type: str, region: str
 
 def build_seed_catalog(live: bool = False) -> dict:
     api_key = discover_infracost_api_key() if live else None
+    v2_cli_quotes: dict[str, float] = {}
+    if live and not api_key:
+        all_ec2 = [f"{fam}.{sz_name}" for fam, _, _, _, _, sizes in AWS_FAMILIES for sz_name, _ in sizes]
+        v2_cli_quotes = batch_fetch_via_infracost_v2_cli(all_ec2)
     instances: list[dict] = []
     live_hits = 0
 
@@ -141,6 +195,11 @@ def build_seed_catalog(live: bool = False) -> dict:
                 if live_q:
                     od_hr, sp_hr = live_q
                     live_hits += 1
+            elif itype in v2_cli_quotes:
+                spot_ratio = (sp_hr / od_hr) if od_hr > 0 else 0.32
+                od_hr = v2_cli_quotes[itype]
+                sp_hr = round(od_hr * spot_ratio, 5)
+                live_hits += 1
             instances.append({
                 "provider": "self-hosted-aws",
                 "instance_type": itype,

@@ -1,0 +1,23 @@
+{
+  "name": "minici-cost",
+  "description": "Deterministic sub-millisecond CI/CD cost breakdown, Pull Request cost diff, ARM64 runner right-sizing, and comment-preserving YAML optimization across 7 CI platforms.",
+  "version": "0.9.1",
+  "icon": "web/minici-icon-512.png",
+  "author": {
+    "name": "MiniCI",
+    "url": "https://github.com/minici-dev"
+  },
+  "homepage": "https://minici-cost-action.raza-aamir01.workers.dev",
+  "repository": "https://github.com/minici-dev/minici-cost-action",
+  "license": "Apache-2.0",
+  "keywords": [
+    "ci-cd",
+    "github-actions",
+    "finops",
+    "cost-optimization",
+    "gitlab-ci",
+    "arm64",
+    "devops"
+  ],
+  "skills": "./skills"
+}

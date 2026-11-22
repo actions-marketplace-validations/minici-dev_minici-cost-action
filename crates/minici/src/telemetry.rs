@@ -48,12 +48,17 @@ pub struct CanonicalTelemetrySnapshot {
     pub invoice_gross_usd: Option<f64>,
     pub invoice_discount_usd: Option<f64>,
     pub invoice_net_billed_usd: Option<f64>,
+    pub invoice_compute_gross_usd: Option<f64>,
+    pub invoice_compute_discount_usd: Option<f64>,
+    pub invoice_compute_net_usd: Option<f64>,
     pub median_cpu_util_pct: Option<f64>,
     pub median_ram_util_pct: Option<f64>,
     pub workflow_monthly_runs: Vec<(String, f64)>,
     pub job_durations_mins: Vec<(String, f64)>,
+    pub job_billed_mins: Vec<(String, f64)>,
     pub job_p90_durations_mins: Vec<(String, f64)>,
     pub job_runtime_labels: Vec<(String, String)>,
+    pub job_observed_matrix_counts: Vec<(String, usize)>,
     pub real_phase_shares: Option<[f64; 6]>,
 }
 
@@ -88,6 +93,12 @@ impl CanonicalTelemetrySnapshot {
             .map(|(k, v)| format!("{{\"job\":\"{}\",\"p50_mins\":{:.3}}}", json_escape(k), v))
             .collect::<Vec<_>>()
             .join(",");
+        let jobs_billed_json = self
+            .job_billed_mins
+            .iter()
+            .map(|(k, v)| format!("{{\"job\":\"{}\",\"billed_mins\":{:.3}}}", json_escape(k), v))
+            .collect::<Vec<_>>()
+            .join(",");
         let jobs_p90_json = self
             .job_p90_durations_mins
             .iter()
@@ -98,6 +109,12 @@ impl CanonicalTelemetrySnapshot {
             .job_runtime_labels
             .iter()
             .map(|(k, v)| format!("{{\"job\":\"{}\",\"label\":\"{}\"}}", json_escape(k), json_escape(v)))
+            .collect::<Vec<_>>()
+            .join(",");
+        let mat_counts_json = self
+            .job_observed_matrix_counts
+            .iter()
+            .map(|(k, v)| format!("{{\"job\":\"{}\",\"count\":{}}}", json_escape(k), v))
             .collect::<Vec<_>>()
             .join(",");
         let phases_json = self
@@ -112,7 +129,7 @@ impl CanonicalTelemetrySnapshot {
 
         let eff_win = if self.window_days == 0 { 30 } else { self.window_days };
         format!(
-            "{{\n  \"provenance_mode\": \"{}\",\n  \"repo_slug\": \"{}\",\n  \"visibility\": \"{}\",\n  \"window_days\": {},\n  \"synced_at_epoch_s\": {},\n  \"api_calls_used\": {},\n  \"etag_304_hits\": {},\n  \"rate_limit_remaining\": {},\n  \"observed_runs_in_window\": {},\n  \"observed_skipped_noop_runs\": {},\n  \"observed_monthly_runs\": {},\n  \"observed_human_pr_monthly_runs\": {},\n  \"observed_bot_run_share_pct\": {},\n  \"observed_runs_last_7d\": {},\n  \"observed_runs_prev_23d\": {},\n  \"observed_merged_prs_30d\": {},\n  \"observed_deploys_30d\": {},\n  \"observed_active_devs_30d\": {},\n  \"observed_flake_rate_pct\": {},\n  \"observed_p95_queue_wait_sec\": {},\n  \"observed_off_hours_run_share_pct\": {},\n  \"observed_peak_concurrent_jobs\": {},\n  \"observed_cancelled_wasted_mins\": {},\n  \"observed_timed_out_jobs\": {},\n  \"observed_active_caches_count\": {},\n  \"observed_merge_queue_runs\": {},\n  \"observed_cache_active_gb\": {},\n  \"observed_artifact_storage_gb\": {},\n  \"observed_ghcr_storage_gb\": {},\n  \"invoice_gross_usd\": {},\n  \"invoice_discount_usd\": {},\n  \"invoice_net_billed_usd\": {},\n  \"median_cpu_util_pct\": {},\n  \"median_ram_util_pct\": {},\n  \"real_phase_shares\": {},\n  \"workflow_monthly_runs\": [{}],\n  \"job_durations_mins\": [{}],\n  \"job_p90_durations_mins\": [{}],\n  \"job_runtime_labels\": [{}]\n}}\n",
+            "{{\n  \"provenance_mode\": \"{}\",\n  \"repo_slug\": \"{}\",\n  \"visibility\": \"{}\",\n  \"window_days\": {},\n  \"synced_at_epoch_s\": {},\n  \"api_calls_used\": {},\n  \"etag_304_hits\": {},\n  \"rate_limit_remaining\": {},\n  \"observed_runs_in_window\": {},\n  \"observed_skipped_noop_runs\": {},\n  \"observed_monthly_runs\": {},\n  \"observed_human_pr_monthly_runs\": {},\n  \"observed_bot_run_share_pct\": {},\n  \"observed_runs_last_7d\": {},\n  \"observed_runs_prev_23d\": {},\n  \"observed_merged_prs_30d\": {},\n  \"observed_deploys_30d\": {},\n  \"observed_active_devs_30d\": {},\n  \"observed_flake_rate_pct\": {},\n  \"observed_p95_queue_wait_sec\": {},\n  \"observed_off_hours_run_share_pct\": {},\n  \"observed_peak_concurrent_jobs\": {},\n  \"observed_cancelled_wasted_mins\": {},\n  \"observed_timed_out_jobs\": {},\n  \"observed_active_caches_count\": {},\n  \"observed_merge_queue_runs\": {},\n  \"observed_cache_active_gb\": {},\n  \"observed_artifact_storage_gb\": {},\n  \"observed_ghcr_storage_gb\": {},\n  \"invoice_gross_usd\": {},\n  \"invoice_discount_usd\": {},\n  \"invoice_net_billed_usd\": {},\n  \"invoice_compute_gross_usd\": {},\n  \"invoice_compute_discount_usd\": {},\n  \"invoice_compute_net_usd\": {},\n  \"median_cpu_util_pct\": {},\n  \"median_ram_util_pct\": {},\n  \"real_phase_shares\": {},\n  \"workflow_monthly_runs\": [{}],\n  \"job_durations_mins\": [{}],\n  \"job_billed_mins\": [{}],\n  \"job_p90_durations_mins\": [{}],\n  \"job_runtime_labels\": [{}],\n  \"job_observed_matrix_counts\": [{}]\n}}\n",
             json_escape(&self.provenance_mode),
             json_escape(&self.repo_slug),
             json_escape(&self.visibility),
@@ -145,13 +162,18 @@ impl CanonicalTelemetrySnapshot {
             fmt_opt_f64(self.invoice_gross_usd),
             fmt_opt_f64(self.invoice_discount_usd),
             fmt_opt_f64(self.invoice_net_billed_usd),
+            fmt_opt_f64(self.invoice_compute_gross_usd),
+            fmt_opt_f64(self.invoice_compute_discount_usd),
+            fmt_opt_f64(self.invoice_compute_net_usd),
             fmt_opt_f64(self.median_cpu_util_pct),
             fmt_opt_f64(self.median_ram_util_pct),
             phases_json,
             wf_runs_json,
             jobs_json,
+            jobs_billed_json,
             jobs_p90_json,
-            labels_json
+            labels_json,
+            mat_counts_json
         )
     }
 
@@ -248,12 +270,17 @@ impl CanonicalTelemetrySnapshot {
             invoice_gross_usd: parse_num_field(raw, "invoice_gross_usd"),
             invoice_discount_usd: parse_num_field(raw, "invoice_discount_usd"),
             invoice_net_billed_usd: parse_num_field(raw, "invoice_net_billed_usd"),
+            invoice_compute_gross_usd: parse_num_field(raw, "invoice_compute_gross_usd"),
+            invoice_compute_discount_usd: parse_num_field(raw, "invoice_compute_discount_usd"),
+            invoice_compute_net_usd: parse_num_field(raw, "invoice_compute_net_usd"),
             median_cpu_util_pct: parse_num_field(raw, "median_cpu_util_pct"),
             median_ram_util_pct: parse_num_field(raw, "median_ram_util_pct"),
             workflow_monthly_runs: Vec::new(),
             job_durations_mins: Vec::new(),
+            job_billed_mins: Vec::new(),
             job_p90_durations_mins: Vec::new(),
             job_runtime_labels: Vec::new(),
+            job_observed_matrix_counts: Vec::new(),
             real_phase_shares: None,
         };
 
@@ -300,6 +327,19 @@ impl CanonicalTelemetrySnapshot {
                 }
             }
         }
+        if let Some(jb_idx) = raw.find("\"job_billed_mins\":") {
+            let after = raw[jb_idx + 18..].trim_start();
+            if after.starts_with('[') {
+                let section = after.find(']').map(|e| &after[1..e]).unwrap_or(&after[1..]);
+                for item in section.split('{').skip(1) {
+                    if let (Some(jname), Some(m)) =
+                        (parse_str_field(item, "job"), parse_num_field(item, "billed_mins"))
+                    {
+                        s.job_billed_mins.push((jname, m));
+                    }
+                }
+            }
+        }
         if let Some(p90_idx) = raw.find("\"job_p90_durations_mins\":") {
             let after = raw[p90_idx + 25..].trim_start();
             if after.starts_with('[') {
@@ -326,6 +366,21 @@ impl CanonicalTelemetrySnapshot {
                 }
             }
         }
+        if let Some(mc_idx) = raw.find("\"job_observed_matrix_counts\":") {
+            let after = raw[mc_idx + 29..].trim_start();
+            if after.starts_with('[') {
+                let section = after.find(']').map(|e| &after[1..e]).unwrap_or(&after[1..]);
+                for item in section.split('{').skip(1) {
+                    if let (Some(jname), Some(cnt)) =
+                        (parse_str_field(item, "job"), parse_num_field(item, "count"))
+                    {
+                        if cnt >= 1.0 {
+                            s.job_observed_matrix_counts.push((jname, cnt as usize));
+                        }
+                    }
+                }
+            }
+        }
         s
     }
 
@@ -336,6 +391,9 @@ impl CanonicalTelemetrySnapshot {
             let inv_gross = self.invoice_gross_usd;
             let inv_disc = self.invoice_discount_usd;
             let inv_net = self.invoice_net_billed_usd;
+            let inv_cg = self.invoice_compute_gross_usd;
+            let inv_cd = self.invoice_compute_discount_usd;
+            let inv_cn = self.invoice_compute_net_usd;
             let inv_art = self.observed_artifact_storage_gb;
             let inv_ghcr = self.observed_ghcr_storage_gb;
             let inv_cpu = self.median_cpu_util_pct;
@@ -361,6 +419,15 @@ impl CanonicalTelemetrySnapshot {
             }
             if inv_net.is_some() {
                 merged.invoice_net_billed_usd = inv_net;
+            }
+            if inv_cg.is_some() {
+                merged.invoice_compute_gross_usd = inv_cg;
+            }
+            if inv_cd.is_some() {
+                merged.invoice_compute_discount_usd = inv_cd;
+            }
+            if inv_cn.is_some() {
+                merged.invoice_compute_net_usd = inv_cn;
             }
             if inv_art.is_some() {
                 merged.observed_artifact_storage_gb = inv_art;
@@ -405,14 +472,45 @@ fn parse_num_field(raw: &str, key: &str) -> Option<f64> {
     if rest.starts_with("null") {
         return None;
     }
-    let num: String = rest
-        .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
-        .collect();
-    if num.is_empty() {
+    let mut end = 0;
+    for (i, ch) in rest.char_indices() {
+        if ch.is_ascii_digit() || matches!(ch, '.' | '-' | '+' | 'e' | 'E') {
+            end = i + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if end == 0 {
         None
     } else {
-        num.parse::<f64>().ok()
+        rest[..end].parse::<f64>().ok()
+    }
+}
+
+fn quantile_sorted(v: &[f64], q: f64) -> f64 {
+    if v.is_empty() {
+        return 0.0;
+    }
+    if v.len() == 1 {
+        return v[0];
+    }
+    let pos = q.clamp(0.0, 1.0) * ((v.len() - 1) as f64);
+    let lo = pos.floor() as usize;
+    let hi = pos.ceil() as usize;
+    let frac = pos - (lo as f64);
+    v[lo] * (1.0 - frac) + v[hi] * frac
+}
+
+fn infer_os_family_tag(lbl_or_leg: &str) -> Option<&'static str> {
+    let low = lbl_or_leg.to_ascii_lowercase();
+    if low.contains("macos") || low.contains("darwin") || low.contains("osx") {
+        Some("macos")
+    } else if low.contains("windows") || low.contains("win32") || low.contains("win64") || low.contains("vs20") {
+        Some("windows")
+    } else if low.contains("ubuntu") || low.contains("linux") || low.contains("debian") {
+        Some("linux")
+    } else {
+        None
     }
 }
 
@@ -480,7 +578,7 @@ fn http_get_with_etag_inner(
         "-H",
         &format!("Accept: {}", accept_header),
         "-H",
-        "User-Agent: minici-telemetry-sync/0.9.0",
+        "User-Agent: minici-telemetry-sync/0.9.1",
     ]);
     if let Some(hdr) = auth_header {
         cmd.arg("-H").arg(hdr);
@@ -682,7 +780,7 @@ pub fn sync_github_live_telemetry_window(
         slug, per_page
     );
     let pulls_url = format!(
-        "https://api.github.com/repos/{}/pulls?state=closed&per_page=100",
+        "https://api.github.com/repos/{}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=1",
         slug
     );
     let cache_url = format!("https://api.github.com/repos/{}/actions/cache/usage", slug);
@@ -724,6 +822,7 @@ pub fn sync_github_live_telemetry_window(
 
     // Multi-page pagination (`page=2..=max_pages`) until we either cover `cutoff_window` or hit `effective_max_runs`!
     let mut all_run_bodies: Vec<String> = Vec::new();
+    let mut hit_cutoff_or_end = false;
     if let Some(r1) = runs_p1_resp {
         let mut oldest_seen = u64::MAX;
         let mut p1_count = 0usize;
@@ -737,9 +836,12 @@ pub fn sync_github_live_telemetry_window(
                 }
             }
         }
+        if p1_count < per_page || (oldest_seen != u64::MAX && oldest_seen <= cutoff_window) {
+            hit_cutoff_or_end = true;
+        }
         all_run_bodies.push(r1.body);
         let mut page = 2usize;
-        while page <= max_pages && p1_count >= 95 && oldest_seen > cutoff_window {
+        while page <= max_pages && !hit_cutoff_or_end {
             let p_url = format!(
                 "https://api.github.com/repos/{}/actions/runs?per_page=100&page={}",
                 slug, page
@@ -759,7 +861,8 @@ pub fn sync_github_live_telemetry_window(
                     }
                 }
                 all_run_bodies.push(pr.body);
-                if cnt < 95 {
+                if cnt < 100 || (oldest_seen != u64::MAX && oldest_seen <= cutoff_window) {
+                    hit_cutoff_or_end = true;
                     break;
                 }
             } else {
@@ -797,11 +900,13 @@ pub fn sync_github_live_telemetry_window(
     let mut workflow_monthly_runs: Vec<(String, f64)> = Vec::new();
     let mut stratified_run_ids: Vec<(String, String)> = Vec::new();
     let mut seen_wf_samples: HashMap<String, usize> = HashMap::new();
+    let mut wf_window_counts: HashMap<String, usize> = HashMap::new();
 
     if !all_run_bodies.is_empty() {
         let mut timestamps: Vec<u64> = Vec::new();
         let mut wf_counts: HashMap<String, usize> = HashMap::new();
         let mut human_pr_runs = 0usize;
+        let mut seen_human_wait_shas: HashSet<(String, String)> = HashSet::new();
         let mut bot_runs = 0usize;
         let mut skipped_noop_runs = 0usize;
         let mut merge_queue_runs = 0usize;
@@ -811,24 +916,35 @@ pub fn sync_github_live_telemetry_window(
         let mut actors: Vec<String> = Vec::new();
         let mut sha_outcomes: HashMap<(String, String), (bool, bool)> = HashMap::new();
         let mut retry_success_count = 0usize;
+        let mut truncated_by_cap = false;
 
-        for body in &all_run_bodies {
+        'outer_runs: for body in &all_run_bodies {
             for chunk in body.split("{\"id\":") {
                 if !chunk.contains("\"run_number\":") {
                     continue;
                 }
-                if total_runs_parsed + skipped_noop_runs >= effective_max_runs {
-                    break;
+                let status = parse_str_field(chunk, "status").unwrap_or_default();
+                if !status.is_empty() && status != "completed" {
+                    continue;
                 }
                 let created_ep_info = parse_str_field(chunk, "created_at")
                     .and_then(|cat| parse_iso8601_utc_epoch(&cat));
                 if let Some((ep, _, _)) = created_ep_info {
-                    if ep < cutoff_window && total_runs_parsed >= 20 {
+                    if ep < cutoff_window {
+                        hit_cutoff_or_end = true;
                         continue;
                     }
                 }
+                if total_runs_parsed + skipped_noop_runs >= effective_max_runs {
+                    truncated_by_cap = true;
+                    break 'outer_runs;
+                }
                 let conclusion = parse_str_field(chunk, "conclusion").unwrap_or_default();
-                if conclusion == "skipped" {
+                if conclusion == "skipped"
+                    || conclusion == "startup_failure"
+                    || conclusion == "action_required"
+                    || conclusion == "stale"
+                {
                     skipped_noop_runs += 1;
                     continue;
                 }
@@ -854,7 +970,9 @@ pub fn sync_github_live_telemetry_window(
                 let att = parse_num_field(chunk, "run_attempt").unwrap_or(1.0);
                 let head_sha = parse_str_field(chunk, "head_sha").unwrap_or_default();
                 if !head_sha.is_empty() {
-                    let entry = sha_outcomes.entry((wf_base.clone(), head_sha)).or_insert((false, false));
+                    let entry = sha_outcomes
+                        .entry((wf_base.clone(), head_sha.clone()))
+                        .or_insert((false, false));
                     if conclusion == "failure" || conclusion == "timed_out" {
                         entry.0 = true;
                     }
@@ -900,7 +1018,11 @@ pub fn sync_github_live_telemetry_window(
                         || ev == "push"
                         || ev == "merge_group")
                 {
-                    human_pr_runs += 1;
+                    if head_sha.is_empty() {
+                        human_pr_runs += 1;
+                    } else if seen_human_wait_shas.insert((head_sha, ev)) {
+                        human_pr_runs += 1;
+                    }
                 }
 
                 if let Some((ep, hr, wd)) = created_ep_info {
@@ -915,20 +1037,30 @@ pub fn sync_github_live_telemetry_window(
         runs_in_window_opt = Some(total_runs_parsed);
         skipped_noop_opt = Some(skipped_noop_runs);
         merge_queue_opt = Some(merge_queue_runs);
+        wf_window_counts = wf_counts.clone();
 
         if total_runs_parsed > 0 {
             timestamps.sort_unstable();
-            let span_days = if let (Some(&oldest), Some(&newest)) = (timestamps.first(), timestamps.last()) {
-                (((newest.saturating_sub(oldest)) as f64) / 86400.0).max(0.5)
+            // Fixes B1 & B2: When the full `eff_window_days` window was covered without truncation,
+            // divide by `eff_window_days` (1 run in 30d = 1 run/mo, NOT 60 runs/mo!).
+            // Only when truncated by `effective_max_runs` before reaching `cutoff_window`, divide by
+            // exact elapsed window `(now_epoch - oldest)` without an artificial 12-hour (`0.5d`) floor.
+            let span_days = if !truncated_by_cap || hit_cutoff_or_end {
+                eff_window_days as f64
+            } else if let Some(&oldest) = timestamps.first() {
+                (((now_epoch.saturating_sub(oldest)) as f64) / 86400.0)
+                    .max(1.0 / 1440.0)
+                    .min(eff_window_days as f64)
             } else {
                 eff_window_days as f64
             };
-            // Normalize observed active runs across `span_days` (up to `eff_window_days`) to monthly (`30.0d`) run-rate
             let scale_30d = 30.0 / span_days;
-            let extrapolated_30d = ((total_runs_parsed as f64) * scale_30d).round();
-            monthly_runs = Some(extrapolated_30d.clamp(1.0, 250_000.0));
-            human_pr_monthly_runs =
-                Some((((human_pr_runs as f64) * scale_30d).round()).clamp(0.0, 250_000.0));
+            let extrapolated_30d = (((total_runs_parsed as f64) * scale_30d) * 10.0).round() / 10.0;
+            monthly_runs = Some(extrapolated_30d.clamp(0.0, 2_500_000.0));
+            human_pr_monthly_runs = Some(
+                ((((human_pr_runs as f64) * scale_30d) * 10.0).round() / 10.0)
+                    .clamp(0.0, 2_500_000.0),
+            );
             bot_share_opt = Some(
                 (((bot_runs as f64 / total_runs_parsed as f64) * 100.0) * 10.0).round() / 10.0,
             );
@@ -939,15 +1071,27 @@ pub fn sync_github_live_telemetry_window(
             }
             workflow_monthly_runs.sort_by(|a, b| a.0.cmp(&b.0));
 
+            // Fixes B4: Normalize 7d & prior-23d counts by actual sample coverage so truncated samples
+            // (`< 30d`) neither trigger 7.67x false spikes nor 0.23x velocity crashes!
             let cutoff_7d = now_epoch.saturating_sub(7 * 86400);
             let cutoff_30d = now_epoch.saturating_sub(30 * 86400);
-            let c7 = timestamps.iter().filter(|&&t| t >= cutoff_7d).count() as f64;
-            let c23 = timestamps
+            let c7_raw = timestamps.iter().filter(|&&t| t >= cutoff_7d).count() as f64;
+            let c23_raw = timestamps
                 .iter()
                 .filter(|&&t| t >= cutoff_30d && t < cutoff_7d)
                 .count() as f64;
-            runs_7d = Some(c7);
-            runs_prev_23d = Some(c23);
+            let covered_7d = span_days.min(7.0);
+            let covered_prev23d = (span_days - 7.0).clamp(0.0, 23.0);
+            runs_7d = if covered_7d > 0.0 {
+                Some((((c7_raw / covered_7d) * 7.0) * 10.0).round() / 10.0)
+            } else {
+                Some(0.0)
+            };
+            runs_prev_23d = if covered_prev23d >= 1.0 {
+                Some((((c23_raw / covered_prev23d) * 23.0) * 10.0).round() / 10.0)
+            } else {
+                None
+            };
 
             let sha_flakes = sha_outcomes.values().filter(|&&(f, p)| f && p).count();
             let verified_flakes = sha_flakes.max(retry_success_count);
@@ -963,21 +1107,65 @@ pub fn sync_github_live_telemetry_window(
             if !actors.is_empty() {
                 active_devs_30d = Some(actors.len());
             }
+        } else {
+            // Fixes B7: 0 non-skipped runs observed in window -> 0.0 monthly runs (never None -> 433.0 fallback!)
+            monthly_runs = Some(0.0);
+            human_pr_monthly_runs = Some(0.0);
+            runs_7d = Some(0.0);
+            runs_prev_23d = Some(0.0);
+            deploys_30d = Some(0);
+            active_devs_30d = Some(0);
         }
     }
 
     let mut merged_prs_30d = None;
     if let Some(ref pr) = pulls_resp {
         let cutoff_30d = now_epoch.saturating_sub(30 * 86400);
+        let mut pull_bodies = vec![pr.body.clone()];
+        if token.is_some() {
+            let mut pr_page = 2usize;
+            while pr_page <= 3 {
+                let last_body = pull_bodies.last().unwrap();
+                let pr_cnt = last_body.matches("\"merged_at\":").count();
+                let mut oldest_upd = u64::MAX;
+                for uc in last_body.split("\"updated_at\":") {
+                    let t = uc.trim_start();
+                    if t.starts_with('"') {
+                        if let Some(end_q) = t[1..].find('"') {
+                            if let Some((ep, _, _)) = parse_iso8601_utc_epoch(&t[1..1 + end_q]) {
+                                oldest_upd = oldest_upd.min(ep);
+                            }
+                        }
+                    }
+                }
+                if pr_cnt < 100 || (oldest_upd != u64::MAX && oldest_upd < cutoff_30d) {
+                    break;
+                }
+                let next_p_url = format!(
+                    "https://api.github.com/repos/{}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page={}",
+                    slug, pr_page
+                );
+                let next_pr_resp = github_get_with_etag(&next_p_url, tok_ref);
+                record_resp(&next_pr_resp);
+                if let Some(npr) = next_pr_resp {
+                    pull_bodies.push(npr.body);
+                } else {
+                    break;
+                }
+                pr_page += 1;
+            }
+        }
         let mut merged = 0usize;
-        for chunk in pr.body.split("\"merged_at\":") {
-            let t = chunk.trim_start();
-            if t.starts_with('"') {
-                if let Some(end_q) = t[1..].find('"') {
-                    let ts = &t[1..1 + end_q];
-                    if let Some((ep, _, _)) = parse_iso8601_utc_epoch(ts) {
-                        if ep >= cutoff_30d {
-                            merged += 1;
+        for pb in &pull_bodies {
+            for chunk in pb.split("\"merged_at\":") {
+                let t = chunk.trim_start();
+                if t.starts_with('"') {
+                    if let Some(end_q) = t[1..].find('"') {
+                        let ts = &t[1..1 + end_q];
+                        if let Some((ep, _, _)) = parse_iso8601_utc_epoch(ts) {
+                            if ep >= cutoff_30d {
+                                merged += 1;
+                            }
                         }
                     }
                 }
@@ -986,26 +1174,30 @@ pub fn sync_github_live_telemetry_window(
         merged_prs_30d = Some(merged);
     }
 
-    // Fetch job durations (`p50` + `p90`), runtime `labels[]`, overlapping peak concurrency, cancelled/timed-out waste & `steps[]` 6-phase timings concurrently
+    // Fetch job durations (mean raw + exact mean ceiled billed + `p90`), runtime `labels[]`,
+    // overlapping peak concurrency, cancelled/timed-out waste & `steps[]` 6-phase timings concurrently
     let mut job_samples: HashMap<String, Vec<f64>> = HashMap::new();
+    let mut job_billed_samples: HashMap<String, Vec<f64>> = HashMap::new();
     let mut job_label_map: HashMap<String, String> = HashMap::new();
+    let mut matrix_legs_per_run: HashMap<(String, String), usize> = HashMap::new();
     let mut active_intervals: Vec<(u64, i32)> = Vec::new();
-    let mut cancelled_wasted_sec = 0.0_f64;
+    let mut cancelled_wasted_mins_by_wf: HashMap<String, f64> = HashMap::new();
     let mut timed_out_jobs = 0usize;
     let mut queue_waits_sec: Vec<f64> = Vec::new();
     let mut phase_seconds = [0.0_f64; 6];
 
     if !stratified_run_ids.is_empty() {
-        let job_resps: Vec<(String, Option<EtagHttpResponse>)> = std::thread::scope(|s| {
+        let job_resps: Vec<(String, String, Option<EtagHttpResponse>)> = std::thread::scope(|s| {
             let handles: Vec<_> = stratified_run_ids
                 .iter()
                 .map(|(rid, wf_base)| {
                     let u = format!(
-                        "https://api.github.com/repos/{}/actions/runs/{}/jobs?per_page=100",
+                        "https://api.github.com/repos/{}/actions/runs/{}/jobs?per_page=100&page=1",
                         slug, rid
                     );
                     let wfb = wf_base.clone();
-                    s.spawn(move || (wfb, github_get_with_etag(&u, tok_ref)))
+                    let r_id = rid.clone();
+                    s.spawn(move || (r_id, wfb, github_get_with_etag(&u, tok_ref)))
                 })
                 .collect();
             handles
@@ -1014,41 +1206,107 @@ pub fn sync_github_live_telemetry_window(
                 .collect()
         });
 
-        for (wf_base, jr_opt) in job_resps {
+        for (rid, wf_base, jr_opt) in job_resps {
             record_resp(&jr_opt);
+            let mut job_page_bodies: Vec<String> = Vec::new();
             if let Some(jr) = jr_opt {
-                for jchunk in jr.body.split("{\"id\":") {
+                let first_cnt = jr.body.matches("\"started_at\":").count();
+                job_page_bodies.push(jr.body);
+                if first_cnt >= 100 && token.is_some() {
+                    for jp in 2..=3 {
+                        let jp_url = format!(
+                            "https://api.github.com/repos/{}/actions/runs/{}/jobs?per_page=100&page={}",
+                            slug, rid, jp
+                        );
+                        let jp_resp = github_get_with_etag(&jp_url, tok_ref);
+                        record_resp(&jp_resp);
+                        if let Some(jpr) = jp_resp {
+                            let c = jpr.body.matches("\"started_at\":").count();
+                            job_page_bodies.push(jpr.body);
+                            if c < 100 {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            for jbody in &job_page_bodies {
+                for jchunk in jbody.split("{\"id\":") {
                     if !jchunk.contains("\"started_at\":") || !jchunk.contains("\"completed_at\":") {
                         continue;
                     }
                     let conclusion = parse_str_field(jchunk, "conclusion").unwrap_or_default();
-                    if conclusion == "skipped" {
+                    if matches!(
+                        conclusion.as_str(),
+                        "skipped" | "startup_failure" | "action_required" | "stale"
+                    ) {
                         continue;
                     }
                     if conclusion == "timed_out" {
                         timed_out_jobs += 1;
                     }
                     let jname = parse_str_field(jchunk, "name").unwrap_or_default();
-                    // Extract runtime `labels[]` (`T039`) to resolve `${{ matrix.os }}` / custom runner tags dynamically!
+                    let base_jname = jname
+                        .split(" (")
+                        .next()
+                        .unwrap_or(&jname)
+                        .trim()
+                        .to_string();
+                    let is_matrix_leg = jname.contains(" (") && jname.ends_with(')');
+
+                    // Fixes C4: Preserve `"self-hosted"` prefix so `["self-hosted","linux","x64"]` NEVER resolves as paid GitHub `ubuntu-latest`,
+                    // and scope all keys strictly to `wf_base#...` (zero bare cross-workflow collisions!).
+                    let mut joined_lbl = String::new();
                     if !jname.is_empty() {
                         if let Some(l_idx) = jchunk.find("\"labels\":[") {
                             let l_sub = &jchunk[l_idx + 10..];
                             if let Some(end_b) = l_sub.find(']') {
-                                let joined_lbl = l_sub[..end_b]
+                                let raw_toks: Vec<&str> = l_sub[..end_b]
                                     .split(',')
                                     .map(|t| t.trim().trim_matches('"'))
-                                    .filter(|t| !t.is_empty() && *t != "self-hosted")
-                                    .collect::<Vec<_>>()
-                                    .join("-");
+                                    .filter(|t| !t.is_empty())
+                                    .collect();
+                                let has_sh = raw_toks
+                                    .iter()
+                                    .any(|t| t.eq_ignore_ascii_case("self-hosted"));
+                                let rest_toks: Vec<&str> = raw_toks
+                                    .into_iter()
+                                    .filter(|t| !t.eq_ignore_ascii_case("self-hosted"))
+                                    .collect();
+                                joined_lbl = if has_sh {
+                                    if rest_toks.is_empty() {
+                                        "self-hosted".to_string()
+                                    } else {
+                                        format!("self-hosted-{}", rest_toks.join("-"))
+                                    }
+                                } else {
+                                    rest_toks.join("-")
+                                };
                                 if !joined_lbl.is_empty() {
                                     job_label_map
                                         .entry(format!("{}#{}", wf_base, jname))
                                         .or_insert_with(|| joined_lbl.clone());
-                                    job_label_map.entry(jname.clone()).or_insert(joined_lbl);
+                                    if !is_matrix_leg {
+                                        job_label_map
+                                            .entry(format!("{}#{}", wf_base, base_jname))
+                                            .or_insert_with(|| joined_lbl.clone());
+                                    }
                                 }
                             }
                         }
                     }
+
+                    let low_lbl = joined_lbl.to_ascii_lowercase();
+                    let is_per_sec_runner = low_lbl.contains("self-hosted")
+                        || low_lbl.contains("runs-on")
+                        || low_lbl.contains("blacksmith")
+                        || low_lbl.contains("warp")
+                        || low_lbl.contains("depot")
+                        || low_lbl.contains("buildjet")
+                        || low_lbl.contains("namespace");
 
                     let created = parse_str_field(jchunk, "created_at")
                         .and_then(|s| parse_iso8601_utc_epoch(&s))
@@ -1065,20 +1323,49 @@ pub fn sync_github_live_telemetry_window(
                         }
                     }
                     if let (Some(st), Some(co)) = (started, completed) {
-                        if co >= st && !jname.is_empty() {
-                            if co > st {
-                                active_intervals.push((st, 1));
-                                active_intervals.push((co, -1));
-                            }
-                            if conclusion == "cancelled" {
-                                cancelled_wasted_sec += (co - st) as f64;
+                        // Fixes A4: Only bill executed jobs with `co > st` (`0s` unexecuted jobs bill `0m`, NOT `1m`!)
+                        if co > st && !jname.is_empty() {
+                            active_intervals.push((st, 1));
+                            active_intervals.push((co, -1));
+                            let raw_mins = (co - st) as f64 / 60.0;
+                            let billed_leg_mins = if is_per_sec_runner {
+                                raw_mins
                             } else {
-                                let mins = ((co - st) as f64 / 60.0).max(0.05);
-                                job_samples
-                                    .entry(format!("{}#{}", wf_base, jname))
+                                raw_mins.ceil().max(1.0)
+                            };
+                            if conclusion == "cancelled" {
+                                *cancelled_wasted_mins_by_wf
+                                    .entry(wf_base.clone())
+                                    .or_insert(0.0) += billed_leg_mins;
+                            } else {
+                                let exact_key = format!("{}#{}", wf_base, jname);
+                                job_samples.entry(exact_key.clone()).or_default().push(raw_mins);
+                                job_billed_samples
+                                    .entry(exact_key)
                                     .or_default()
-                                    .push(mins);
-                                job_samples.entry(jname).or_default().push(mins);
+                                    .push(billed_leg_mins);
+                                if is_matrix_leg && !base_jname.is_empty() {
+                                    let base_key = format!("{}#{}", wf_base, base_jname);
+                                    job_samples.entry(base_key.clone()).or_default().push(raw_mins);
+                                    job_billed_samples
+                                        .entry(base_key.clone())
+                                        .or_default()
+                                        .push(billed_leg_mins);
+                                    *matrix_legs_per_run
+                                        .entry((rid.clone(), base_key))
+                                        .or_insert(0) += 1;
+                                    if let Some(os_fam) = infer_os_family_tag(&joined_lbl)
+                                        .or_else(|| infer_os_family_tag(&jname))
+                                    {
+                                        let os_key =
+                                            format!("{}#{} [os:{}]", wf_base, base_jname, os_fam);
+                                        job_samples.entry(os_key.clone()).or_default().push(raw_mins);
+                                        job_billed_samples
+                                            .entry(os_key)
+                                            .or_default()
+                                            .push(billed_leg_mins);
+                                    }
+                                }
                             }
                         }
                     }
@@ -1110,6 +1397,35 @@ pub fn sync_github_live_telemetry_window(
         }
     }
 
+    // Extrapolate cancelled wasted minutes from sampled runs per workflow to all runs in `window_days` (fixes C5!)
+    let mut cancelled_wasted_window_mins = 0.0_f64;
+    for (wfb, sampled_wasted_m) in cancelled_wasted_mins_by_wf {
+        let sampled_cnt = seen_wf_samples.get(&wfb).copied().unwrap_or(1).max(1) as f64;
+        let window_cnt = wf_window_counts
+            .get(&wfb)
+            .copied()
+            .unwrap_or(sampled_cnt as usize)
+            .max(1) as f64;
+        cancelled_wasted_window_mins += sampled_wasted_m * (window_cnt / sampled_cnt);
+    }
+
+    // Aggregate per-run observed matrix leg counts for dynamic `fromJSON(...)` matrices (fixes C3!)
+    let mut matrix_cnt_acc: HashMap<String, Vec<usize>> = HashMap::new();
+    for ((_rid, base_key), leg_cnt) in matrix_legs_per_run {
+        if leg_cnt > 1 {
+            matrix_cnt_acc.entry(base_key).or_default().push(leg_cnt);
+        }
+    }
+    let mut job_observed_matrix_counts: Vec<(String, usize)> = matrix_cnt_acc
+        .into_iter()
+        .map(|(k, v)| {
+            let sum: usize = v.iter().sum();
+            let avg = ((sum as f64) / (v.len() as f64)).round().max(1.0) as usize;
+            (k, avg)
+        })
+        .collect();
+    job_observed_matrix_counts.sort_by(|a, b| a.0.cmp(&b.0));
+
     // Sweep-line exact peak concurrent running jobs (`T023`)
     let observed_peak_concurrent_jobs = if !active_intervals.is_empty() {
         active_intervals.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
@@ -1139,24 +1455,34 @@ pub fn sync_github_live_telemetry_window(
 
     let p95_queue_wait_sec = if !queue_waits_sec.is_empty() {
         queue_waits_sec.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let idx = (((queue_waits_sec.len() as f64) * 0.95).floor() as usize)
-            .min(queue_waits_sec.len() - 1);
-        Some(queue_waits_sec[idx])
+        Some((quantile_sorted(&queue_waits_sec, 0.95) * 10.0).round() / 10.0)
     } else {
         None
     };
 
+    // Fixes A1 & B5: Store unbiased arithmetic mean raw duration + exact arithmetic mean per-leg ceiled billed minutes
+    // + linearly interpolated `p90` raw duration!
     let mut job_durations_mins: Vec<(String, f64)> = Vec::new();
     let mut job_p90_durations_mins: Vec<(String, f64)> = Vec::new();
     for (k, mut v) in job_samples {
         v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let med = v[v.len() / 2];
-        let p90_idx = (((v.len() as f64) * 0.90).floor() as usize).min(v.len() - 1);
-        job_durations_mins.push((k.clone(), (med * 100.0).round() / 100.0));
-        job_p90_durations_mins.push((k, (v[p90_idx] * 100.0).round() / 100.0));
+        let mean_raw = v.iter().sum::<f64>() / (v.len().max(1) as f64);
+        let p90_val = quantile_sorted(&v, 0.90);
+        job_durations_mins.push((k.clone(), (mean_raw * 1000.0).round() / 1000.0));
+        job_p90_durations_mins.push((k, (p90_val * 1000.0).round() / 1000.0));
     }
     job_durations_mins.sort_by(|a, b| a.0.cmp(&b.0));
     job_p90_durations_mins.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut job_billed_mins: Vec<(String, f64)> = job_billed_samples
+        .into_iter()
+        .map(|(k, v)| {
+            let mean_billed = v.iter().sum::<f64>() / (v.len().max(1) as f64);
+            (k, (mean_billed * 10000.0).round() / 10000.0)
+        })
+        .collect();
+    job_billed_mins.sort_by(|a, b| a.0.cmp(&b.0));
+
     let mut job_runtime_labels: Vec<(String, String)> = job_label_map.into_iter().collect();
     job_runtime_labels.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -1173,25 +1499,39 @@ pub fn sync_github_live_telemetry_window(
 
     let mut artifact_gb = None;
     if visibility == "public" || token.is_some() {
-        let art_url = format!(
-            "https://api.github.com/repos/{}/actions/artifacts?per_page=100",
-            slug
-        );
-        let a_resp = github_get_with_etag(&art_url, tok_ref);
-        record_resp(&a_resp);
-        if let Some(ar) = a_resp {
-            let mut sum_bytes = 0.0_f64;
-            for achunk in ar.body.split("{\"id\":") {
-                if !achunk.contains("\"size_in_bytes\":") {
-                    continue;
+        let mut sum_bytes = 0.0_f64;
+        let mut got_any_art_resp = false;
+        let max_art_pages = if token.is_some() { 3usize } else { 1usize };
+        for ap in 1..=max_art_pages {
+            let art_url = format!(
+                "https://api.github.com/repos/{}/actions/artifacts?per_page=100&page={}",
+                slug, ap
+            );
+            let a_resp = github_get_with_etag(&art_url, tok_ref);
+            record_resp(&a_resp);
+            if let Some(ar) = a_resp {
+                got_any_art_resp = true;
+                let mut page_cnt = 0usize;
+                for achunk in ar.body.split("{\"id\":") {
+                    if !achunk.contains("\"size_in_bytes\":") {
+                        continue;
+                    }
+                    page_cnt += 1;
+                    if achunk.contains("\"expired\":true") || achunk.contains("\"expired\": true") {
+                        continue;
+                    }
+                    if let Some(b) = parse_num_field(achunk, "size_in_bytes") {
+                        sum_bytes += b;
+                    }
                 }
-                if achunk.contains("\"expired\":true") || achunk.contains("\"expired\": true") {
-                    continue;
+                if page_cnt < 100 {
+                    break;
                 }
-                if let Some(b) = parse_num_field(achunk, "size_in_bytes") {
-                    sum_bytes += b;
-                }
+            } else {
+                break;
             }
+        }
+        if got_any_art_resp {
             artifact_gb = Some(((sum_bytes / 1_073_741_824.0) * 100.0).round() / 100.0);
         }
     }
@@ -1219,8 +1559,8 @@ pub fn sync_github_live_telemetry_window(
         observed_p95_queue_wait_sec: p95_queue_wait_sec,
         observed_off_hours_run_share_pct: off_hours_pct,
         observed_peak_concurrent_jobs,
-        observed_cancelled_wasted_mins: if cancelled_wasted_sec > 0.0 {
-            Some(((cancelled_wasted_sec / 60.0) * 100.0).round() / 100.0)
+        observed_cancelled_wasted_mins: if cancelled_wasted_window_mins > 0.0 {
+            Some((cancelled_wasted_window_mins * 100.0).round() / 100.0)
         } else {
             None
         },
@@ -1233,12 +1573,17 @@ pub fn sync_github_live_telemetry_window(
         invoice_gross_usd: None,
         invoice_discount_usd: None,
         invoice_net_billed_usd: None,
+        invoice_compute_gross_usd: None,
+        invoice_compute_discount_usd: None,
+        invoice_compute_net_usd: None,
         median_cpu_util_pct: None,
         median_ram_util_pct: None,
         workflow_monthly_runs,
         job_durations_mins,
+        job_billed_mins,
         job_p90_durations_mins,
         job_runtime_labels,
+        job_observed_matrix_counts,
         real_phase_shares,
     };
 
@@ -1258,27 +1603,40 @@ pub fn pull_gitlab_telemetry_csv(project_id_or_slug: &str, out_csv: &Path) -> Re
         "https://gitlab.com/api/v4/projects/{}/jobs?per_page=100",
         encoded
     );
-    let tok = env::var("GITLAB_TOKEN")
-        .ok()
-        .filter(|s| !s.trim().is_empty());
+    let tok = crate::permissions::discover_provider_token_with_consent(
+        "gitlab",
+        true,
+        "read-only GitLab CI telemetry",
+    );
     let auth = tok.map(|t| format!("PRIVATE-TOKEN: {}", t));
     let resp = http_get_with_etag(&url, auth.as_deref(), "application/json")
         .ok_or_else(|| format!("Failed to reach GitLab Jobs API for {}", project_id_or_slug))?;
 
-    let mut rows = vec![
-        "ChargePeriodStart,ServiceName,ResourceName,SkuId,ConsumedQuantity,ConsumedUnit,ListCost,BilledCost".to_string(),
-    ];
-    let mut count = 0usize;
+    let now_epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let cutoff_30d = now_epoch.saturating_sub(30 * 86400);
+    let mut oldest_ep = u64::MAX;
+    let mut raw_chunks = 0usize;
+    let mut job_items: Vec<(String, String, f64, f64)> = Vec::new();
     for chunk in resp.body.split("{\"id\":") {
         if !chunk.contains("\"duration\":") {
             continue;
+        }
+        raw_chunks += 1;
+        let created = parse_str_field(chunk, "created_at").unwrap_or_else(|| "2026-11-01".to_string());
+        if let Some((ep, _, _)) = parse_iso8601_utc_epoch(&created) {
+            oldest_ep = oldest_ep.min(ep);
+            if ep < cutoff_30d {
+                continue;
+            }
         }
         let dur_sec = parse_num_field(chunk, "duration").unwrap_or(0.0);
         if dur_sec <= 0.0 {
             continue;
         }
-        let created = parse_str_field(chunk, "created_at").unwrap_or_else(|| "2026-11-01".to_string());
-        let date_part = created.get(0..10).unwrap_or("2026-11-01");
+        let date_part = created.get(0..10).unwrap_or("2026-11-01").to_string();
         let tag_label = if let Some(t_idx) = chunk.find("\"tag_list\":[") {
             let sub = &chunk[t_idx + 12..];
             sub.find(']')
@@ -1298,11 +1656,28 @@ pub fn pull_gitlab_telemetry_csv(project_id_or_slug: &str, out_csv: &Path) -> Re
         let mins = dur_sec / 60.0;
         let sku = resolve_runner_sku(tag_label);
         let usd = mins * sku.rate_per_min_usd;
+        job_items.push((date_part, sku.sku_label.to_string(), mins, usd));
+    }
+    // Fixes B6: Extrapolate 100-job truncated sample to 30-day run-rate when `oldest_ep > cutoff_30d`
+    let scale_30d = if raw_chunks >= 100 && oldest_ep != u64::MAX && oldest_ep > cutoff_30d {
+        let span_days = (((now_epoch.saturating_sub(oldest_ep)) as f64) / 86400.0)
+            .max(1.0 / 1440.0)
+            .min(30.0);
+        30.0 / span_days
+    } else {
+        1.0
+    };
+    let mut rows = vec![
+        "ChargePeriodStart,ServiceName,ResourceName,SkuId,ConsumedQuantity,ConsumedUnit,ListCost,BilledCost".to_string(),
+    ];
+    let count = job_items.len();
+    for (date_part, sku_lbl, mins, usd) in job_items {
+        let m_scaled = mins * scale_30d;
+        let u_scaled = usd * scale_30d;
         rows.push(format!(
             "{},GitLab CI,{},{},{:.4},minutes,{:.4},{:.4}",
-            date_part, project_id_or_slug, sku.sku_label, mins, usd, usd
+            date_part, project_id_or_slug, sku_lbl, m_scaled, u_scaled, u_scaled
         ));
-        count += 1;
     }
     if let Some(p) = out_csv.parent() {
         let _ = fs::create_dir_all(p);
@@ -1331,9 +1706,11 @@ pub fn pull_circleci_telemetry_csv(
         "https://circleci.com/api/v2/insights/{}/workflows?reporting-window={}",
         clean_slug, win
     );
-    let tok = env::var("CIRCLE_TOKEN")
-        .ok()
-        .filter(|s| !s.trim().is_empty());
+    let tok = crate::permissions::discover_provider_token_with_consent(
+        "circleci",
+        true,
+        "read-only CircleCI Insights telemetry",
+    );
     let auth = tok.map(|t| format!("Circle-Token: {}", t));
     let resp = http_get_with_etag(&url, auth.as_deref(), "application/json")
         .ok_or_else(|| format!("Failed to reach CircleCI v2 Insights API for {}", clean_slug))?;
@@ -1369,38 +1746,113 @@ pub fn pull_circleci_telemetry_csv(
 }
 
 pub fn pull_bitbucket_telemetry_csv(ws_repo: &str, out_csv: &Path) -> Result<usize, String> {
+    let clean_ws_repo = ws_repo.trim_matches('/');
     let url = format!(
         "https://api.bitbucket.org/2.0/repositories/{}/pipelines/?pagelen=50&sort=-created_on",
-        ws_repo.trim_matches('/')
+        clean_ws_repo
     );
-    let tok = env::var("BITBUCKET_TOKEN")
-        .ok()
-        .filter(|s| !s.trim().is_empty());
+    let tok = crate::permissions::discover_provider_token_with_consent(
+        "bitbucket",
+        true,
+        "read-only Bitbucket Pipelines telemetry",
+    );
     let auth = tok.map(|t| format!("Authorization: Bearer {}", t));
     let resp = http_get_with_etag(&url, auth.as_deref(), "application/json")
         .ok_or_else(|| format!("Failed to reach Bitbucket Pipelines API for {}", ws_repo))?;
 
-    let mut rows = vec![
-        "ChargePeriodStart,ServiceName,ResourceName,SkuId,ConsumedQuantity,ConsumedUnit,ListCost,BilledCost".to_string(),
-    ];
-    let mut count = 0usize;
+    let now_epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let cutoff_30d = now_epoch.saturating_sub(30 * 86400);
+    let mut oldest_ep = u64::MAX;
+    let mut raw_pipes = 0usize;
+    let mut pipe_items: Vec<(String, f64, f64)> = Vec::new();
+    let mut steps_fetched = 0usize;
+
     for chunk in resp.body.split("\"uuid\":") {
         if !chunk.contains("\"build_seconds_used\":") {
             continue;
+        }
+        raw_pipes += 1;
+        let created = parse_str_field(chunk, "created_on").unwrap_or_else(|| "2026-11-01".to_string());
+        if let Some((ep, _, _)) = parse_iso8601_utc_epoch(&created) {
+            oldest_ep = oldest_ep.min(ep);
+            if ep < cutoff_30d {
+                continue;
+            }
         }
         let build_sec = parse_num_field(chunk, "build_seconds_used").unwrap_or(0.0);
         if build_sec <= 0.0 {
             continue;
         }
-        let created = parse_str_field(chunk, "created_on").unwrap_or_else(|| "2026-11-01".to_string());
-        let date_part = created.get(0..10).unwrap_or("2026-11-01");
-        let billed_mins = (build_sec / 60.0).ceil().max(1.0);
+        let date_part = created.get(0..10).unwrap_or("2026-11-01").to_string();
+        // Fixes A5: Fetch per-step durations on sampled pipelines so Bitbucket's 1-min ceiling applies per step!
+        let mut step_billed_mins = None;
+        if steps_fetched < 8 {
+            if let Some(uuid_end) = chunk.trim_start().strip_prefix('"').and_then(|s| s.find('"')) {
+                let raw_uuid = &chunk.trim_start()[1..1 + uuid_end];
+                let enc_uuid = raw_uuid.replace('{', "%7B").replace('}', "%7D");
+                let steps_url = format!(
+                    "https://api.bitbucket.org/2.0/repositories/{}/pipelines/{}/steps/?pagelen=50",
+                    clean_ws_repo, enc_uuid
+                );
+                if let Some(sr) = http_get_with_etag(&steps_url, auth.as_deref(), "application/json") {
+                    steps_fetched += 1;
+                    let mut sum_m = 0.0_f64;
+                    let mut any_step = false;
+                    for sc in sr.body.split("\"duration_in_seconds\":") {
+                        let d_sec: String = sc
+                            .trim_start()
+                            .chars()
+                            .take_while(|c| c.is_ascii_digit() || *c == '.')
+                            .collect();
+                        if let Ok(sec_v) = d_sec.parse::<f64>() {
+                            if sec_v > 0.0 {
+                                any_step = true;
+                                let sz = if sc.contains("\"2x\"") {
+                                    2.0
+                                } else if sc.contains("\"4x\"") {
+                                    4.0
+                                } else if sc.contains("\"8x\"") {
+                                    8.0
+                                } else {
+                                    1.0
+                                };
+                                sum_m += (sec_v / 60.0).ceil().max(1.0) * sz;
+                            }
+                        }
+                    }
+                    if any_step {
+                        step_billed_mins = Some(sum_m);
+                    }
+                }
+            }
+        }
+        let billed_mins = step_billed_mins.unwrap_or_else(|| (build_sec / 60.0).ceil().max(1.0));
         let usd = billed_mins * 0.010;
+        pipe_items.push((date_part, billed_mins, usd));
+    }
+    // Fixes B6: Extrapolate 50-pipeline truncated sample to 30-day run-rate when `oldest_ep > cutoff_30d`
+    let scale_30d = if raw_pipes >= 50 && oldest_ep != u64::MAX && oldest_ep > cutoff_30d {
+        let span_days = (((now_epoch.saturating_sub(oldest_ep)) as f64) / 86400.0)
+            .max(1.0 / 1440.0)
+            .min(30.0);
+        30.0 / span_days
+    } else {
+        1.0
+    };
+    let mut rows = vec![
+        "ChargePeriodStart,ServiceName,ResourceName,SkuId,ConsumedQuantity,ConsumedUnit,ListCost,BilledCost".to_string(),
+    ];
+    let count = pipe_items.len();
+    for (date_part, billed_mins, usd) in pipe_items {
+        let m_scaled = billed_mins * scale_30d;
+        let u_scaled = usd * scale_30d;
         rows.push(format!(
             "{},Bitbucket Pipelines,{},bitbucket-1x,{:.2},minutes,{:.4},{:.4}",
-            date_part, ws_repo, billed_mins, usd, usd
+            date_part, ws_repo, m_scaled, u_scaled, u_scaled
         ));
-        count += 1;
     }
     if let Some(p) = out_csv.parent() {
         let _ = fs::create_dir_all(p);
@@ -1805,16 +2257,36 @@ pub fn parse_universal_billing_csv(
         );
     }
 
+    let idx_date = col_idx(
+        &[
+            "date",
+            "chargeperiodstart",
+            "charge_period_start",
+            "usage_date",
+            "billing_date",
+        ],
+        &["chargeperiodstart", "usage_date"],
+    );
+
     let mut gross_sum = 0.0_f64;
     let mut disc_sum = 0.0_f64;
     let mut net_sum = 0.0_f64;
+    let mut compute_gross_sum = 0.0_f64;
+    let mut compute_disc_sum = 0.0_f64;
+    let mut compute_net_sum = 0.0_f64;
+    let mut saw_compute_row = false;
     let mut storage_gb_hours = 0.0_f64;
     let mut storage_direct_gb = 0.0_f64;
-    let mut ghcr_gb = 0.0_f64;
+    let mut storage_direct_dates: HashSet<String> = HashSet::new();
+    let mut ghcr_gb_hours = 0.0_f64;
+    let mut ghcr_direct_gb = 0.0_f64;
+    let mut ghcr_direct_dates: HashSet<String> = HashSet::new();
+    let mut all_date_epochs: Vec<u64> = Vec::new();
     let mut cpu_samples = Vec::new();
     let mut ram_samples = Vec::new();
     let mut wf_row_counts: HashMap<String, usize> = HashMap::new();
     let mut seen_repos: HashSet<String> = HashSet::new();
+    let is_per_job_run_csv = idx_sec.is_some() && idx_qty.is_none();
 
     let filter_norm = repo_filter
         .map(|s| s.trim().to_ascii_lowercase())
@@ -1828,8 +2300,12 @@ pub fn parse_universal_billing_csv(
                 if !rlow.is_empty() {
                     seen_repos.insert(rlow.clone());
                     if let Some(ref flt) = filter_norm {
-                        let flt_short = flt.rsplit('/').next().unwrap_or(flt.as_str());
-                        if !rlow.contains(flt) && !flt.contains(&rlow) && rlow != flt_short {
+                        // Fixes H5: Exact slug match (or basename match ONLY when one side omits `owner/`),
+                        // preventing `"org/api"` from matching `"org/api-gateway"` or `"org/strapi"`!
+                        let exact_match = rlow == *flt
+                            || (!flt.contains('/') && rlow.rsplit('/').next() == Some(flt.as_str()))
+                            || (!rlow.contains('/') && flt.rsplit('/').next() == Some(rlow.as_str()));
+                        if !exact_match {
                             continue;
                         }
                     }
@@ -1837,18 +2313,9 @@ pub fn parse_universal_billing_csv(
             }
         }
 
-        if let Some(iw) = idx_wf {
-            if let Some(wval) = cols.get(iw) {
-                let wbase = wval.rsplit('/').next().unwrap_or(wval.as_str()).trim();
-                if !wbase.is_empty() {
-                    *wf_row_counts.entry(wbase.to_string()).or_insert(0) += 1;
-                }
-            }
-        }
-
         let prod_low = idx_product
             .and_then(|i| cols.get(i))
-            .map(|s| s.to_ascii_lowercase())
+            .map(|s| s.trim().to_ascii_lowercase())
             .unwrap_or_default();
         let sku_raw = idx_sku
             .and_then(|i| cols.get(i))
@@ -1857,8 +2324,52 @@ pub fn parse_universal_billing_csv(
         let sku_low = sku_raw.to_ascii_lowercase();
         let unit_low = idx_unit
             .and_then(|i| cols.get(i))
-            .map(|s| s.to_ascii_lowercase())
+            .map(|s| s.trim().to_ascii_lowercase())
             .unwrap_or_default();
+
+        // Fixes H5: Exclude completely non-CI products (`codespaces`, `copilot`, `git lfs`, `advanced security`)
+        if prod_low.contains("codespace")
+            || prod_low.contains("copilot")
+            || prod_low == "git lfs"
+            || prod_low == "lfs"
+            || prod_low.contains("advanced security")
+            || sku_low.contains("codespace")
+            || sku_low.contains("copilot")
+        {
+            continue;
+        }
+
+        let row_date_str = idx_date
+            .and_then(|i| cols.get(i))
+            .map(|s| s.trim().trim_matches('"').get(0..10).unwrap_or(s.trim()).to_string())
+            .filter(|s| !s.is_empty());
+        if let Some(ref ds) = row_date_str {
+            let iso_full = format!("{}T00:00:00Z", ds);
+            if let Some((ep, _, _)) = parse_iso8601_utc_epoch(&iso_full) {
+                all_date_epochs.push(ep);
+            }
+        }
+
+        let is_storage_or_pkg_row = prod_low.contains("package")
+            || sku_low.contains("storage")
+            || sku_low.contains("package")
+            || sku_low.contains("ghcr")
+            || sku_low.contains("cache")
+            || sku_low.contains("transfer")
+            || sku_low.contains("egress")
+            || unit_low.contains("gb")
+            || unit_low.contains("byte");
+
+        if is_per_job_run_csv && !is_storage_or_pkg_row {
+            if let Some(iw) = idx_wf {
+                if let Some(wval) = cols.get(iw) {
+                    let wbase = wval.rsplit('/').next().unwrap_or(wval.as_str()).trim();
+                    if !wbase.is_empty() {
+                        *wf_row_counts.entry(wbase.to_string()).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
 
         let parse_col = |idx: Option<usize>| -> Option<f64> {
             idx.and_then(|i| cols.get(i)).and_then(|v| {
@@ -1869,30 +2380,32 @@ pub fn parse_universal_billing_csv(
 
         let size_mult = parse_col(idx_size_mult).unwrap_or(1.0).max(1.0);
 
-        if let Some(g) = parse_col(idx_gross) {
-            gross_sum += g;
+        let (row_g, row_d, row_n) = if let Some(g) = parse_col(idx_gross) {
             let d = parse_col(idx_disc).unwrap_or(0.0);
             let n = parse_col(idx_net).unwrap_or((g - d).max(0.0));
-            disc_sum += d;
-            net_sum += n;
+            (g, d, n)
         } else if let Some(n) = parse_col(idx_net) {
             let d = parse_col(idx_disc).unwrap_or(0.0);
-            net_sum += n;
-            disc_sum += d;
-            gross_sum += n + d;
+            (n + d, d, n)
         } else if let Some(cr) = parse_col(idx_credits) {
             // CircleCI `TOTAL_CREDITS` already includes `COMPUTE + DLC + STORAGE + NETWORK` when present
             let usd = cr * 0.0006;
-            gross_sum += usd;
-            net_sum += usd;
+            (usd, 0.0, usd)
         } else if let (Some(q), Some(rt)) = (parse_col(idx_qty), parse_col(idx_rate)) {
-            let mins_or_units = if unit_low.starts_with("sec") { q / 60.0 } else { q };
+            let mins_or_units = if unit_low.starts_with("sec") {
+                q / 60.0
+            } else if unit_low.starts_with("hour") || unit_low == "hr" || unit_low == "hrs" {
+                q * 60.0
+            } else {
+                q
+            };
             let usd = mins_or_units * rt;
-            gross_sum += usd;
-            net_sum += usd;
+            (usd, 0.0, usd)
         } else if let Some(sec) = parse_col(idx_sec) {
             let spec = resolve_runner_sku(if sku_raw.is_empty() { "ubuntu-latest" } else { &sku_raw });
-            let mins = if spec.ceil_to_whole_minute {
+            let mins = if sec <= 0.0 {
+                0.0
+            } else if spec.ceil_to_whole_minute {
                 (sec / 60.0).ceil().max(1.0) * size_mult
             } else {
                 (sec / 60.0) * size_mult
@@ -1901,12 +2414,13 @@ pub fn parse_universal_billing_csv(
                 + parse_col(idx_storage_credits).unwrap_or(0.0) * 0.0006
                 + parse_col(idx_network_credits).unwrap_or(0.0) * 0.0006;
             let usd = mins * spec.rate_per_min_usd + extra_dlc_usd;
-            gross_sum += usd;
-            net_sum += usd;
+            (usd, 0.0, usd)
         } else if let Some(q) = parse_col(idx_qty) {
             let spec = resolve_runner_sku(if sku_raw.is_empty() { "ubuntu-latest" } else { &sku_raw });
             let mins = if unit_low.starts_with("sec") {
                 q / 60.0
+            } else if unit_low.starts_with("hour") || unit_low == "hr" || unit_low == "hrs" {
+                q * 60.0
             } else if unit_low.contains("credit") {
                 0.0
             } else {
@@ -1917,27 +2431,50 @@ pub fn parse_universal_billing_csv(
             } else {
                 mins * spec.rate_per_min_usd
             };
-            gross_sum += usd;
-            net_sum += usd;
+            (usd, 0.0, usd)
+        } else {
+            (0.0, 0.0, 0.0)
+        };
+
+        gross_sum += row_g;
+        disc_sum += row_d;
+        net_sum += row_n;
+        if !is_storage_or_pkg_row {
+            saw_compute_row = true;
+            compute_gross_sum += row_g;
+            compute_disc_sum += row_d;
+            compute_net_sum += row_n;
         }
 
         if let Some(q) = parse_col(idx_qty) {
-            if (sku_low.contains("storage") && (prod_low.contains("actions") || sku_low.contains("actions")))
-                || unit_low.contains("gb-hour")
+            let is_gb_hr = unit_low.contains("gb-hour")
                 || unit_low.contains("gb_hour")
+                || sku_low.contains("gb_hour")
+                || unit_low.contains("gigabyte-hour");
+            let is_pkg = sku_low.contains("package")
+                || prod_low.contains("package")
+                || sku_low.contains("ghcr")
+                || (sku_low.contains("container") && is_storage_or_pkg_row);
+            if is_pkg {
+                if is_gb_hr {
+                    ghcr_gb_hours += q;
+                } else {
+                    ghcr_direct_gb += q;
+                    if let Some(ref ds) = row_date_str {
+                        ghcr_direct_dates.insert(ds.clone());
+                    }
+                }
+            } else if (sku_low.contains("storage") && (prod_low.contains("actions") || sku_low.contains("actions")))
+                || is_gb_hr
             {
-                if sku_low.contains("package") || prod_low.contains("package") || sku_low.contains("ghcr") {
-                    ghcr_gb += q / 744.0;
-                } else if unit_low.contains("gb-hour") || unit_low.contains("gb_hour") || sku_low.contains("gb_hour") {
+                if is_gb_hr {
                     storage_gb_hours += q;
                 } else {
                     storage_direct_gb += q;
+                    if let Some(ref ds) = row_date_str {
+                        storage_direct_dates.insert(ds.clone());
+                    }
                 }
-            } else if prod_low.contains("packages")
-                || sku_low.contains("ghcr")
-                || sku_low.contains("container")
-            {
-                ghcr_gb += q;
             }
         }
 
@@ -1955,6 +2492,26 @@ pub fn parse_universal_billing_csv(
         return parse_universal_billing_csv(csv_path, None);
     }
 
+    // Normalize multi-month CSV exports (`> 35` days span) to a 30-day monthly equivalent!
+    let mut csv_month_scale = 1.0_f64;
+    if all_date_epochs.len() >= 2 {
+        all_date_epochs.sort_unstable();
+        let span_d = ((all_date_epochs.last().unwrap().saturating_sub(*all_date_epochs.first().unwrap())) as f64
+            / 86400.0)
+            + 1.0;
+        if span_d > 35.0 {
+            csv_month_scale = 30.0 / span_d;
+        }
+    }
+    gross_sum *= csv_month_scale;
+    disc_sum *= csv_month_scale;
+    net_sum *= csv_month_scale;
+    compute_gross_sum *= csv_month_scale;
+    compute_disc_sum *= csv_month_scale;
+    compute_net_sum *= csv_month_scale;
+    storage_gb_hours *= csv_month_scale;
+    ghcr_gb_hours *= csv_month_scale;
+
     let now_epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -1965,14 +2522,25 @@ pub fn parse_universal_billing_csv(
             None
         } else {
             v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            Some((v[v.len() / 2] * 10.0).round() / 10.0)
+            Some((quantile_sorted(&v, 0.50) * 10.0).round() / 10.0)
         }
     };
 
-    let total_art_gb = (storage_gb_hours / 744.0) + storage_direct_gb;
+    let avg_storage_direct = if storage_direct_dates.len() > 1 {
+        storage_direct_gb / (storage_direct_dates.len() as f64)
+    } else {
+        storage_direct_gb
+    };
+    let avg_ghcr_direct = if ghcr_direct_dates.len() > 1 {
+        ghcr_direct_gb / (ghcr_direct_dates.len() as f64)
+    } else {
+        ghcr_direct_gb
+    };
+    let total_art_gb = (storage_gb_hours / 744.0) + avg_storage_direct;
+    let ghcr_gb = (ghcr_gb_hours / 744.0) + avg_ghcr_direct;
     let mut wf_runs: Vec<(String, f64)> = wf_row_counts
         .into_iter()
-        .map(|(k, v)| (k, v as f64))
+        .map(|(k, v)| (k, (v as f64) * csv_month_scale))
         .collect();
     wf_runs.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -1987,6 +2555,21 @@ pub fn parse_universal_billing_csv(
         invoice_gross_usd: Some((gross_sum * 100.0).round() / 100.0),
         invoice_discount_usd: Some((disc_sum * 100.0).round() / 100.0),
         invoice_net_billed_usd: Some((net_sum * 100.0).round() / 100.0),
+        invoice_compute_gross_usd: if saw_compute_row {
+            Some((compute_gross_sum * 100.0).round() / 100.0)
+        } else {
+            None
+        },
+        invoice_compute_discount_usd: if saw_compute_row {
+            Some((compute_disc_sum * 100.0).round() / 100.0)
+        } else {
+            None
+        },
+        invoice_compute_net_usd: if saw_compute_row {
+            Some((compute_net_sum * 100.0).round() / 100.0)
+        } else {
+            None
+        },
         observed_artifact_storage_gb: if total_art_gb > 0.0 {
             Some((total_art_gb * 100.0).round() / 100.0)
         } else {

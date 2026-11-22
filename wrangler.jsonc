@@ -12,6 +12,10 @@
   },
   "ai": {
     "binding": "AI"
+  },
+  // Automated Friday 14:00 UTC FinOps Digest Cron for MiniCI Pro ($10/mo) & Team Flex (Custom) workspaces
+  "triggers": {
+    "crons": ["0 14 * * 5"]
   }
   // Optional stateful persistence — uncomment after creating in Cloudflare Dashboard (`wrangler d1 create minici-telemetry` & `wrangler kv namespace create MINICI_KV`):
   // "kv_namespaces": [

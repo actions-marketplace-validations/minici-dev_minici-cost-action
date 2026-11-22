@@ -1,6 +1,6 @@
 # MiniCI (`minici-cost-action`) — Installation & Usage Guide
 
-This guide covers installing and running `minici` (`v0.9.0`) as a **Local CLI**, **GitHub Action**, **Interactive `@minici` PR Bot**, **Shift-Left Git / IDE Hook**, and **`8`-Tool MCP Server**.
+This guide covers installing and running `minici` (`v0.9.1`) as a **Local CLI**, **GitHub Action**, **Interactive `@minici` PR Bot**, **Shift-Left Git / IDE Hook**, and **`8`-Tool MCP Server**.
 
 * **Terminal Demo (`.mp4`):** [`../web/how-to-install-and-use.mp4`](../web/how-to-install-and-use.mp4)
 * **Asciinema Recording (`.cast`):** [`../web/how-to-install-and-use.cast`](../web/how-to-install-and-use.cast)
@@ -16,7 +16,7 @@ This guide covers installing and running `minici` (`v0.9.0`) as a **Local CLI**,
 ```bash
 curl -fsSL https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/scripts/install.sh | bash
 minici --version
-# -> minici 0.9.0
+# -> minici 0.9.1
 ```
 
 ### Option B: Build Offline from Source (`~1.5s`)
@@ -170,12 +170,23 @@ jobs:
 
 ---
 
-## 4. Shift-Left Hooks & 8-Tool MCP Server
+## 4. AI Agent Skill, Shift-Left Hooks & 8-Tool MCP Server
 
-Run `minici init-hooks --path .` inside any repository to scaffold all 3 shift-left & CI integration files:
-1. `.minici/hooks.json` — Configures `PreToolUse` (`minici breakdown --path . --hook pre-tool-use`) and `PostToolUse` (`minici diff --path . --compare-to HEAD`) shift-left workflow cost-delta hooks.
-2. `.mcp.json` — Registers the stdio JSON-RPC 2.0 MCP server (`minici mcp`, supporting both NDJSON and LSP `Content-Length` framing) so AI coding agents can call all `8` live tools (`minici_breakdown`, `minici_diff`, `minici_sync_live`, `minici_permissions`, `minici_anomalies`, `minici_shrink`, `minici_migrate`, and `minici_ask`) directly during workflow edits.
-3. `.github/workflows/minici-cost.yml` — Installs the non-blocking GitHub Action Pull Request & push cost receipt workflow (`exit 0` informational).
+Install the standalone [`skills/minici-cost/SKILL.md`](../skills/minici-cost/SKILL.md) skill across any AI coding agent, or wire everything into a workspace via `minici init-hooks --path .`:
+
+```bash
+# Install across Claude Code, Cursor, Codex, Copilot, Antigravity, Windsurf, Cline, Goose & Amp
+npx skills add minici-dev/minici-cost-action
+
+# Or install directly in Claude Code via Marketplace
+/plugin install minici-cost --marketplace minici-dev/minici-cost-action
+```
+
+Run `minici init-hooks --path .` inside any repository to scaffold all shift-left, AI agent skill, and CI integration files:
+1. `.minici/hooks.json`, `.agents/hooks.json`, and `.claude/settings.json` — Configures `PreToolUse` (`minici breakdown --path . --hook pre-tool-use`) and `PostToolUse` (`minici diff --path . --compare-to HEAD`) shift-left workflow cost-delta hooks.
+2. `.mcp.json` and `.vscode/mcp.json` — Registers the stdio JSON-RPC 2.0 MCP server (`minici mcp`, supporting both NDJSON and LSP `Content-Length` framing) so AI coding agents can call all `8` live tools (`minici_breakdown`, `minici_diff`, `minici_sync_live`, `minici_permissions`, `minici_anomalies`, `minici_shrink`, `minici_migrate`, and `minici_ask`) directly during workflow edits.
+3. `.agents/skills/minici-cost/SKILL.md` (+ `.claude/skills/`, `.cursor/skills/`, `.github/skills/`) — Installs the progressive-disclosure `minici-cost` skill across Antigravity, Claude Code, Cursor, OpenAI Codex, Windsurf, and GitHub Copilot.
+4. `.github/workflows/minici-cost.yml` — Installs the non-blocking GitHub Action Pull Request & push cost receipt workflow (`exit 0` informational).
 
 Test the MCP server directly from your shell:
 
