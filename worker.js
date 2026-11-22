@@ -2059,12 +2059,18 @@ export default {
     if (url.pathname.startsWith("/v1/checkout/") && request.method === "GET") {
       const planSlug = url.pathname.slice("/v1/checkout/".length).trim().toLowerCase();
       let dest = "https://polar.sh/minici";
-      if (planSlug === "starter" && env && env.POLAR_CHECKOUT_STARTER_URL) {
-        dest = env.POLAR_CHECKOUT_STARTER_URL;
-      } else if (planSlug === "pro" && env && env.POLAR_CHECKOUT_PRO_URL) {
-        dest = env.POLAR_CHECKOUT_PRO_URL;
-      } else if ((planSlug === "custom" || planSlug === "flex") && env && env.POLAR_CHECKOUT_CUSTOM_URL) {
-        dest = env.POLAR_CHECKOUT_CUSTOM_URL;
+      if (planSlug === "starter") {
+        dest =
+          (env && env.POLAR_CHECKOUT_STARTER_URL) ||
+          "https://buy.polar.sh/polar_cl_62EwSj9qdDF362doVY7Hk68HQcxXrDhhvmZmB0JjvnI";
+      } else if (planSlug === "pro") {
+        dest =
+          (env && env.POLAR_CHECKOUT_PRO_URL) ||
+          "https://buy.polar.sh/polar_cl_Gbe4JUlRoTN7a6PqQ3lddj8tYbKtGE3PuYk5624TvwA";
+      } else if (planSlug === "custom" || planSlug === "flex") {
+        dest =
+          (env && env.POLAR_CHECKOUT_CUSTOM_URL) ||
+          "https://buy.polar.sh/polar_cl_inz7KQPwUMDhcHLflZYSIkKiDkUqDJmpq7X7Z0CaDpN";
       }
       return Response.redirect(dest, 302);
     }
