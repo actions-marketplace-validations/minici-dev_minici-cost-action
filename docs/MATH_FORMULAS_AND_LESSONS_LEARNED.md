@@ -82,3 +82,8 @@ This document is the permanent canonical reference for every mathematical formul
    - Overlapping compute reductions ($r_{\text{arm}}, r_{\text{cancel}}, r_{\text{cache}}, r_{\text{flake}}$) compound multiplicatively:
      $$\Delta G_{\text{compute}} = G \cdot \left(1 - \prod_k (1 - r_k)\right)$$
      with artifact storage savings added separately without being clipped by compute-only caps.
+
+4. **Hot-Reload Override Spot/vCPU Guard & String-Aware JSON Lockfile Parsing (`catalog.rs`, `telemetry.rs`, `worker.js`):**
+   - `apply_live_override` honors exact `raw_label` overrides first, never overwrites `-spot`/`-preemptible` queries with bare On-Demand `sku_label` rates, and never overwrites dynamically vCPU-rescaled templates (`runs-on=runner=8cpu-...`) with 2/4-vCPU base template prices.
+   - `TelemetrySnapshot::from_json_str` parses arrays via string-escape-aware bracket matching (`iter_json_array_objects`) so OS-bucketed job keys (`ci.yml::build [os:macos]`) never truncate on `]` inside string literals.
+   - Edge Worker (`worker.js`) `/v1/pricing/rates` and live/static repo calculators maintain `0.000000` SKU rate parity with `pricing/*.json` and per-second billing on 3rd-party microVM & self-hosted runners.

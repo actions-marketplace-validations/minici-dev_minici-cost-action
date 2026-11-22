@@ -300,84 +300,47 @@ impl CanonicalTelemetrySnapshot {
             }
         }
 
-        if let Some(w_idx) = raw.find("\"workflow_monthly_runs\":") {
-            let after = raw[w_idx + 24..].trim_start();
-            if after.starts_with('[') {
-                let section = after.find(']').map(|e| &after[1..e]).unwrap_or(&after[1..]);
-                for item in section.split('{').skip(1) {
-                    if let (Some(wname), Some(r)) =
-                        (parse_str_field(item, "workflow"), parse_num_field(item, "runs_30d"))
-                    {
-                        s.workflow_monthly_runs.push((wname, r));
-                    }
-                }
+        for item in iter_json_array_objects(raw, "workflow_monthly_runs") {
+            if let (Some(wname), Some(r)) =
+                (parse_str_field(item, "workflow"), parse_num_field(item, "runs_30d"))
+            {
+                s.workflow_monthly_runs.push((wname, r));
             }
         }
-
-        if let Some(j_idx) = raw.find("\"job_durations_mins\":") {
-            let after = raw[j_idx + 21..].trim_start();
-            if after.starts_with('[') {
-                let section = after.find(']').map(|e| &after[1..e]).unwrap_or(&after[1..]);
-                for item in section.split('{').skip(1) {
-                    if let (Some(jname), Some(m)) =
-                        (parse_str_field(item, "job"), parse_num_field(item, "p50_mins"))
-                    {
-                        s.job_durations_mins.push((jname, m));
-                    }
-                }
+        for item in iter_json_array_objects(raw, "job_durations_mins") {
+            if let (Some(jname), Some(m)) =
+                (parse_str_field(item, "job"), parse_num_field(item, "p50_mins"))
+            {
+                s.job_durations_mins.push((jname, m));
             }
         }
-        if let Some(jb_idx) = raw.find("\"job_billed_mins\":") {
-            let after = raw[jb_idx + 18..].trim_start();
-            if after.starts_with('[') {
-                let section = after.find(']').map(|e| &after[1..e]).unwrap_or(&after[1..]);
-                for item in section.split('{').skip(1) {
-                    if let (Some(jname), Some(m)) =
-                        (parse_str_field(item, "job"), parse_num_field(item, "billed_mins"))
-                    {
-                        s.job_billed_mins.push((jname, m));
-                    }
-                }
+        for item in iter_json_array_objects(raw, "job_billed_mins") {
+            if let (Some(jname), Some(m)) =
+                (parse_str_field(item, "job"), parse_num_field(item, "billed_mins"))
+            {
+                s.job_billed_mins.push((jname, m));
             }
         }
-        if let Some(p90_idx) = raw.find("\"job_p90_durations_mins\":") {
-            let after = raw[p90_idx + 25..].trim_start();
-            if after.starts_with('[') {
-                let section = after.find(']').map(|e| &after[1..e]).unwrap_or(&after[1..]);
-                for item in section.split('{').skip(1) {
-                    if let (Some(jname), Some(m)) =
-                        (parse_str_field(item, "job"), parse_num_field(item, "p90_mins"))
-                    {
-                        s.job_p90_durations_mins.push((jname, m));
-                    }
-                }
+        for item in iter_json_array_objects(raw, "job_p90_durations_mins") {
+            if let (Some(jname), Some(m)) =
+                (parse_str_field(item, "job"), parse_num_field(item, "p90_mins"))
+            {
+                s.job_p90_durations_mins.push((jname, m));
             }
         }
-        if let Some(lbl_idx) = raw.find("\"job_runtime_labels\":") {
-            let after = raw[lbl_idx + 21..].trim_start();
-            if after.starts_with('[') {
-                let section = after.find(']').map(|e| &after[1..e]).unwrap_or(&after[1..]);
-                for item in section.split('{').skip(1) {
-                    if let (Some(jname), Some(lbl)) =
-                        (parse_str_field(item, "job"), parse_str_field(item, "label"))
-                    {
-                        s.job_runtime_labels.push((jname, lbl));
-                    }
-                }
+        for item in iter_json_array_objects(raw, "job_runtime_labels") {
+            if let (Some(jname), Some(lbl)) =
+                (parse_str_field(item, "job"), parse_str_field(item, "label"))
+            {
+                s.job_runtime_labels.push((jname, lbl));
             }
         }
-        if let Some(mc_idx) = raw.find("\"job_observed_matrix_counts\":") {
-            let after = raw[mc_idx + 29..].trim_start();
-            if after.starts_with('[') {
-                let section = after.find(']').map(|e| &after[1..e]).unwrap_or(&after[1..]);
-                for item in section.split('{').skip(1) {
-                    if let (Some(jname), Some(cnt)) =
-                        (parse_str_field(item, "job"), parse_num_field(item, "count"))
-                    {
-                        if cnt >= 1.0 {
-                            s.job_observed_matrix_counts.push((jname, cnt as usize));
-                        }
-                    }
+        for item in iter_json_array_objects(raw, "job_observed_matrix_counts") {
+            if let (Some(jname), Some(cnt)) =
+                (parse_str_field(item, "job"), parse_num_field(item, "count"))
+            {
+                if cnt >= 1.0 {
+                    s.job_observed_matrix_counts.push((jname, cnt as usize));
                 }
             }
         }
@@ -453,6 +416,61 @@ impl CanonicalTelemetrySnapshot {
     }
 }
 
+fn iter_json_array_objects<'a>(raw: &'a str, key: &str) -> Vec<&'a str> {
+    let mut out = Vec::new();
+    let needle = format!("\"{}\":", key);
+    let Some(idx) = raw.find(&needle) else {
+        return out;
+    };
+    let after = raw[idx + needle.len()..].trim_start();
+    if !after.starts_with('[') {
+        return out;
+    }
+    let mut in_str = false;
+    let mut esc = false;
+    let mut arr_depth = 0i32;
+    let mut brace_depth = 0i32;
+    let mut obj_start: Option<usize> = None;
+    for (i, ch) in after.char_indices() {
+        if in_str {
+            if esc {
+                esc = false;
+            } else if ch == '\\' {
+                esc = true;
+            } else if ch == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_str = true,
+            '[' => arr_depth += 1,
+            ']' => {
+                arr_depth -= 1;
+                if arr_depth <= 0 {
+                    break;
+                }
+            }
+            '{' => {
+                if brace_depth == 0 {
+                    obj_start = Some(i);
+                }
+                brace_depth += 1;
+            }
+            '}' => {
+                brace_depth -= 1;
+                if brace_depth == 0 {
+                    if let Some(st) = obj_start.take() {
+                        out.push(&after[st..=i]);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 fn parse_str_field(raw: &str, key: &str) -> Option<String> {
     let needle = format!("\"{}\":", key);
     let idx = raw.find(&needle)?;
@@ -460,9 +478,26 @@ fn parse_str_field(raw: &str, key: &str) -> Option<String> {
     if !rest.starts_with('"') {
         return None;
     }
-    let inner = &rest[1..];
-    let end = inner.find('"')?;
-    Some(inner[..end].to_string())
+    let mut out = String::new();
+    let mut esc = false;
+    for ch in rest[1..].chars() {
+        if esc {
+            match ch {
+                'n' => out.push('\n'),
+                'r' => out.push('\r'),
+                't' => out.push('\t'),
+                other => out.push(other),
+            }
+            esc = false;
+        } else if ch == '\\' {
+            esc = true;
+        } else if ch == '"' {
+            return Some(out);
+        } else {
+            out.push(ch);
+        }
+    }
+    None
 }
 
 fn parse_num_field(raw: &str, key: &str) -> Option<f64> {

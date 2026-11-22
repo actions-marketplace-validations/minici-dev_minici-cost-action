@@ -6432,23 +6432,11 @@ pub fn analyze_path_with_telemetry(
             (monthly_superseded_run_waste_usd / gross_monthly_compute_cost_usd).clamp(0.0, 0.50);
         let r_filter =
             (monthly_unfiltered_check_savings_usd / gross_monthly_compute_cost_usd).clamp(0.0, 0.60);
-        let flake_compute_sav = if estimated_flake_rate_pct > 1.0 {
-            monthly_rerun_compute_cost_usd
-                * ((estimated_flake_rate_pct - 1.0) / estimated_flake_rate_pct)
-        } else {
-            0.0
-        };
-        let r_flake = (flake_compute_sav / gross_monthly_compute_cost_usd).clamp(0.0, 0.40);
+        let r_flake = (compute_sav_at_1pct / gross_monthly_compute_cost_usd).clamp(0.0, 0.40);
         let remaining_frac = (1.0 - r_cache) * (1.0 - r_cancel) * (1.0 - r_filter) * (1.0 - r_flake);
         let compound_compute_sav =
             (gross_monthly_compute_cost_usd * (1.0 - remaining_frac)).min(gross_monthly_compute_cost_usd * 0.85);
-        let flake_payroll_sav = if estimated_flake_rate_pct > 1.0 {
-            monthly_flake_investigation_payroll_usd
-                * ((estimated_flake_rate_pct - 1.0) / estimated_flake_rate_pct)
-        } else {
-            0.0
-        };
-        compound_compute_sav + flake_payroll_sav
+        compound_compute_sav + payroll_sav_at_1pct
     } else {
         0.0
     };

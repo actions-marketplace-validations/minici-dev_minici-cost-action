@@ -682,25 +682,54 @@ fn get_cached_overrides() -> Option<String> {
 }
 
 /// Non-breaking hot-reload check: reads cached `~/.minici/pricing_overrides.json` in memory (`< 1 µs`).
-/// Checks both the exact `raw_label` from workflow YAML and the canonical `spec.sku_label`.
-/// Never panics or fails if file is missing/corrupt — always falls back to `EMBEDDED_SKU_CATALOG`.
+/// 1. Always honors an exact override on `raw_label.trim()`.
+/// 2. Only falls back to `spec.sku_label` when `spec` has NOT been dynamically rescaled away from its
+///    canonical `(vcpus, os, arch)` template and is not a Spot/Preemptible query on an On-Demand SKU.
 pub fn apply_live_override(spec: &mut RunnerSkuSpec, raw_label: &str) {
     if let Some(raw) = get_cached_overrides() {
-        for candidate in [raw_label.trim(), spec.sku_label] {
-            let key = format!("\"{}\":", candidate);
-            if let Some(idx) = raw.find(&key) {
-                let after = raw[idx + key.len()..].trim_start();
-                let num_str: String = after
-                    .chars()
-                    .take_while(|c| c.is_ascii_digit() || *c == '.')
-                    .collect();
-                if let Ok(val) = num_str.parse::<f64>() {
-                    if val >= 0.0 && val <= 25.0 {
-                        spec.rate_per_min_usd = val;
-                        return;
-                    }
-                }
+        let raw_trim = raw_label.trim();
+        let lookup_key = |k: &str| -> Option<f64> {
+            let needle = format!("\"{}\":", k);
+            let idx = raw.find(&needle)?;
+            let after = raw[idx + needle.len()..].trim_start();
+            parse_leading_json_float(after).filter(|v| (0.0..=25.0).contains(v))
+        };
+
+        if let Some(val) = lookup_key(raw_trim) {
+            spec.rate_per_min_usd = val;
+            return;
+        }
+
+        if matches!(spec.sku_label, "cloud-seeded-vm" | "dynamic-json-sku") {
+            return;
+        }
+
+        let raw_low = raw_trim.to_ascii_lowercase();
+        let sku_low = spec.sku_label.to_ascii_lowercase();
+        let is_spot_query =
+            (raw_low.contains("spot") || raw_low.contains("preemptible"))
+                && !sku_low.contains("spot")
+                && !sku_low.contains("preemptible");
+        if is_spot_query {
+            let spot_sku_key = format!("{}-spot", spec.sku_label);
+            if let Some(val) = lookup_key(&spot_sku_key) {
+                spec.rate_per_min_usd = val;
             }
+            return;
+        }
+
+        // Guard against applying a base template SKU's rate when vCPUs/OS/arch were dynamically scaled
+        if let Some(emb) = EMBEDDED_SKU_CATALOG
+            .iter()
+            .find(|e| e.sku_label == spec.sku_label)
+        {
+            if emb.vcpus != spec.vcpus || emb.os != spec.os || emb.arch != spec.arch {
+                return;
+            }
+        }
+
+        if let Some(val) = lookup_key(spec.sku_label) {
+            spec.rate_per_min_usd = val;
         }
     }
 }
@@ -722,7 +751,7 @@ pub fn pricing_catalog_status() -> String {
                 })
                 .count();
             return format!(
-                "Hot-Reload Active (~/.minici/pricing_overrides.json • {} Overrides + {} JSON SKUs + {} Seeded Cloud VMs)",
+                "Hot-Reload Active (~/.minici/pricing_overrides.json | {} Overrides + {} JSON SKUs + {} Seeded Cloud VMs)",
                 count,
                 reg.json_skus.len(),
                 reg.cloud_seed.len()

@@ -40,12 +40,12 @@ const OFFICIAL_RATES_FEED = {
   gitlab_ci: {
     "saas-linux-small-amd64": 0.01,
     "saas-linux-small-arm64": 0.01,
-    "saas-linux-medium-amd64": 0.03,
-    "saas-linux-medium-arm64": 0.03,
-    "saas-linux-large-amd64": 0.06,
-    "saas-linux-large-arm64": 0.06,
-    "saas-linux-xlarge-amd64": 0.12,
-    "saas-linux-2xlarge-amd64": 0.24,
+    "saas-linux-medium-amd64": 0.02,
+    "saas-linux-medium-arm64": 0.02,
+    "saas-linux-large-amd64": 0.03,
+    "saas-linux-large-arm64": 0.03,
+    "saas-linux-xlarge-amd64": 0.06,
+    "saas-linux-2xlarge-amd64": 0.12,
     "saas-macos-medium-m1": 0.06,
     "saas-macos-large-m2pro": 0.12
   },
@@ -78,18 +78,46 @@ const OFFICIAL_RATES_FEED = {
     "ARM_CONTAINER_LARGE": 0.015
   },
   gcp_cloud_build: {
-    "E2_MEDIUM": 0.006,
-    "E2_HIGHCPU_8": 0.016,
-    "E2_HIGHCPU_32": 0.064,
+    "E2_MEDIUM": 0.003,
+    "E2_STANDARD_2": 0.006,
+    "E2_HIGHCPU_8": 0.0156,
+    "E2_HIGHCPU_32": 0.0624,
     "N1_HIGHCPU_8": 0.016,
     "N1_HIGHCPU_32": 0.064
   },
   azure_pipelines: {
     "azure-microsoft-hosted-linux": 0.008,
-    "azure-microsoft-hosted-windows": 0.016,
+    "azure-microsoft-hosted-windows": 0.008,
     "azure-microsoft-hosted-macos": 0.062
   }
 };
+
+function isThirdPartyMicroVmLabel(l) {
+  return (
+    l.includes("blacksmith") ||
+    l.includes("warpbuild") ||
+    l.startsWith("warp-") ||
+    l.includes("depot") ||
+    l.includes("buildjet") ||
+    l.includes("namespace")
+  );
+}
+
+function isLargerOrNonAllowanceLabel(l) {
+  return (
+    l.includes("self-hosted") ||
+    l.includes("runs-on=") ||
+    l.startsWith("runson-") ||
+    isThirdPartyMicroVmLabel(l) ||
+    /\b(?:4|8|16|32|64|96)-?core\b/.test(l) ||
+    /\b(?:[4-9]|\d{2,})vcpu\b/.test(l) ||
+    l.includes("large") ||
+    l.includes("xlarge") ||
+    l.includes("gpu") ||
+    l.includes("cuda") ||
+    l.includes("t4")
+  );
+}
 
 function resolveRunnerRate(label) {
   const raw = String(label || "ubuntu-latest").trim();
@@ -97,19 +125,32 @@ function resolveRunnerRate(label) {
     return OFFICIAL_RATES_FEED.github_actions[raw];
   }
   const l = raw.toLowerCase();
-  if (l.includes("self-hosted")) {
-    return 0.0;
+  if (l.includes("self-hosted") || l.includes("runs-on=") || l.startsWith("runson-")) {
+    return 0.0024;
   }
   if (OFFICIAL_RATES_FEED.github_actions[l] !== undefined) {
     return OFFICIAL_RATES_FEED.github_actions[l];
   }
   const isArm = l.includes("arm") || l.includes("aarch64") || l.includes("graviton");
   const isWin = l.includes("windows");
+  if (isThirdPartyMicroVmLabel(l)) {
+    if (l.includes("macos")) return 0.032;
+    const vcpuMatch =
+      l.match(/(\d+)\s*vcpu/) ||
+      l.match(/-(\d+)x\d+/) ||
+      l.match(/-(?:ubuntu|windows|linux)[a-z0-9.-]*-(\d+)$/);
+    const vcpus = vcpuMatch ? Math.max(2, Number(vcpuMatch[1]) || 2) : 2;
+    const perVcpu = l.includes("warp") && isArm ? 0.0016 : 0.002;
+    return Number((vcpus * perVcpu).toFixed(6));
+  }
   if (l.includes("gpu") || l.includes("cuda") || l.includes("t4")) return 0.052;
   if (l.includes("macos-14") && l.includes("xlarge")) return 0.102;
   if (l.includes("macos") && l.includes("xlarge")) return 0.12;
   if (l.includes("macos") && l.includes("large")) return 0.077;
   if (l.includes("macos")) return 0.062;
+  if (l.includes("96-core") || l.includes("96core") || l.includes("96vcpu")) {
+    return isWin ? (isArm ? 0.291 : 0.462) : (isArm ? 0.147 : 0.243);
+  }
   if (l.includes("64-core") || l.includes("64core") || l.includes("64vcpu")) {
     return isWin ? (isArm ? 0.194 : 0.308) : (isArm ? 0.098 : 0.162);
   }
@@ -125,11 +166,9 @@ function resolveRunnerRate(label) {
   if (l.includes("4-core") || l.includes("4core") || l.includes("4vcpu")) {
     return isWin ? (isArm ? 0.014 : 0.022) : (isArm ? 0.008 : 0.012);
   }
-  if (l.includes("blacksmith") || l.includes("warpbuild") || l.includes("buildjet")) return 0.004;
   if (isWin) return isArm ? 0.008 : 0.01;
   if (isArm) return 0.005;
   if (l.includes("slim")) return 0.002;
-  if (l.includes("self-hosted") || l.includes("runs-on=") || l.startsWith("runson-")) return 0.0024;
   return 0.006;
 }
 
@@ -330,7 +369,6 @@ async function fetchLiveGitHubRepoSummary(slug, ghToken, windowDays = 30) {
         const endMs = Date.parse(job.completed_at || "");
         if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue;
         const durSec = (endMs - startMs) / 1000.0;
-        const billedMins = Math.max(1, Math.ceil(durSec / 60.0));
         const labels = Array.isArray(job.labels) ? job.labels : [];
         const hasSelfHosted = labels.some((l) => String(l).toLowerCase() === "self-hosted");
         const specific = labels.find((l) => l && String(l).toLowerCase() !== "self-hosted");
@@ -340,19 +378,12 @@ async function fetchLiveGitHubRepoSummary(slug, ghToken, windowDays = 30) {
             : "self-hosted"
           : specific || "ubuntu-latest";
         const rlLow = runtimeLabel.toLowerCase();
+        const isPerSec = hasSelfHosted || isThirdPartyMicroVmLabel(rlLow);
+        const billedMins = isPerSec
+          ? Math.round((durSec / 60.0) * 100.0) / 100.0
+          : Math.max(1, Math.ceil(durSec / 60.0));
         const rate = resolveRunnerRate(runtimeLabel);
-        const isLargerOr3p =
-          hasSelfHosted ||
-          rlLow.includes("-core") ||
-          rlLow.includes("core") ||
-          rlLow.includes("vcpu") ||
-          rlLow.includes("large") ||
-          rlLow.includes("xlarge") ||
-          rlLow.includes("gpu") ||
-          rlLow.includes("blacksmith") ||
-          rlLow.includes("warp") ||
-          rlLow.includes("depot") ||
-          rlLow.includes("buildjet");
+        const isLargerOr3p = hasSelfHosted || isLargerOrNonAllowanceLabel(rlLow);
         sampleJobCount += 1;
         sampleBilled += billedMins;
         const jc = billedMins * rate;
@@ -409,11 +440,20 @@ async function fetchLiveGitHubRepoSummary(slug, ghToken, windowDays = 30) {
       const matches = [...yml.matchAll(/^\s+runs-on:\s*([^\n#]+)/gm)];
       const count = Math.max(matches.length, 1);
       for (let i = 0; i < count; i++) {
-        const label = matches[i] ? matches[i][1].trim() : "ubuntu-latest";
+        const label = matches[i] ? matches[i][1].trim().replace(/^['"]|['"]$/g, "") : "ubuntu-latest";
+        const rlLow = label.toLowerCase();
         const rate = resolveRunnerRate(label);
+        const jc = stepEstMins * rate;
         totalJobs += 1;
         billedMinsPerRun += stepEstMins;
-        runCostUsd += stepEstMins * rate;
+        runCostUsd += jc;
+        if (isLargerOrNonAllowanceLabel(rlLow)) {
+          nonPoolGrossPerRun += jc;
+        } else {
+          const osMult = rlLow.includes("macos") ? 10.0 : rlLow.includes("windows") ? 2.0 : 1.0;
+          stdPoolMinsPerRun += stepEstMins * osMult;
+          stdGrossPerRun += jc;
+        }
       }
     }
     if (monthlyRuns <= 0) {
