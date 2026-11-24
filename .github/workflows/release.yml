@@ -44,7 +44,8 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact: minici-linux-x86_64
             bin_name: minici
-          - os: ubuntu-24.04-arm
+          # ubuntu-22.04-arm, not 24.04-arm: a 24.04 build needs GLIBC_2.39 and fails on 22.04 hosts.
+          - os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
             artifact: minici-linux-aarch64
             bin_name: minici

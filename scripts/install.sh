@@ -58,9 +58,14 @@ if curl -fsSL "${BASE_URL}/${ASSET}" -o "${TMP_DIR}/minici" 2>/dev/null \
   fi
   echo "✅ Verified SHA-256 checksum (${ACTUAL:0:16}...)"
   chmod +x "${TMP_DIR}/minici"
-  rm -f "${INSTALL_DIR}/minici"
-  mv "${TMP_DIR}/minici" "${INSTALL_DIR}/minici"
-  INSTALLED_PREBUILT=1
+  # A checksum-verified asset can still be unrunnable (e.g. built against a newer glibc than this host has).
+  if "${TMP_DIR}/minici" --version >/dev/null; then
+    rm -f "${INSTALL_DIR}/minici"
+    mv "${TMP_DIR}/minici" "${INSTALL_DIR}/minici"
+    INSTALLED_PREBUILT=1
+  else
+    echo "⚠️ Verified ${ASSET} does not run on this system (libc mismatch?); falling back to source build..."
+  fi
 fi
 
 if [ "$INSTALLED_PREBUILT" = "0" ]; then
@@ -74,4 +79,6 @@ if [ "$INSTALLED_PREBUILT" = "0" ]; then
   chmod +x "${INSTALL_DIR}/minici"
 fi
 
-echo "✅ Installed $("${INSTALL_DIR}/minici" --version) -> ${INSTALL_DIR}/minici"
+# Assign separately: inside echo's $(...) a failing --version would not stop the script.
+INSTALLED_VERSION="$("${INSTALL_DIR}/minici" --version)"
+echo "✅ Installed ${INSTALLED_VERSION} -> ${INSTALL_DIR}/minici"
