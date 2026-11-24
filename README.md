@@ -175,7 +175,7 @@ Build the pinned release with Cargo, or download release binaries and checksums 
 
 ```bash
 # Option A: Install from a pinned source revision
-cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 0fceb7a0ba81403e8ec3262970ff6f4ccd8c8c18 minici
+cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 5c2152f912efcfaf89f82d6cbee3b0dd455a2bba minici
 
 # Option B: Build from a local checkout
 cargo install --locked --path crates/minici
