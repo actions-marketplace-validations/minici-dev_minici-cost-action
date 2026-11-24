@@ -15,7 +15,7 @@ This guide provides the exact zero-cost (`$0.00/mo`) workflow to activate:
    - **MiniCI Starter** (`$1/month` — `minici share` unlisted cloud links, 30-day trend ledger for up to 3 repos, live SVG badge)
    - **MiniCI Pro** (`$10/month` — Automated Friday Slack FinOps digest, real-time 1.5x spend velocity alerts, 15-repo dashboard, 365d retention)
    - **MiniCI Team Flex** (`Custom/month` pay-what-you-want — Unlimited repos, central org PR budget gate policy, synced enterprise custom runner rates)
-2. In **`https://polar.sh/dashboard/minici/settings/webhooks`**, add endpoint **`https://minici-cost-action.raza-aamir01.workers.dev/v1/webhook/polar`** (events: `subscription.*`, `benefit_grant.*`) and bind `POLAR_WEBHOOK_SECRET` in Cloudflare Worker secrets.
+2. In **`https://polar.sh/dashboard/minici/settings/webhooks`**, add endpoint **`https://minici.dev/v1/webhook/polar`** (events: `subscription.*`, `benefit_grant.*`) and bind `POLAR_WEBHOOK_SECRET` in Cloudflare Worker secrets.
 3. Go to **`https://polar.sh/dashboard/minici/storefront`** (or **Settings -> Storefront**) and toggle **Enable Public Storefront** -> **Save**.
 3. Verify `curl -sI https://polar.sh/minici` returns `HTTP/2 200`. Every PR and repo visitor clicking **Sponsor** on GitHub now lands directly on your Polar checkout page.
 
@@ -28,7 +28,7 @@ This guide provides the exact zero-cost (`$0.00/mo`) workflow to activate:
 1. Open **`https://github.com/account/organizations/new?plan=free`**.
 2. Set:
    - **Organization account name:** `minici-dev`
-   - **Contact email:** `raza.aamir01@gmail.com`
+   - **Contact:** maintainer contact (see SUPPORT.md)
    - **This organization belongs to:** *My personal account* -> Solve CAPTCHA -> **Next / Complete setup**.
 3. Open **`https://github.com/organizations/minici-dev/settings/domains`** -> click **Add a domain** -> enter:
    ```text
@@ -45,13 +45,13 @@ This guide provides the exact zero-cost (`$0.00/mo`) workflow to activate:
 ```json
 {
   "description": "MiniCI — Open-Source CI/CD Cost Breakdown, PR Diff & Quota Receipt Engine",
-  "repo": "https://github.com/Aamir-raza-1/minici-cost-action",
+  "repo": "https://github.com/<current-owner>/minici-cost-action",
   "owner": {
-    "username": "Aamir-raza-1",
-    "email": "raza.aamir01@gmail.com"
+    "username": "<current-owner>",
+    "email": "<owner-email>"
   },
   "records": {
-    "CNAME": "minici-cost-action.raza-aamir01.workers.dev",
+    "CNAME": "minici.dev",
     "TXT": [
       "PASTE_GITHUB_ORG_CHALLENGE_TOKEN_HERE"
     ]
@@ -70,11 +70,10 @@ Once `is-a-dev/register` merges the PR (~15 minutes to a few hours):
 
 ## 4. Transfer `minici-cost-action` & Update Repo Slug in 1 Command
 
-1. Open **`https://github.com/Aamir-raza-1/minici-cost-action/settings`** -> scroll to **Danger Zone -> Transfer ownership** -> select **`minici-dev`**.
-   - GitHub automatically preserves all stars, releases, tags (`v1`, `v0.9.0`), Marketplace listing URL, and `301` Git/HTTPS redirects from `Aamir-raza-1/minici-cost-action@v1`.
+1. Open **`https://github.com/<current-owner>/minici-cost-action/settings`** -> scroll to **Danger Zone -> Transfer ownership** -> select **`minici-dev`**.
+   - GitHub automatically preserves all stars, releases, tags (`v1`, `v0.9.0`), Marketplace listing URL, and `301` Git/HTTPS redirects from `<current-owner>/minici-cost-action@v1`.
 2. Run the built-in slug migration script locally and push a release tag:
    ```bash
    python3 tools/migrate_repo_slug_to_org.py --org minici-dev --apply
    git remote set-url origin https://github.com/minici-dev/minici-cost-action.git
-   bash scripts/qa_closed_loop.sh
    ```

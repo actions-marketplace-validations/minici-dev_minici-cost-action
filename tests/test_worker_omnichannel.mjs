@@ -291,7 +291,14 @@ async function runTests() {
     assert.equal(hugeRes.status, 413);
   }
 
-  console.log("✅ ALL 7 OMNICHANNEL & SECURITY WORKER SUITES PASSED (GitHub App, D-34 Guard, Slack, Linear, Jira, GChat, Stored-XSS CSP Sandbox)");
+  // 8. Canonical host: www.minici.dev 301s to the apex, keeping path and query
+  {
+    const wwwRes = await worker.fetch(new Request("https://www.minici.dev/blog/?utm=1"), env, ctx);
+    assert.equal(wwwRes.status, 301);
+    assert.equal(wwwRes.headers.get("location"), "https://minici.dev/blog/?utm=1");
+  }
+
+  console.log("✅ ALL 8 OMNICHANNEL & SECURITY WORKER SUITES PASSED (GitHub App, D-34 Guard, Slack, Linear, Jira, GChat, Stored-XSS CSP Sandbox, www→apex 301)");
 }
 
 await runTests();

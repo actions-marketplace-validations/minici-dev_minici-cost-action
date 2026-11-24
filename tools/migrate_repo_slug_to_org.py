@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 One-command repository slug migration tool for transferring `minici-cost-action`
-from a personal GitHub user (`Aamir-raza-1`) to the Verified GitHub Organization
+from a personal GitHub user account to the Verified GitHub Organization
 (e.g., `minici-dev`).
 
 Usage:
@@ -37,7 +37,7 @@ TARGET_FILES = [
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Migrate repo slug to GitHub Organization")
-    parser.add_argument("--from-owner", default="Aamir-raza-1", help="Current GitHub owner")
+    parser.add_argument("--from-owner", required=True, help="Current GitHub owner (e.g. your personal user)")
     parser.add_argument("--org", default="minici-dev", help="New GitHub Organization handle")
     parser.add_argument("--repo", default="minici-cost-action", help="Repository name")
     parser.add_argument("--apply", action="store_true", help="Write changes to disk")

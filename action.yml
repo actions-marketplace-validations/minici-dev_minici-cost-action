@@ -1,6 +1,6 @@
 name: "MiniCI — CI/CD Cost Breakdown, PR Diff & Quota Receipt"
 description: "See what each Pull Request adds to your CI bill & dev wait time before merge. Sticky PR diff + 1-click YAML fixes."
-author: "Aamir Raza <raza.aamir01@gmail.com>"
+author: "MiniCI"
 branding:
   icon: "dollar-sign"
   color: "green"
@@ -54,10 +54,10 @@ inputs:
     description: "Optional Polar.sh MiniCI Cloud Key (Starter $1 / Pro $10 / Team Flex) for unlisted /r/<id> report links, 30d/365d trend ledger & org policy sync"
     required: false
     default: ""
-  cloud-api-url:
-    description: "MiniCI Cloud Worker API base URL (used only when cloud-key is provided)"
+  api-url:
+    description: "MiniCI API base URL (used only when cloud-key is provided; override for self-hosted or staging Workers)"
     required: false
-    default: "https://minici-cost-action.raza-aamir01.workers.dev"
+    default: "https://minici.dev"
 
 outputs:
   gross_monthly_compute_cost_usd:
@@ -192,7 +192,7 @@ runs:
         INPUT_SUGGEST_FIXES: ${{ inputs.suggest-fixes }}
         INPUT_SLACK_WEBHOOK_URL: ${{ inputs.slack-webhook-url }}
         INPUT_CLOUD_KEY: ${{ inputs.cloud-key }}
-        INPUT_CLOUD_API_URL: ${{ inputs.cloud-api-url }}
+        INPUT_API_URL: ${{ inputs.api-url }}
         EVENT_NAME: ${{ github.event_name }}
         EVENT_PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
       run: |
@@ -434,12 +434,12 @@ runs:
         PYTHON
         fi
         if [ -n "${INPUT_CLOUD_KEY:-}" ]; then
-          CLOUD_SYNC_ARGS=(--path "$INPUT_PATH" --key "$INPUT_CLOUD_KEY" --api-url "$INPUT_CLOUD_API_URL" --format json --quiet)
+          CLOUD_SYNC_ARGS=(--path "$INPUT_PATH" --key "$INPUT_CLOUD_KEY" --api-url "$INPUT_API_URL" --format json --quiet)
           if [ -n "$INPUT_COMPARE_TO" ]; then
             CLOUD_SYNC_ARGS+=(--compare-to "$INPUT_COMPARE_TO")
           fi
           "$BIN_PATH" cloud-sync "${CLOUD_SYNC_ARGS[@]}" >/dev/null 2>&1 || true
-          SHARE_JSON="$("$BIN_PATH" share --path "$INPUT_PATH" --key "$INPUT_CLOUD_KEY" --api-url "$INPUT_CLOUD_API_URL" --format json --quiet 2>/dev/null || true)"
+          SHARE_JSON="$("$BIN_PATH" share --path "$INPUT_PATH" --key "$INPUT_CLOUD_KEY" --api-url "$INPUT_API_URL" --format json --quiet 2>/dev/null || true)"
           if [ -n "$SHARE_JSON" ] && [ -n "${GITHUB_OUTPUT:-}" ]; then
             python3 -c '
         import json, os, sys

@@ -1,0 +1,6 @@
+# MiniCI security contact (RFC 9116)
+Contact: https://github.com/minici-dev/minici-cost-action/security/advisories/new
+Policy: https://github.com/minici-dev/minici-cost-action/blob/main/SECURITY.md
+Canonical: https://minici.dev/.well-known/security.txt
+Expires: 2027-11-24T00:00:00.000Z
+Preferred-Languages: en

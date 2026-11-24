@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -16,7 +17,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DOCS_BLOG = REPO_ROOT / "docs" / "blog"
 WEB_BLOG = REPO_ROOT / "web" / "blog"
-SITE_ORIGIN = "https://minici-cost-action.raza-aamir01.workers.dev"
+# Same single config value as the CLI/action: MINICI_API_URL overrides the default origin.
+SITE_ORIGIN = os.environ.get("MINICI_API_URL", "https://minici.dev").rstrip("/")
 
 ARTICLES = [
     {
@@ -252,7 +254,7 @@ def render_page(title: str, desc: str, slug_path: str, keywords: list[str], body
         "headline": title,
         "description": desc,
         "datePublished": date,
-        "author": {"@type": "Person", "name": "Aamir Raza", "url": "https://github.com/Aamir-raza-1"},
+        "author": {"@type": "Organization", "name": "MiniCI", "url": "https://github.com/minici-dev"},
         "publisher": {"@type": "Organization", "name": "MiniCI", "url": SITE_ORIGIN},
         "url": url,
         "keywords": ", ".join(keywords),
@@ -296,7 +298,7 @@ def render_page(title: str, desc: str, slug_path: str, keywords: list[str], body
     {body_html}
   </main>
   <footer class="container">
-    <span>Built in pure Rust by <a href="https://github.com/Aamir-raza-1">Aamir Raza</a> • Apache-2.0</span>
+    <span>Built in pure Rust by the <a href="https://github.com/minici-dev">MiniCI maintainers</a> • Apache-2.0</span>
     <span><a href="/">Home</a> • <a href="/blog/">Blog</a> • <a href="https://polar.sh/minici/portal">Customer Portal</a> • <a href="https://github.com/minici-dev/minici-cost-action">GitHub</a></span>
   </footer>
 </body>
