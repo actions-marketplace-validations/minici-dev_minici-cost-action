@@ -7,8 +7,8 @@ ZERO MOCKS / ZERO HARDCODED SERVER DICTIONARIES:
   - Arm A (`llm_direct_unconstrained`): Live local Ollama (`qwen2.5-coder:14b` via `/api/generate`)
     prompted for free-form JSON WITHOUT grammar enum constraints, cyclic-shift debiasing, or `noul`.
   - Arm B (`minici_plus_real_jev_systemone`): Hybrid `minici` Tier 1+2 deterministic engine +
-    REAL `JevSystemOneEngine` (`tools/jev_systemone_server.py` backed by live `qwen2.5-coder:14b`
-    with GBNF JSON-Schema `enum` logit masking, AnyJev L0 cyclic-shift debiasing, calibrated `score`,
+    REAL `ClassifierEngine` (`tools/jev_systemone_server.py` backed by live `qwen2.5-coder:14b`
+    with GBNF JSON-Schema `enum` logit masking, Classifier L0 cyclic-shift debiasing, calibrated `score`,
     and `noul` abstention — evaluated both COLD `bypass_cache=True` and WARM SHA-256 cached).
 
 Evaluates 220 Ground-Truth Cases across 4 FinOps Semantic & Deterministic Tasks:
@@ -37,7 +37,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "tools"))
-from jev_systemone_server import JevSystemOneEngine, make_handler  # noqa: E402
+from jev_systemone_server import ClassifierEngine, make_handler  # noqa: E402
 
 MINICI_BIN = REPO_ROOT / "target" / "release" / "minici"
 GOLDEN_JSON = REPO_ROOT / "tests" / "golden_baseline_10_repos.json"
@@ -297,7 +297,7 @@ def run_rust_breakdown_single_runner(label: str, env_extra: dict[str, str] | Non
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Real 3-Arm Empirical Benchmark (Rust vs Direct Ollama vs Real Jev)")
+    parser = argparse.ArgumentParser(description="Real 3-Arm Empirical Benchmark (Rust vs Direct Ollama vs Real classifier)")
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     parser.add_argument("--model", default="qwen2.5-coder:14b")
     parser.add_argument("--json-out", default=str(DEFAULT_JSON_OUT))
@@ -310,9 +310,9 @@ def main() -> None:
         models_available = [m.get("name") for m in tags_data.get("models", [])]
     print(f"✅ Connected to live Ollama ({args.ollama_url}) • model={args.model} (available={models_available})")
 
-    # Start REAL Jev `/v1/systemone` HTTP server in background (NO hardcoded answers!)
+    # Start REAL classifier `/v1/systemone` HTTP server in background (NO hardcoded answers!)
     tmp_cache = Path(tempfile.mktemp(suffix="_jev_bench_cache.json"))
-    jev_engine = JevSystemOneEngine(
+    jev_engine = ClassifierEngine(
         ollama_url=args.ollama_url,
         ollama_model=args.model,
         debias_shifts=2,
@@ -325,7 +325,7 @@ def main() -> None:
     jev_url = f"http://127.0.0.1:{port}/v1/systemone"
     srv_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     srv_thread.start()
-    print(f"⚡ Started REAL Jev /v1/systemone Server on {jev_url} (zero canned dictionaries)")
+    print(f"⚡ Started REAL classifier /v1/systemone Server on {jev_url} (zero canned dictionaries)")
 
     runner_cases = build_100_runner_cases()
     csv_cases = build_53_csv_cases()
@@ -351,7 +351,7 @@ def main() -> None:
         "armB_real_jev_warm": {"latencies_ms": [], "rust_e2e_warm_ms": []},
     }
 
-    print("⏳ [1/4] Evaluating 100 Runner SKU Cases across Arm 0, Arm A (Direct Ollama), and Arm B (Real Jev)...")
+    print("⏳ [1/4] Evaluating 100 Runner SKU Cases across Arm 0, Arm A (Direct Ollama), and Arm B (Real classifier)...")
     for rc in runner_cases:
         lbl = rc["label"]
         exp_rate = rc["expected_rate"]
@@ -405,7 +405,7 @@ def main() -> None:
             else:
                 stats["armA_llm_direct"]["unsafe_harmful_errors"] += 1
 
-        # Arm B: End-to-End Rust `minici` Subprocess -> HTTP `MINICI_SYSTEMONE_URL` -> Real Jev -> Ollama!
+        # Arm B: End-to-End Rust `minici` Subprocess -> HTTP `MINICI_SYSTEMONE_URL` -> Real classifier -> Ollama!
         with tempfile.TemporaryDirectory() as clean_home:
             rb_cold, lat_b_cold = run_rust_breakdown_single_runner(
                 lbl, {"MINICI_SYSTEMONE_URL": jev_url, "HOME": clean_home}
@@ -492,7 +492,7 @@ def main() -> None:
                 stats["armA_llm_direct"]["correct"] += 1
                 stats["armA_llm_direct"]["tier3_correct"] += 1
 
-        # Arm B: End-to-End Rust `minici sync --billing-csv` -> HTTP `MINICI_SYSTEMONE_URL` -> Real Jev -> Ollama!
+        # Arm B: End-to-End Rust `minici sync --billing-csv` -> HTTP `MINICI_SYSTEMONE_URL` -> Real classifier -> Ollama!
         with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False) as tf_b:
             tf_b.write(cc["csv"])
             csv_b_path = tf_b.name
@@ -580,7 +580,7 @@ def main() -> None:
         elif val_sa is True and not exp_safe:
             stats["armA_llm_direct"]["unsafe_harmful_errors"] += 1
 
-        # Arm B: Real Jev `/v1/systemone`
+        # Arm B: Real classifier `/v1/systemone`
         prompt_sb = (
             "Decide whether this CI/CD shell step is 100% safe to run on an ephemeral ARM64 Spot instance "
             "(choose `false` if it mutates production/releases/registries, requires x86_64/Wine/linux-amd64, or requires NVIDIA CUDA GPU):\n"
@@ -635,7 +635,7 @@ def main() -> None:
             stats["armA_llm_direct"]["correct"] += 1
             stats["armA_llm_direct"]["tier3_correct"] += 1
 
-        # Arm B: Real Jev `/v1/systemone`
+        # Arm B: Real classifier `/v1/systemone`
         prompt_xb = (
             "Select the exact canonical GitHub Actions equivalent for this source CI step, "
             "or choose `MANUAL_REVIEW_REQUIRED` if it invokes a proprietary/custom organization template, Slack orb, or mainframe/internal library:\n"
@@ -702,12 +702,12 @@ def main() -> None:
     aa = summary["arms"]["armA_ollama_direct_unconstrained"]
     ab = summary["arms"]["armB_minici_plus_real_jev_systemone"]
 
-    md = f"""# Empirical 220-Case 3-Arm Benchmark: Deterministic Rust vs. Direct Generative LLM vs. Real Jev `/v1/systemone`
+    md = f"""# Empirical 220-Case 3-Arm Benchmark: Deterministic Rust vs. Direct Generative LLM vs. Real classifier `/v1/systemone`
 
 - **Model Evaluated Live:** `{args.model}` via local Ollama (`{args.ollama_url}`) — **Zero Canned Dictionaries / Zero Mocked Answers**
 - **Corpus Size:** `{summary["total_cases"]}` ground-truth cases (`27` Golden Repos + `100` Runner SKUs + `53` Billing/ERP CSVs + `20` Optimization Safety Gates + `20` Cross-Vendor Step Translations, including OOV `noul` abstention traps)
 
-| Metric | Arm 0: Pure Rust (`minici`) | Arm A: Hybrid + Unconstrained LLM (`{args.model}`) | Arm B: `minici` + Real Jev `/v1/systemone` |
+| Metric | Arm 0: Pure Rust (`minici`) | Arm A: Hybrid + Unconstrained LLM (`{args.model}`) | Arm B: `minici` + Real classifier `/v1/systemone` |
 | :--- | :---: | :---: | :---: |
 | **Full 220-Case Corpus Accuracy** | `{a0["accuracy_pct"]:.2f}%` (`{a0["correct"]}/{a0["total"]}`) | `{aa["accuracy_pct"]:.2f}%` (`{aa["correct"]}/{aa["total"]}`) | **`{ab["accuracy_pct"]:.2f}%` (`{ab["correct"]}/{ab["total"]}`)** |
 | **Unseen 58-Case Tier-3 Semantic Accuracy** | `{a0["tier3_semantic_accuracy_pct"]:.2f}%` (`{a0["tier3_semantic_correct"]}/{a0["tier3_semantic_total"]}`) | `{aa["tier3_semantic_accuracy_pct"]:.2f}%` (`{aa["tier3_semantic_correct"]}/{aa["tier3_semantic_total"]}`) | **`{ab["tier3_semantic_accuracy_pct"]:.2f}%` (`{ab["tier3_semantic_correct"]}/{ab["tier3_semantic_total"]}`)** |
@@ -718,8 +718,8 @@ def main() -> None:
 
 ## Key Empirical Findings
 
-1. **Zero Schema or OOV Hallucinations Under Real Jev (`{ab["schema_or_oov_hallucination_pct"]:.2f}%` vs `{aa["schema_or_oov_hallucination_pct"]:.2f}%`):** Unconstrained generative JSON (`Arm A`) frequently invents non-existent runner SKUs, outdated action tags (`@v2`/`@v3`), or maps non-billing columns onto financial fields. `JevSystemOneEngine` (`tools/jev_systemone_server.py`) constrains logits via JSON-Schema `enum` + AnyJev L0 cyclic-shift debiasing + `noul` abstention, eliminating out-of-vocabulary hallucinations (`0.00%`).
-2. **Semantic Generalization Beyond Regex/Lookup Tables (`{ab["accuracy_pct"]:.2f}%` vs `{a0["accuracy_pct"]:.2f}%`):** Deterministic Rust (`Arm 0`) achieves `100%` on all canonical/cloud SKUs and 5-vendor CSVs in `~{a0["latency_p50_ms"]:.1f} ms`, while Real Jev unlocks semantic comprehension on unseen corporate runner pools, foreign German/French/Spanish/SAP ERP billing columns, and cross-vendor CI step translations.
+1. **Zero Schema or OOV Hallucinations Under Real classifier (`{ab["schema_or_oov_hallucination_pct"]:.2f}%` vs `{aa["schema_or_oov_hallucination_pct"]:.2f}%`):** Unconstrained generative JSON (`Arm A`) frequently invents non-existent runner SKUs, outdated action tags (`@v2`/`@v3`), or maps non-billing columns onto financial fields. `ClassifierEngine` (`tools/jev_systemone_server.py`) constrains logits via JSON-Schema `enum` + Classifier L0 cyclic-shift debiasing + `noul` abstention, eliminating out-of-vocabulary hallucinations (`0.00%`).
+2. **Semantic Generalization Beyond Regex/Lookup Tables (`{ab["accuracy_pct"]:.2f}%` vs `{a0["accuracy_pct"]:.2f}%`):** Deterministic Rust (`Arm 0`) achieves `100%` on all canonical/cloud SKUs and 5-vendor CSVs in `~{a0["latency_p50_ms"]:.1f} ms`, while Real classifier unlocks semantic comprehension on unseen corporate runner pools, foreign German/French/Spanish/SAP ERP billing columns, and cross-vendor CI step translations.
 3. **Sub-50-Microsecond Warm Amortized Speed (`{ab["warm_sha256_cache_p50_ms"]:.4f} ms`):** Because every `/v1/systemone` decision is content-addressed by `(model, prompt, choices, noul)` SHA-256 hash and persisted in `~/.minici/jev_decisions_cache.json` + `~/.minici/learned_sku_registry.json`, warm CI runs pay zero neural latency penalty.
 """
     Path(args.md_out).parent.mkdir(parents=True, exist_ok=True)

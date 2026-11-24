@@ -1,4 +1,4 @@
-//! TypeSafe `/v1/systemone` Jev Client, 7-Decision Step Classifier & Conversational FinOps Router
+//! `/v1/systemone` classifier client, 7-Decision Step Classifier & Conversational FinOps Router
 //! (`crates/minici/src/jev.rs` — 100% Pure Rust `std`, Zero External Crate Dependencies).
 //!
 //! Bridges deterministic sub-millisecond 24-model FinOps math with calibrated `/v1/systemone`
@@ -70,7 +70,7 @@ impl StepSevenDecisions {
 }
 
 #[derive(Debug, Clone)]
-pub struct JevAskResponse {
+pub struct ClassifierAskResponse {
     pub question: String,
     pub routed_intent: String,
     pub confidence_score: f64,
@@ -81,7 +81,7 @@ pub struct JevAskResponse {
     pub recommended_command: String,
 }
 
-impl JevAskResponse {
+impl ClassifierAskResponse {
     pub fn to_json(&self) -> String {
         let bullets = self
             .bullet_receipts
@@ -479,7 +479,7 @@ pub fn answer_natural_language_finops_query(
     question: &str,
     repo_dir: &Path,
     compare_to: Option<&Path>,
-) -> JevAskResponse {
+) -> ClassifierAskResponse {
     let t0 = Instant::now();
     let clean_q = if question.trim().is_empty() {
         "What is our current CI/CD monthly cost and top optimization opportunity?"
@@ -789,7 +789,7 @@ pub fn answer_natural_language_finops_query(
 
     let _ = fs::metadata(repo_dir);
     let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
-    JevAskResponse {
+    ClassifierAskResponse {
         question: clean_q.to_string(),
         routed_intent: intent,
         confidence_score: conf,

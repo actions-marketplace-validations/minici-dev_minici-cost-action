@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://minici-cost-action.raza-aamir01.workers.dev/</loc><lastmod>2026-11-21</lastmod></url>
-  <url><loc>https://minici-cost-action.raza-aamir01.workers.dev/blog/</loc><lastmod>2026-11-21</lastmod></url>
-  <url><loc>https://minici-cost-action.raza-aamir01.workers.dev/blog/github-actions-cost-benchmark-10-largest-open-source-repos/</loc><lastmod>2026-11-21</lastmod></url>
-  <url><loc>https://minici-cost-action.raza-aamir01.workers.dev/blog/infracost-and-minici-full-stack-finops-pull-request-costs/</loc><lastmod>2026-11-21</lastmod></url>
-  <url><loc>https://minici-cost-action.raza-aamir01.workers.dev/blog/github-actions-runners-benchmark-blacksmith-depot-namespace-warpbuild-buildjet-runson/</loc><lastmod>2026-11-21</lastmod></url>
+  <url><loc>https://api.minici.dev/</loc><lastmod>2026-11-21</lastmod></url>
+  <url><loc>https://api.minici.dev/blog/</loc><lastmod>2026-11-21</lastmod></url>
+  <url><loc>https://api.minici.dev/blog/github-actions-cost-benchmark-10-largest-open-source-repos/</loc><lastmod>2026-11-21</lastmod></url>
+  <url><loc>https://api.minici.dev/blog/infracost-and-minici-full-stack-finops-pull-request-costs/</loc><lastmod>2026-11-21</lastmod></url>
+  <url><loc>https://api.minici.dev/blog/github-actions-runners-benchmark-blacksmith-depot-namespace-warpbuild-buildjet-runson/</loc><lastmod>2026-11-21</lastmod></url>
 </urlset>

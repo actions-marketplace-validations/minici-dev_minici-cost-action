@@ -193,7 +193,7 @@ minici migrate --path . --to github-arm64        # Check 6-gate ARM64 savings or
 minici init-hooks --path .                       # Wire Antigravity, Claude Code, VS Code, Git & PR hooks
 ```
 
-[![MiniCI Terminal Demo](https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/web/how-to-install-and-use.png)](https://minici-cost-action.raza-aamir01.workers.dev/how-to-install-and-use.mp4)
+[![MiniCI Terminal Demo](https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/web/how-to-install-and-use.png)](https://api.minici.dev/how-to-install-and-use.mp4)
 
 ### Verified Speed on World-Scale Open-Source Pipelines
 
@@ -327,6 +327,24 @@ Expose all 8 deterministic CI FinOps tools (`minici_breakdown`, `minici_diff`, `
 
 ---
 
+## Endpoints & Overrides
+
+MiniCI's hosted API origin is one config value, defaulting to `https://api.minici.dev`:
+
+| Surface | Override | Default |
+|---|---|---|
+| CLI (`minici share`, `minici comment`, cloud sync) | `MINICI_API_URL` env var (`MINICI_CLOUD_URL` is still read as a legacy alias) | `https://api.minici.dev` |
+| GitHub Action | `api-url` input (replaces the old `cloud-api-url` input) | `https://api.minici.dev` |
+| GitHub App / Slack manifests (`integrations/*-manifest.json`) | `{{MINICI_API_URL}}` placeholder, substituted before upload: `sed "s#{{MINICI_API_URL}}#$MINICI_API_URL#g" integrations/github-app-manifest.json` | `https://api.minici.dev` |
+| Blog generator (`tools/build_seo_blog_hub.py`) | `MINICI_API_URL` env var | `https://api.minici.dev` |
+
+Static pages in `web/` (blog canonicals, `sitemap.xml`, `robots.txt`) hold the literal default origin, since they cannot read env vars. `web/setup-github-app.html` takes its origin from one `MINICI_API_URL` constant at the top of its script.
+
+Hostnames in use under `minici.dev`:
+
+- `api.minici.dev`: the Worker's custom domain (`routes` in `wrangler.jsonc`, `custom_domain: true`).
+- `cache.minici.dev`: the L1 report-cache origin that `worker.js` calls for `/v1/report/...`. It is not routed by `wrangler.jsonc` yet, so it needs its own custom-domain route on the same Worker before that path works.
+
 ## Troubleshooting
 
 | Symptom | Cause & 1-Line Fix |
@@ -389,5 +407,5 @@ Local reusable workflows (`uses: ./.github/workflows/...`) resolve automatically
   Licensed under <a href="https://github.com/minici-dev/minici-cost-action/blob/main/LICENSE">Apache-2.0</a> &middot;
   <a href="https://buy.polar.sh/polar_cl_SCcWdjeIJvtwoa3JKBo5ouVXBL0yBv40bzuZr36iPMm">Plans (Polar.sh)</a> &middot;
   <a href="https://polar.sh/minici/portal">Customer Portal</a> &middot;
-  Built in pure Rust by <a href="https://github.com/Aamir-raza-1">Aamir Raza</a>.
+  Built in pure Rust by the <a href="https://github.com/minici-dev">MiniCI maintainers</a>.
 </p>

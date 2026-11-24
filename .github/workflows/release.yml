@@ -108,7 +108,7 @@ jobs:
             gh release upload "$TAG_NAME" release-assets/* --clobber
           else
             gh release create "$TAG_NAME" release-assets/* \
-              --title "MiniCI $TAG_NAME — Dynamic FinOps, 24 Models, 8-Tool MCP, Jev /v1/systemone & 7 CI Platforms" \
+              --title "MiniCI $TAG_NAME — Dynamic FinOps, 24 Models, 8-Tool MCP, classifier /v1/systemone & 7 CI Platforms" \
               --generate-notes
           fi
           git config user.name "github-actions[bot]"

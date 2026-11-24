@@ -1,4 +1,4 @@
 # Support & Enterprise FinOps Inquiries
 
-- **Maintainer:** Aamir Raza (`Aamir-raza-1`)
-- **Email:** `raza.aamir01@gmail.com`
+- **Maintainer:** MiniCI maintainers
+- **Contact:** [GitHub Issues](https://github.com/minici-dev/minici-cost-action/issues)

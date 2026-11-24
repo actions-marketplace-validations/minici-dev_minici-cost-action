@@ -1,7 +1,7 @@
 -- MiniCI Cloudflare D1 Schema (`migrations/0001_minici_d1.sql`)
 -- Layer 3 persistent serverless SQLite backing store behind:
 --   Layer 1: Cloudflare Edge Cache API (`caches.default`, s-maxage=300, stale-while-revalidate=3600)
---   Layer 2: Cloudflare Workers KV (`MINICI_KV`, TTL 3600s for reports, 30d for cross-repo Jev step hashes)
+--   Layer 2: Cloudflare Workers KV (`MINICI_KV`, TTL 3600s for reports, 30d for cross-repo classifier step hashes)
 
 CREATE TABLE IF NOT EXISTS repo_telemetry (
   repo TEXT NOT NULL,

@@ -1,6 +1,6 @@
 name: "MiniCI Runner Hardware Telemetry Sampler (Optional Tier 4 — 108/108)"
 description: "Lightweight, zero-dependency, 100% local kernel CPU & RAM utilization sampler (.minici/step_hardware_telemetry.json) for 108/108 FinOps right-sizing."
-author: "Aamir Raza <raza.aamir01@gmail.com>"
+author: "MiniCI maintainers"
 
 branding:
   icon: "cpu"

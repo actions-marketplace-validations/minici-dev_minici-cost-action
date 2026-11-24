@@ -31,4 +31,4 @@ Run `minici permissions check --repo owner/repo` (or `--path . --offline`) at an
 
 ## 3. Reporting a Vulnerability
 
-Please report security issues privately to **Aamir Raza** at **`raza.aamir01@gmail.com`**. All reports receive an acknowledgment within 24 hours.
+Please report security issues privately through GitHub private vulnerability reporting (Security tab -> "Report a vulnerability") on this repository. All reports receive an acknowledgment within 24 hours.

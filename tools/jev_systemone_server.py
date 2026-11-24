@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Real Jev `/v1/systemone` Constrained-Choice Decision Server (`tools/jev_systemone_server.py`).
+Real classifier `/v1/systemone` Constrained-Choice Decision Server (`tools/jev_systemone_server.py`).
 
-Implements the TypeSafe AI / Ollaya `/v1/systemone` wire protocol with ZERO hardcoded
+Implements the upstream `/v1/systemone` wire protocol with ZERO hardcoded
 benchmark answers or canned lookup tables:
   1. Single-Question Protocol:
        POST /v1/systemone
@@ -14,10 +14,10 @@ benchmark answers or canned lookup tables:
        -> {"answers": {"phase": {"value": "...", "score": 0.95}, ...}, "latency_ms": ...}
 
 Backends (in priority order):
-  A. Native Ollaya / TypeSafe AI upstream (`OLLAYA_URL` / `TYPESAFE_API_URL` + `TYPESAFE_API_KEY`)
+  A. Native upstream (`OLLAYA_URL` / `TYPESAFE_API_URL` + `TYPESAFE_API_KEY`)
   B. Local Ollama (`http://127.0.0.1:11434/api/chat`, default `qwen2.5-coder:14b`) with:
      - Grammar-constrained JSON Schema `enum` decoding (`format` schema -> 0% OOV / 0% syntax errors)
-     - AnyJev L0 cyclic-shift option-order debiasing (`--debias-shifts 2` -> cancels positional bias)
+     - Classifier L0 cyclic-shift option-order debiasing (`--debias-shifts 2` -> cancels positional bias)
      - Calibrated shift-agreement confidence `score` + `noul` abstention (`--noul-threshold 0.70`)
      - SHA-256 content-addressed decision cache (`~/.minici/jev_decisions_cache.json`, <0.02 ms warm hit)
 """
@@ -39,7 +39,7 @@ from typing import Any
 ABSTAIN_TOKEN = "__NOUL_ABSTAIN_NONE__"
 
 
-class JevSystemOneEngine:
+class ClassifierEngine:
     def __init__(
         self,
         ollama_url: str = "http://127.0.0.1:11434",
@@ -104,7 +104,7 @@ class JevSystemOneEngine:
         }
         numbered = "\n".join(f"  - {opt}" for opt in allowed_enum)
         system_msg = (
-            "You are SystemOne Jev, a calibrated FinOps & CI/CD infrastructure decision classifier. "
+            "You are SystemOne classifier, a calibrated FinOps & CI/CD infrastructure decision classifier. "
             "Select the single most accurate canonical option from the allowed enum. "
             f"If `{ABSTAIN_TOKEN}` is in the enum, choose `{ABSTAIN_TOKEN}` ONLY when the input is genuinely "
             "unrelated, nonsensical, unsafe, or does not match any real domain option. "
@@ -174,7 +174,7 @@ class JevSystemOneEngine:
                 elapsed = (time.perf_counter() - t0) * 1000.0
                 return {**cached, "cache_hit": True, "latency_ms": round(elapsed, 4)}
 
-        # 1. Optional native Ollaya / TypeSafe passthrough when configured
+        # 1. Optional native upstream passthrough when configured
         if self.ollaya_url:
             try:
                 up_req = urllib.request.Request(
@@ -198,7 +198,7 @@ class JevSystemOneEngine:
             except Exception:
                 pass
 
-        # 2. AnyJev L0 Cyclic-Shift Debiased Constrained Evaluation on Live Ollama
+        # 2. Classifier L0 Cyclic-Shift Debiased Constrained Evaluation on Live Ollama
         n = len(clean_choices)
         if self.debias_shifts <= 1 or n <= 1:
             shift_offsets = [0]
@@ -316,7 +316,7 @@ class JevSystemOneEngine:
         return {**result, "cache_hit": False, "latency_ms": round(elapsed, 3)}
 
 
-def make_handler(engine: JevSystemOneEngine):
+def make_handler(engine: ClassifierEngine):
     class SystemOneHttpHandler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: Any) -> None:
             return
@@ -398,7 +398,7 @@ def make_handler(engine: JevSystemOneEngine):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="MiniCI Real Jev /v1/systemone Decision Server")
+    parser = argparse.ArgumentParser(description="MiniCI Real classifier /v1/systemone Decision Server")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8788)
     parser.add_argument("--ollama-url", default=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"))
@@ -411,7 +411,7 @@ def main() -> None:
     if not args.ollama_url.startswith("http"):
         args.ollama_url = f"http://{args.ollama_url}"
 
-    engine = JevSystemOneEngine(
+    engine = ClassifierEngine(
         ollama_url=args.ollama_url,
         ollama_model=args.model,
         debias_shifts=args.debias_shifts,
@@ -420,7 +420,7 @@ def main() -> None:
     )
     srv = ThreadingHTTPServer((args.host, args.port), make_handler(engine))
     print(
-        f"⚡ MiniCI Real Jev /v1/systemone Server listening on http://{args.host}:{args.port}/v1/systemone "
+        f"⚡ MiniCI Real classifier /v1/systemone Server listening on http://{args.host}:{args.port}/v1/systemone "
         f"(model={args.model}, debias_shifts={args.debias_shifts}, noul_threshold={args.noul_threshold})"
     )
     try:

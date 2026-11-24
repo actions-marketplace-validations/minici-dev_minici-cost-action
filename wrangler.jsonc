@@ -6,6 +6,11 @@
   "name": "minici-cost-action",
   "main": "worker.js",
   "compatibility_date": "2025-01-01",
+  // API origin (default for MINICI_API_URL / action `api-url`). Other minici.dev hosts in use
+  // (e.g. cache.minici.dev, the L1 report-cache origin) need their own routes; see README.
+  "routes": [
+    { "pattern": "api.minici.dev", "custom_domain": true }
+  ],
   "assets": {
     "directory": "./web",
     "binding": "ASSETS"

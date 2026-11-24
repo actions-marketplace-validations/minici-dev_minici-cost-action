@@ -32,7 +32,7 @@ fn print_help() {
 
 pub fn help_text() -> &'static str {
     concat!("minici ", env!("CARGO_PKG_VERSION"), " — MiniCI: Sub-Millisecond CI/CD Cost Breakdown, PR Diff & Quota Receipt Engine\n\
-Author: Aamir Raza <raza.aamir01@gmail.com>\n\n\
+Author: MiniCI maintainers\n\n\
 USAGE:\n  \
   minici <COMMAND> [OPTIONS]\n\n\
 COMMANDS:\n  \
@@ -44,7 +44,7 @@ COMMANDS:\n  \
   shrink       Generate or apply surgical workflow cost optimizations with verified shadow DiffReport\n  \
   accelerate   Swap legacy CI steps to Rust tools (uv/ruff/biome/nextest) + scoped rust-everywhere CI converter\n  \
   migrate      Evaluate or apply safe runner & 7x7 cross-platform migrations with 5-Layer Switching TCO\n  \
-  ask          Ask any natural-language CI/CD FinOps question (Jev /v1/systemone intent router + live math)\n  \
+  ask          Ask any natural-language CI/CD FinOps question (classifier /v1/systemone intent router + live math)\n  \
   catalog      Inspect, sync, or override the Multi-Vendor & Cloud Compute Pricing SKU Catalog\n  \
   cloud-price  Resolve AWS EC2, GCP GCE, or Azure VM On-Demand & Spot pricing (--region, --live)\n  \
   telemetry    Pull live GitLab CI, CircleCI v2, or Bitbucket Pipelines run telemetry into normalized CSV\n  \
@@ -186,7 +186,7 @@ pub fn handle_mcp_jsonrpc_line(line: &str, default_path: &Path) -> Option<String
 {{\"name\":\"minici_anomalies\",\"description\":\"Inspect 7d/23d CI spend burn velocity, projected EOM bill, quota exhaustion day, and missing timeout-minutes exposure\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\"}}}}}}}},\
 {{\"name\":\"minici_shrink\",\"description\":\"Generate surgical comment-preserving YAML optimizations (concurrency, timeout-minutes, shallow clone, cache, retention-days, plus optional Rust CI toolchain swapper & scoped rust-everywhere CI converter) verified by shadow DiffReport\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\"}},\"security\":{{\"type\":\"boolean\"}},\"rust_tools\":{{\"type\":\"boolean\"}},\"rust_everywhere\":{{\"type\":\"boolean\"}},\"apply\":{{\"type\":\"boolean\"}},\"confirm_write\":{{\"type\":\"boolean\"}}}}}}}},\
 {{\"name\":\"minici_migrate\",\"description\":\"Evaluate safe runner migration (arm64 / high-speed / spot) or 7x7 cross-platform CI translation with 5-Layer Switching TCO payback verdict\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\"}},\"from\":{{\"type\":\"string\"}},\"target\":{{\"type\":\"string\"}},\"apply\":{{\"type\":\"boolean\"}},\"confirm_write\":{{\"type\":\"boolean\"}}}}}}}},\
-{{\"name\":\"minici_ask\",\"description\":\"Answer any free-form natural-language CI/CD FinOps question by routing intent via Jev /v1/systemone and grounding 100% of dollar figures in the 24-model engine\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"question\":{{\"type\":\"string\"}},\"path\":{{\"type\":\"string\"}},\"compare_to\":{{\"type\":\"string\"}}}},\"required\":[\"question\"]}}}}\
+{{\"name\":\"minici_ask\",\"description\":\"Answer any free-form natural-language CI/CD FinOps question by routing intent via classifier /v1/systemone and grounding 100% of dollar figures in the 24-model engine\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"question\":{{\"type\":\"string\"}},\"path\":{{\"type\":\"string\"}},\"compare_to\":{{\"type\":\"string\"}}}},\"required\":[\"question\"]}}}}\
 ]}}}}",
             id
         )),
@@ -947,9 +947,12 @@ fn minici_credentials_path() -> PathBuf {
     Path::new(&home).join(".minici").join("credentials.json")
 }
 
+/// Single source of truth for the MiniCI API origin. Override with `MINICI_API_URL`
+/// (`MINICI_CLOUD_URL` is still honored for existing setups).
 fn default_cloud_api_url() -> String {
-    env::var("MINICI_CLOUD_URL")
-        .unwrap_or_else(|_| "https://minici-cost-action.raza-aamir01.workers.dev".to_string())
+    env::var("MINICI_API_URL")
+        .or_else(|_| env::var("MINICI_CLOUD_URL"))
+        .unwrap_or_else(|_| "https://api.minici.dev".to_string())
         .trim_end_matches('/')
         .to_string()
 }
@@ -2290,7 +2293,7 @@ fn print_subcommand_help(sub: &str) {
         ),
         "ask" => println!(
             "Usage: minici ask \"<QUESTION>\" [OPTIONS]\n\n\
-             Answer any natural-language CI/CD FinOps question via Jev /v1/systemone intent routing + live 24-model math.\n\n\
+             Answer any natural-language CI/CD FinOps question via classifier /v1/systemone intent routing + live 24-model math.\n\n\
              OPTIONS:\n\
                --path, --repo <PATH_OR_URL>   Repository directory or GitHub slug [default: .]\n\
                --compare-to <REF_OR_PATH>     Optional base Git ref for PR diff questions\n\
@@ -5742,8 +5745,8 @@ jobs:
     }
 
     #[test]
-    fn test_receipt_maxim_applicability_and_first_party_branding_gate() {
-        let dir = std::env::temp_dir().join("minici_receipt_maxim_gate");
+    fn test_receipt_applicability_and_first_party_branding_gate() {
+        let dir = std::env::temp_dir().join("minici_receipt_applicability_gate");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join(".github/workflows")).unwrap();
         fs::write(
@@ -6173,7 +6176,7 @@ jobs:
         assert!(gha_prev.contains("  lint:\n"));
         assert!(gha_prev.contains("  ios_test:\n    runs-on: macos-15-xlarge"));
 
-        // 4. H2 Receipt: Persisted Jev learned SKU (`~/.minici/learned_sku_registry.json`) wins even when
+        // 4. H2 Receipt: Persisted classifier learned SKU (`~/.minici/learned_sku_registry.json`) wins even when
         //    the custom label contains `"ubuntu"` (`acme-ubuntu-enterprise-pool` -> `ubuntu-16-core` $0.042/m)!
         let user_learned_path = catalog::learned_sku_user_path();
         let prev_user_learned = fs::read_to_string(&user_learned_path).ok();
@@ -6191,8 +6194,8 @@ jobs:
     }
 
     #[test]
-    fn test_pydantic_matrix_runs_on_and_maxim_blacksmith_preserve() {
-        let dir = std::env::temp_dir().join("minici_pydantic_maxim_guard");
+    fn test_pydantic_matrix_runs_on_and_blacksmith_preserve() {
+        let dir = std::env::temp_dir().join("minici_pydantic_blacksmith_guard");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join(".github/workflows")).unwrap();
         let wf = r#"name: Matrix & Blacksmith Guard
