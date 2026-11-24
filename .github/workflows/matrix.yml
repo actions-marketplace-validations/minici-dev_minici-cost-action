@@ -1,0 +1,59 @@
+name: MiniCI Runner Matrix
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: ['factory/**']
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-14 removed: GitHub rejects its config ('macos-14-arm64-us-default' is not supported); macos-15 jobs can be cancelled
+        # while queued ("not acquired by Runner ... after multiple attempts"), which is capacity, not a hang.
+        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-22.04-arm, ubuntu-24.04-arm, macos-15-intel, macos-15, windows-2022, windows-2025, windows-11-arm]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build
+        run: |
+          cargo build --locked --release --manifest-path crates/minici/Cargo.toml
+          ext=""
+          [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
+          echo "MINICI_BIN=$PWD/crates/minici/target/release/minici$ext" >> "$GITHUB_ENV"
+      - name: Version
+        run: '"$MINICI_BIN" --version'
+      - name: Help
+        run: '"$MINICI_BIN" --help'
+      - name: Offline command on sample workflow
+        run: |
+          sample="$(mktemp -d)"
+          printf '%s\n' 'name: sample' 'on: push' 'jobs:' '  test:' '    runs-on: ubuntu-latest' '    steps:' '      - run: echo hi' > "$sample/ci.yml"
+          "$MINICI_BIN" shrink --path "$sample/ci.yml"
+      - name: Installer (unix)
+        if: runner.os != 'Windows'
+        env:
+          MINICI_INSTALL_DIR: ${{ runner.temp }}/minici-bin
+        run: |
+          bash scripts/install.sh
+          "$MINICI_INSTALL_DIR/minici" --version
+      # Windows: install.sh rejects MINGW/MSYS and points to scripts/install.ps1; the installer step is unix-only here.
+
+  self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Invoke MiniCI Cost Action (Self-Test)
+        uses: ./
+        with:
+          path: "."
+          tier: "paid"

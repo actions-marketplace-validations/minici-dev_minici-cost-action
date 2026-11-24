@@ -40,13 +40,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+          # Linux assets are static musl builds: no glibc floor, so they run on Alpine, Ubuntu 20.04 and AL2023 alike.
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
             artifact: minici-linux-x86_64
             bin_name: minici
-          # ubuntu-22.04-arm, not 24.04-arm: a 24.04 build needs GLIBC_2.39 and fails on 22.04 hosts.
           - os: ubuntu-22.04-arm
-            target: aarch64-unknown-linux-gnu
+            target: aarch64-unknown-linux-musl
             artifact: minici-linux-aarch64
             bin_name: minici
           - os: macos-latest
@@ -61,8 +61,15 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact: minici-windows-x86_64.exe
             bin_name: minici.exe
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            artifact: minici-windows-arm64.exe
+            bin_name: minici.exe
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install musl Toolchain
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Install Rust Target ${{ matrix.target }}
         run: rustup target add ${{ matrix.target }}
       - name: Build Zero-Dependency Release Binary
@@ -72,6 +79,9 @@ jobs:
         run: |
           mkdir -p dist
           cp "crates/minici/target/${{ matrix.target }}/release/${{ matrix.bin_name }}" "dist/${{ matrix.artifact }}"
+      - name: Assert Static Linux Binary
+        if: contains(matrix.target, 'musl')
+        run: file "dist/${{ matrix.artifact }}" | grep -Eq "statically linked|static-pie linked"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.artifact }}

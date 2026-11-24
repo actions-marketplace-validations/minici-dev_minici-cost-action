@@ -16,6 +16,7 @@ ARCH_RAW="$(uname -m)"
 case "$OS_RAW" in
   Linux*)  OS="linux" ;;
   Darwin*) OS="macos" ;;
+  MINGW*|MSYS*|CYGWIN*) echo "Windows shell detected: use PowerShell instead: irm https://raw.githubusercontent.com/$REPO/main/scripts/install.ps1 | iex"; exit 1 ;;
   *) echo "Unsupported OS: $OS_RAW (use cargo install --git https://github.com/$REPO.git minici)"; exit 1 ;;
 esac
 
