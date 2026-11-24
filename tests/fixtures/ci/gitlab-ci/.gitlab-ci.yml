@@ -1,0 +1,58 @@
+stages:
+  - lint
+  - test
+  - build
+  - deploy
+
+default:
+  image: node:20-alpine
+  interruptible: true
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - node_modules/
+
+lint:
+  stage: lint
+  timeout: 10 minutes
+  script:
+    - npm ci
+    - npm run lint
+
+unit-tests:
+  stage: test
+  timeout: 30 minutes
+  parallel:
+    matrix:
+      - NODE_SUITE: [unit, integration]
+  script:
+    - npm ci
+    - npm test -- --suite $NODE_SUITE
+  artifacts:
+    expire_in: 1 week
+    reports:
+      junit: junit.xml
+
+build:
+  stage: build
+  timeout: 20 minutes
+  tags:
+    - saas-linux-medium-amd64
+  script:
+    - npm ci
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 7 days
+
+deploy-staging:
+  stage: deploy
+  timeout: 15 minutes
+  needs: [build]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - ./scripts/deploy.sh staging

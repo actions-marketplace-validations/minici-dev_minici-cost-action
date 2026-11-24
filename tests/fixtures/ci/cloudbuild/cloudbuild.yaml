@@ -1,0 +1,36 @@
+steps:
+  - name: node:20
+    id: install
+    entrypoint: npm
+    args: ["ci"]
+
+  - name: node:20
+    id: lint
+    entrypoint: npm
+    args: ["run", "lint"]
+    waitFor: ["install"]
+
+  - name: node:20
+    id: test
+    entrypoint: npm
+    args: ["test", "--", "--coverage"]
+    waitFor: ["install"]
+
+  - name: node:20
+    id: build
+    entrypoint: npm
+    args: ["run", "build"]
+    waitFor: ["lint", "test"]
+
+  - name: gcr.io/cloud-builders/docker
+    id: image
+    args: ["build", "-t", "us-docker.pkg.dev/$PROJECT_ID/app/web:$SHORT_SHA", "."]
+    waitFor: ["build"]
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+  env:
+    - "NODE_ENV=ci"
+
+timeout: 1200s
