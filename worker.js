@@ -519,7 +519,8 @@ async function fetchLiveGitHubRepoSummary(slug, ghToken, windowDays = 30) {
  */
 async function getRepoReportThreeLayer(slug, windowDays, env, ctx, forceRefresh = false) {
   const clampedDays = Math.max(1, Math.min(365, Number(windowDays) || 30));
-  const l1Url = `https://cache.minici.dev/v1/report/${slug}?days=${clampedDays}`;
+  const cacheBase = (env && env.REPORT_CACHE_BASE_URL) || "https://cache.minici.dev";
+  const l1Url = `${cacheBase}/v1/report/${slug}?days=${clampedDays}`;
   const l1Key = new Request(l1Url, { method: "GET" });
   const kvKey = `report:${slug}:${clampedDays}d`;
   const edgeCache = typeof caches !== "undefined" && caches.default ? caches.default : null;
@@ -1679,10 +1680,11 @@ export default {
 
       if (slug && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(slug)) {
         const edgeCache = typeof caches !== "undefined" && caches.default ? caches.default : null;
+        const cacheBase = (env && env.REPORT_CACHE_BASE_URL) || "https://cache.minici.dev";
         for (const d of [7, 30, 60, 90]) {
           if (edgeCache) {
             await edgeCache
-              .delete(new Request(`https://cache.minici.dev/v1/report/${slug}?days=${d}`))
+              .delete(new Request(`${cacheBase}/v1/report/${slug}?days=${d}`))
               .catch(() => {});
           }
           if (env && env.MINICI_KV) {
