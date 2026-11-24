@@ -11,10 +11,12 @@ This guide provides the exact zero-cost (`$0.00/mo`) workflow to activate:
 
 `.github/FUNDING.yml` (`polar: minici`) and all web/README Sponsor links are already wired in `v0.9.0`. Currently `https://polar.sh/minici` returns `404` until Storefront is toggled ON in your open Chrome tab (`https://polar.sh/dashboard/minici`):
 
-1. In **`https://polar.sh/dashboard/minici/products`**, create 2 tiers:
-   - **MiniCI Open-Source Sponsor** (`$15/month` recurring or pay-what-you-want)
-   - **MiniCI Team Pro (5+ Private Repos & Slack FinOps Bot)** (`$79/month` recurring)
-2. Go to **`https://polar.sh/dashboard/minici/storefront`** (or **Settings -> Storefront**) and toggle **Enable Public Storefront** -> **Save**.
+1. Run `POLAR_OAT="polar_oat_..." python3 tools/setup_polar_storefront.py` (or create in **`https://polar.sh/dashboard/minici/products`**) to provision the 3 commercial Cloud tiers with automatic `MINICI-...` License Key delivery:
+   - **MiniCI Starter** (`$1/month` — `minici share` unlisted cloud links, 30-day trend ledger for up to 3 repos, live SVG badge)
+   - **MiniCI Pro** (`$10/month` — Automated Friday Slack FinOps digest, real-time 1.5x spend velocity alerts, 15-repo dashboard, 365d retention)
+   - **MiniCI Team Flex** (`Custom/month` pay-what-you-want — Unlimited repos, central org PR budget gate policy, synced enterprise custom runner rates)
+2. In **`https://polar.sh/dashboard/minici/settings/webhooks`**, add endpoint **`https://minici-cost-action.raza-aamir01.workers.dev/v1/webhook/polar`** (events: `subscription.*`, `benefit_grant.*`) and bind `POLAR_WEBHOOK_SECRET` in Cloudflare Worker secrets.
+3. Go to **`https://polar.sh/dashboard/minici/storefront`** (or **Settings -> Storefront**) and toggle **Enable Public Storefront** -> **Save**.
 3. Verify `curl -sI https://polar.sh/minici` returns `HTTP/2 200`. Every PR and repo visitor clicking **Sponsor** on GitHub now lands directly on your Polar checkout page.
 
 ---

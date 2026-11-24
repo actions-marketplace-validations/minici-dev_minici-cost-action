@@ -1,0 +1,24 @@
+{
+  "name": "MiniCI Cost & Speed Bot",
+  "url": "https://minici-cost-action.raza-aamir01.workers.dev",
+  "hook_attributes": {
+    "url": "https://minici-cost-action.raza-aamir01.workers.dev/webhooks/github",
+    "active": true
+  },
+  "redirect_url": "https://minici-cost-action.raza-aamir01.workers.dev/?github_app=registered",
+  "public": true,
+  "default_permissions": {
+    "actions": "read",
+    "checks": "write",
+    "contents": "read",
+    "issues": "write",
+    "metadata": "read",
+    "pull_requests": "write"
+  },
+  "default_events": [
+    "issue_comment",
+    "pull_request",
+    "pull_request_review_comment"
+  ],
+  "description": "Deterministic <2ms CI/CD cost breakdown, PR matrix & rounding diff, 1-click YAML shrink, ARM64 right-sizing, and @minici PR bot with zero source-code egress."
+}

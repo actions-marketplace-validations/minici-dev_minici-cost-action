@@ -1,7 +1,7 @@
 {
   "name": "minici-cost",
   "displayName": "MiniCI Cost & Workflow Optimizer",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Deterministic sub-millisecond CI/CD cost breakdown, Pull Request cost diff, ARM64 runner right-sizing, and comment-preserving YAML optimization across 7 CI platforms.",
   "logo": "web/minici-icon.svg",
   "author": {

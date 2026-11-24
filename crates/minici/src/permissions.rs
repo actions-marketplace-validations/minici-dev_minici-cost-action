@@ -16,8 +16,222 @@
 use crate::engine::json_escape;
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::io::{self, IsTerminal, Write};
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+
+static SESSION_CONSENT: AtomicBool = AtomicBool::new(false);
+static SESSION_DECISIONS: Mutex<Vec<(String, bool)>> = Mutex::new(Vec::new());
+
+pub fn set_session_consent(granted: bool) {
+    SESSION_CONSENT.store(granted, Ordering::SeqCst);
+}
+
+pub fn has_session_consent() -> bool {
+    SESSION_CONSENT.load(Ordering::SeqCst)
+}
+
+pub fn consent_file_path_in(home_dir: &Path) -> PathBuf {
+    home_dir.join(".minici").join("consent.json")
+}
+
+pub fn default_consent_file_path() -> PathBuf {
+    if let Ok(home) = env::var("HOME").or_else(|_| env::var("USERPROFILE")) {
+        return consent_file_path_in(Path::new(&home));
+    }
+    env::temp_dir().join("minici_consent.json")
+}
+
+pub fn list_consents_in_file(consent_path: &Path) -> Vec<(String, bool)> {
+    let raw = match fs::read_to_string(consent_path) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    let mut entries = Vec::new();
+    for line in raw.lines() {
+        let t = line.trim().trim_end_matches(',');
+        if t.is_empty() || t == "{" || t == "}" {
+            continue;
+        }
+        if let Some((k, v)) = t.split_once(':') {
+            let key = k.trim().trim_matches('"').to_ascii_lowercase();
+            let val_s = v.trim().to_ascii_lowercase();
+            if !key.is_empty() && !key.starts_with('_') {
+                let granted = val_s == "true" || val_s == "1";
+                entries.push((key, granted));
+            }
+        }
+    }
+    entries
+}
+
+pub fn is_provider_consented_in_file(consent_path: &Path, provider: &str) -> bool {
+    let target = provider.trim().to_ascii_lowercase();
+    for (k, granted) in list_consents_in_file(consent_path) {
+        if granted && (k == target || k == "all") {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn set_provider_consent_in_file(
+    consent_path: &Path,
+    provider: &str,
+    granted: bool,
+) -> Result<(), String> {
+    let target = provider.trim().to_ascii_lowercase();
+    if target.is_empty() {
+        return Err("Provider name cannot be empty".to_string());
+    }
+    if let Some(parent) = consent_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut entries = list_consents_in_file(consent_path);
+    entries.retain(|(k, _)| k != &target);
+    if granted {
+        entries.push((target, true));
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    let body_lines: Vec<String> = entries
+        .iter()
+        .map(|(k, v)| format!("  \"{}\": {}", json_escape(k), v))
+        .collect();
+    let payload = if body_lines.is_empty() {
+        "{}\n".to_string()
+    } else {
+        format!("{{\n{}\n}}\n", body_lines.join(",\n"))
+    };
+    let tmp = consent_path.with_extension("json.tmp");
+    fs::write(&tmp, payload).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = fs::metadata(&tmp) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o600);
+            let _ = fs::set_permissions(&tmp, perms);
+        }
+    }
+    fs::rename(&tmp, consent_path).map_err(|e| e.to_string())
+}
+
+/// Checks whether the user has authorized MiniCI to read an ambient host credential/CLI session
+/// (`github`, `gitlab`, `circleci`, `bitbucket`, `slack`, `cloud-iac`).
+/// Honors `--consent` / `--yes`, `MINICI_CONSENT`, `~/.minici/consent.json`, or an interactive TTY prompt.
+pub fn check_or_prompt_provider_consent(provider: &str, source_desc: &str, purpose: &str) -> bool {
+    let prov = provider.trim().to_ascii_lowercase();
+    if has_session_consent() {
+        return true;
+    }
+    if let Ok(raw_env) = env::var("MINICI_CONSENT") {
+        let low = raw_env.trim().to_ascii_lowercase();
+        if matches!(low.as_str(), "0" | "false" | "no" | "deny" | "none") {
+            return false;
+        }
+        if matches!(low.as_str(), "1" | "true" | "yes" | "all" | "always") {
+            return true;
+        }
+        if low
+            .split([',', ' ', ';'])
+            .map(|s| s.trim())
+            .any(|s| s == prov || s == "all")
+        {
+            return true;
+        }
+    }
+    if is_provider_consented_in_file(&default_consent_file_path(), &prov) {
+        return true;
+    }
+    if let Ok(guard) = SESSION_DECISIONS.lock() {
+        if let Some((_, dec)) = guard.iter().find(|(p, _)| p == &prov) {
+            return *dec;
+        }
+    }
+    if cfg!(test) {
+        return false;
+    }
+    let non_interactive = env::var("MINICI_NON_INTERACTIVE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !non_interactive && io::stdin().is_terminal() && io::stderr().is_terminal() {
+        eprint!(
+            "🔒 MiniCI Consent: Ambient '{}' credential ({}) detected for {}. Use with consent? [y/N/always]: ",
+            prov, source_desc, purpose
+        );
+        let _ = io::stderr().flush();
+        let mut line = String::new();
+        if io::stdin().read_line(&mut line).is_ok() {
+            let ans = line.trim().to_ascii_lowercase();
+            if ans == "a" || ans == "always" {
+                let _ = set_provider_consent_in_file(&default_consent_file_path(), &prov, true);
+                if let Ok(mut guard) = SESSION_DECISIONS.lock() {
+                    guard.push((prov, true));
+                }
+                return true;
+            }
+            if ans == "y" || ans == "yes" {
+                if let Ok(mut guard) = SESSION_DECISIONS.lock() {
+                    guard.push((prov, true));
+                }
+                return true;
+            }
+        }
+        if let Ok(mut guard) = SESSION_DECISIONS.lock() {
+            guard.push((prov, false));
+        }
+        return false;
+    }
+    if let Ok(mut guard) = SESSION_DECISIONS.lock() {
+        guard.push((prov.clone(), false));
+    }
+    if env::var("MINICI_QUIET").unwrap_or_default() != "1" {
+        eprintln!(
+            "ℹ️ MiniCI: Skipped ambient '{}' credential ({}) without consent — pass --consent, MINICI_CONSENT=1, or run 'minici permissions consent grant {}'.",
+            prov, source_desc, prov
+        );
+    }
+    false
+}
+
+pub fn read_env_kv_from_file(path: &Path, keys: &[&str]) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let clean = trimmed.strip_prefix("export ").unwrap_or(trimmed).trim();
+        if let Some((k, v)) = clean.split_once('=') {
+            let k_trim = k.trim();
+            if keys.iter().any(|want| k_trim.eq_ignore_ascii_case(want)) {
+                let val = v.trim().trim_matches('"').trim_matches('\'').trim();
+                if !val.is_empty() {
+                    return Some(val.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn read_yaml_token_from_file(path: &Path) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    for line in raw.lines() {
+        let t = line.trim();
+        for prefix in ["token:", "oauth_token:"] {
+            if let Some(rest) = t.strip_prefix(prefix) {
+                let tok = rest.trim().trim_matches('"').trim_matches('\'').trim();
+                if !tok.is_empty() {
+                    return Some(tok.to_string());
+                }
+            }
+        }
+    }
+    None
+}
 
 #[derive(Debug, Clone)]
 pub struct EndpointProbeResult {
@@ -205,8 +419,27 @@ pub fn discover_github_token() -> Option<String> {
 }
 
 pub fn discover_github_token_with_keyring(allow_keyring: bool) -> Option<String> {
+    discover_provider_token_with_consent("github", allow_keyring, "read-only GitHub Actions telemetry")
+}
+
+/// Discovers a CI/VCS provider token (`github`, `gitlab`, `circleci`, `bitbucket`).
+/// Explicit session env vars (`MINICI_*_TOKEN`, `GITHUB_TOKEN`, `GITLAB_TOKEN`, `CIRCLE_TOKEN`, `BITBUCKET_TOKEN`)
+/// are returned directly (and explicit empty strings opt out); ambient host credentials (`gh auth token`,
+/// `~/.config/glab-cli/config.yml`, `~/.circleci/cli.yml`, `~/.minici/test-secrets.env`) require user consent.
+pub fn discover_provider_token_with_consent(
+    provider: &str,
+    allow_ambient: bool,
+    purpose: &str,
+) -> Option<String> {
+    let prov = provider.trim().to_ascii_lowercase();
+    let env_keys: &[&str] = match prov.as_str() {
+        "gitlab" => &["MINICI_GITLAB_TOKEN", "GITLAB_TOKEN"],
+        "circleci" => &["MINICI_CIRCLE_TOKEN", "CIRCLE_TOKEN", "CIRCLECI_TOKEN"],
+        "bitbucket" => &["MINICI_BITBUCKET_TOKEN", "BITBUCKET_TOKEN"],
+        _ => &["MINICI_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"],
+    };
     let mut saw_explicit_empty = false;
-    for var in ["MINICI_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"] {
+    for var in env_keys {
         if let Ok(val) = env::var(var) {
             let t = val.trim();
             if !t.is_empty() {
@@ -215,23 +448,124 @@ pub fn discover_github_token_with_keyring(allow_keyring: bool) -> Option<String>
             saw_explicit_empty = true;
         }
     }
-    if saw_explicit_empty || !allow_keyring {
+    if saw_explicit_empty || !allow_ambient {
         return None;
     }
-    let mut cmd = Command::new("gh");
-    cmd.args(["auth", "token"]);
-    if let Ok(gh_user) = env::var("MINICI_GH_USER") {
-        let u = gh_user.trim();
-        if !u.is_empty() {
-            cmd.args(["-u", u]);
+
+    let home_opt = env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE"))
+        .ok()
+        .map(PathBuf::from);
+    let secrets_env = home_opt
+        .as_ref()
+        .map(|h| h.join(".minici").join("test-secrets.env"));
+
+    let ambient_candidate: Option<(String, &'static str)> = match prov.as_str() {
+        "gitlab" => home_opt
+            .as_ref()
+            .and_then(|h| {
+                read_yaml_token_from_file(&h.join(".config").join("glab-cli").join("config.yml"))
+            })
+            .map(|t| (t, "local glab CLI config"))
+            .or_else(|| {
+                secrets_env
+                    .as_ref()
+                    .and_then(|p| read_env_kv_from_file(p, env_keys))
+                    .map(|t| (t, "~/.minici/test-secrets.env"))
+            }),
+        "circleci" => home_opt
+            .as_ref()
+            .and_then(|h| read_yaml_token_from_file(&h.join(".circleci").join("cli.yml")))
+            .map(|t| (t, "local ~/.circleci/cli.yml"))
+            .or_else(|| {
+                secrets_env
+                    .as_ref()
+                    .and_then(|p| read_env_kv_from_file(p, env_keys))
+                    .map(|t| (t, "~/.minici/test-secrets.env"))
+            }),
+        "bitbucket" => secrets_env
+            .as_ref()
+            .and_then(|p| read_env_kv_from_file(p, env_keys))
+            .map(|t| (t, "~/.minici/test-secrets.env")),
+        _ => {
+            let mut gh_tok: Option<(String, &'static str)> = None;
+            let mut cmd = Command::new("gh");
+            cmd.args(["auth", "token"]);
+            if let Ok(gh_user) = env::var("MINICI_GH_USER") {
+                let u = gh_user.trim();
+                if !u.is_empty() {
+                    cmd.args(["-u", u]);
+                }
+            }
+            if let Ok(out) = cmd.output() {
+                if out.status.success() {
+                    let t = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if !t.is_empty() {
+                        gh_tok = Some((t, "local gh CLI keyring"));
+                    }
+                }
+            }
+            gh_tok.or_else(|| {
+                secrets_env
+                    .as_ref()
+                    .and_then(|p| read_env_kv_from_file(p, env_keys))
+                    .map(|t| (t, "~/.minici/test-secrets.env"))
+            })
+        }
+    };
+
+    if let Some((tok, src_desc)) = ambient_candidate {
+        if check_or_prompt_provider_consent(&prov, src_desc, purpose) {
+            return Some(tok);
         }
     }
-    if let Ok(out) = cmd.output() {
-        if out.status.success() {
-            let t = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !t.is_empty() {
-                return Some(t);
-            }
+    None
+}
+
+/// Resolves a Slack Incoming Webhook URL when posting a CI cost receipt.
+/// Explicit `--webhook-url <URL>` or `MINICI_SLACK_WEBHOOK_URL` are used directly; ambient
+/// `SLACK_WEBHOOK_URL` or `~/.minici/test-secrets.env` (`SLACK_WEBHOOK_URL=...`) require user consent.
+pub fn discover_slack_webhook_with_consent(explicit_cli_url: Option<&str>) -> Option<String> {
+    if let Some(cli_u) = explicit_cli_url {
+        let t = cli_u.trim();
+        if !t.is_empty() {
+            return Some(t.to_string());
+        }
+    }
+    if let Ok(explicit_env) = env::var("MINICI_SLACK_WEBHOOK_URL") {
+        let t = explicit_env.trim();
+        if !t.is_empty() {
+            return Some(t.to_string());
+        }
+    }
+    let ambient: Option<(String, &'static str)> = env::var("SLACK_WEBHOOK_URL")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .map(|v| (v, "SLACK_WEBHOOK_URL environment variable"))
+        .or_else(|| {
+            let home = env::var("HOME").or_else(|_| env::var("USERPROFILE")).ok()?;
+            let h = Path::new(&home);
+            read_env_kv_from_file(
+                &h.join(".minici").join("test-secrets.env"),
+                &["SLACK_WEBHOOK_URL", "MINICI_SLACK_WEBHOOK_URL"],
+            )
+            .or_else(|| {
+                read_env_kv_from_file(
+                    &h.join(".minici").join("slack.env"),
+                    &["SLACK_WEBHOOK_URL", "MINICI_SLACK_WEBHOOK_URL"],
+                )
+            })
+            .map(|v| (v, "~/.minici/test-secrets.env"))
+        });
+
+    if let Some((url, src_desc)) = ambient {
+        if check_or_prompt_provider_consent(
+            "slack",
+            src_desc,
+            "posting CI cost summary to Slack",
+        ) {
+            return Some(url);
         }
     }
     None
@@ -494,7 +828,7 @@ fn probe_github_status(url: &str, token: Option<&str>) -> (u16, String, String) 
         "-H",
         "Accept: application/vnd.github+json",
         "-H",
-        "User-Agent: minici-security-check/0.9.0",
+        "User-Agent: minici-security-check/0.9.1",
     ]);
     if let Some(tok) = token {
         cmd.arg("-H").arg(format!("Authorization: Bearer {}", tok));
@@ -520,7 +854,7 @@ fn probe_http_status_with_header(url: &str, auth_header: Option<&str>) -> (u16, 
         "-m",
         "4",
         "-H",
-        "User-Agent: minici-security-check/0.9.0",
+        "User-Agent: minici-security-check/0.9.1",
     ]);
     if let Some(hdr) = auth_header {
         cmd.arg("-H").arg(hdr);
@@ -591,11 +925,12 @@ pub fn run_permissions_audit_with_vendor(
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
-        .or_else(|| match provider {
-            "gitlab" => env::var("GITLAB_TOKEN").ok().filter(|s| !s.trim().is_empty()),
-            "circleci" => env::var("CIRCLE_TOKEN").ok().filter(|s| !s.trim().is_empty()),
-            "bitbucket" => env::var("BITBUCKET_TOKEN").ok().filter(|s| !s.trim().is_empty()),
-            _ => discover_github_token_with_keyring(allow_network),
+        .or_else(|| {
+            discover_provider_token_with_consent(
+                provider,
+                allow_network,
+                "least-privilege token audit",
+            )
         });
     let token_present = token_opt.is_some();
     let has_csv = billing_csv.map(|p| p.exists()).unwrap_or(false);
@@ -1065,6 +1400,55 @@ mod tests {
         if env::var("BITBUCKET_TOKEN").unwrap_or_default().trim().is_empty() {
             assert!(!rep_bb.token_present);
         }
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_consent_ledger_and_ambient_credential_parsers() {
+        let tmp = env::temp_dir().join(format!("minici_consent_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        let consent_file = consent_file_path_in(&tmp);
+        assert!(!is_provider_consented_in_file(&consent_file, "slack"));
+        assert!(!is_provider_consented_in_file(&consent_file, "cloud-iac"));
+
+        set_provider_consent_in_file(&consent_file, "slack", true).unwrap();
+        set_provider_consent_in_file(&consent_file, "cloud-iac", true).unwrap();
+        assert!(is_provider_consented_in_file(&consent_file, "slack"));
+        assert!(is_provider_consented_in_file(&consent_file, "cloud-iac"));
+        assert!(!is_provider_consented_in_file(&consent_file, "gitlab"));
+
+        // Revoking removes only the targeted provider
+        set_provider_consent_in_file(&consent_file, "slack", false).unwrap();
+        assert!(!is_provider_consented_in_file(&consent_file, "slack"));
+        assert!(is_provider_consented_in_file(&consent_file, "cloud-iac"));
+
+        // Granting `all` authorizes every provider until revoked
+        set_provider_consent_in_file(&consent_file, "all", true).unwrap();
+        assert!(is_provider_consented_in_file(&consent_file, "gitlab"));
+        assert!(is_provider_consented_in_file(&consent_file, "slack"));
+
+        // Verify safe KEY=VALUE & YAML token readers
+        let secrets_f = tmp.join("test-secrets.env");
+        fs::write(
+            &secrets_f,
+            "# comment\nexport SLACK_WEBHOOK_URL=\"https://hooks.slack.com/services/T0/B0/X0\"\nGITLAB_TOKEN='glpat-12345'\n",
+        )
+        .unwrap();
+        assert_eq!(
+            read_env_kv_from_file(&secrets_f, &["SLACK_WEBHOOK_URL"]).as_deref(),
+            Some("https://hooks.slack.com/services/T0/B0/X0")
+        );
+        assert_eq!(
+            read_env_kv_from_file(&secrets_f, &["GITLAB_TOKEN"]).as_deref(),
+            Some("glpat-12345")
+        );
+
+        let cli_yml = tmp.join("cli.yml");
+        fs::write(&cli_yml, "host: https://circleci.com\ntoken: \"cci-sec-99\"\n").unwrap();
+        assert_eq!(read_yaml_token_from_file(&cli_yml).as_deref(), Some("cci-sec-99"));
 
         let _ = fs::remove_dir_all(&tmp);
     }

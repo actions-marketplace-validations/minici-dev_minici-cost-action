@@ -230,9 +230,11 @@ fn extract_f64(raw: &str, key: &str) -> Option<f64> {
     let rest = raw[idx + needle.len()..].trim_start();
     let num: String = rest
         .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
+        .take_while(|c| {
+            c.is_ascii_digit() || *c == '.' || *c == '-' || *c == '+' || *c == 'e' || *c == 'E'
+        })
         .collect();
-    num.parse::<f64>().ok()
+    num.parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
 /// Evaluates all 6 step-level CI decisions (`phase` choice + `arm64_safe`, `spot_safe`,
@@ -515,15 +517,22 @@ pub fn answer_natural_language_finops_query(
             let (eng_h, sw_cost, payback, verdict) = mig
                 .switching_verdict
                 .unwrap_or((16.0, 1600.0, 24.0, "OPTIMIZE_IN_PLACE_FIRST"));
+            let payback_desc = if payback > 0.0 && mig.verified_diff.delta_monthly_compute_usd < 0.0 {
+                format!("`{:.1} mo` payback", payback)
+            } else if mig.verified_diff.delta_monthly_compute_usd > 0.0 {
+                "MORE EXPENSIVE on target platform".to_string()
+            } else {
+                "no net compute savings".to_string()
+            };
             (
                 format!(
-                    "Translating `{}` -> `{}` (`{}`) takes `~{:.1}h` (`${:.2}` 5-Layer Switching TCO, `{:.1} mo` payback • Verdict: `{}`).",
+                    "Translating `{}` -> `{}` (`{}`) takes `~{:.1}h` (`${:.2}` 5-Layer Switching TCO, {} • Verdict: `{}`).",
                     mig.source_platform,
                     mig.target_platform,
                     mig.target_workflow_file.as_deref().unwrap_or("ci.yml"),
                     eng_h,
                     sw_cost,
-                    payback,
+                    payback_desc,
                     verdict
                 ),
                 vec![
@@ -708,10 +717,11 @@ pub fn answer_natural_language_finops_query(
         "spend_spike_root_cause" => {
             let rep = analyze_path(repo_dir, None);
             let cc = &rep.cost_components;
+            let app_costs = rep.apportioned_job_monthly_costs();
             let mut top_job_desc = "none".to_string();
-            if let Some(top_j) = rep.jobs.iter().max_by(|a, b| {
-                a.run_compute_cost_usd
-                    .partial_cmp(&b.run_compute_cost_usd)
+            if let Some((idx, top_j)) = rep.jobs.iter().enumerate().max_by(|(ia, _), (ib, _)| {
+                app_costs[*ia]
+                    .partial_cmp(&app_costs[*ib])
                     .unwrap_or(std::cmp::Ordering::Equal)
             }) {
                 top_job_desc = format!(
@@ -719,7 +729,7 @@ pub fn answer_natural_language_finops_query(
                     top_j.workflow_file,
                     top_j.job_id,
                     top_j.runner_label,
-                    top_j.run_compute_cost_usd * rep.monthly_runs,
+                    app_costs[idx],
                     top_j.matrix_combination_count
                 );
             }

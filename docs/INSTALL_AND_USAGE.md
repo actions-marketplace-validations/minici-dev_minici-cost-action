@@ -1,6 +1,6 @@
 # MiniCI (`minici-cost-action`) — Installation & Usage Guide
 
-This guide covers installing and running `minici` (`v0.9.0`) as a **Local CLI**, **GitHub Action**, **Interactive `@minici` PR Bot**, **Shift-Left Git / IDE Hook**, and **`8`-Tool MCP Server**.
+This guide covers installing and running `minici` (`v0.9.1`) as a **Local CLI**, **GitHub Action**, **Interactive `@minici` PR Bot**, **Shift-Left Git / IDE Hook**, and **`8`-Tool MCP Server**.
 
 * **Terminal Demo (`.mp4`):** [`../web/how-to-install-and-use.mp4`](../web/how-to-install-and-use.mp4)
 * **Asciinema Recording (`.cast`):** [`../web/how-to-install-and-use.cast`](../web/how-to-install-and-use.cast)
@@ -16,7 +16,7 @@ This guide covers installing and running `minici` (`v0.9.0`) as a **Local CLI**,
 ```bash
 curl -fsSL https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/scripts/install.sh | bash
 minici --version
-# -> minici 0.9.0
+# -> minici 0.9.1
 ```
 
 ### Option B: Build Offline from Source (`~1.5s`)

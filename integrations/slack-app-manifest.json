@@ -1,0 +1,40 @@
+{
+  "display_information": {
+    "name": "MiniCI FinOps Bot",
+    "description": "Pre-merge CI/CD PR cost diffs, 1.5x burn-velocity alerts, interactive @minici optimization buttons, and Friday FinOps digests.",
+    "background_color": "#0f172a"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "MiniCI",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/minici",
+        "url": "https://minici-cost-action.raza-aamir01.workers.dev/slack/interactions",
+        "description": "Audit CI/CD spend, shrink workflow waste, or preview ARM64 savings for any repo",
+        "usage_hint": "[breakdown|shrink|accelerate|migrate] <owner/repo>",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "commands",
+        "incoming-webhook"
+      ]
+    }
+  },
+  "settings": {
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://minici-cost-action.raza-aamir01.workers.dev/slack/interactions"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

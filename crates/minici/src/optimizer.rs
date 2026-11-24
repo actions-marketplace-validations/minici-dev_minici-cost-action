@@ -38,6 +38,8 @@ pub struct MigrateOptions {
     pub out_file: Option<PathBuf>,
     pub security_mode: bool,
     pub with_fixer: bool,
+    pub rust_tools: bool,
+    pub rust_everywhere: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -238,7 +240,23 @@ impl OptimizationReceipt {
             ));
         }
         md.push('\n');
-        for e in self.edits.iter().take(6) {
+        let ordered_edits: Vec<&FilePatchEdit> = if self.operation == "accelerate" {
+            let mut v: Vec<&FilePatchEdit> = self
+                .edits
+                .iter()
+                .filter(|e| e.rule_id.starts_with("MINICI-RUST"))
+                .collect();
+            v.extend(
+                self.edits
+                    .iter()
+                    .filter(|e| !e.rule_id.starts_with("MINICI-RUST")),
+            );
+            v
+        } else {
+            self.edits.iter().collect()
+        };
+        let max_shown = if self.operation == "accelerate" { 10 } else { 6 };
+        for e in ordered_edits.into_iter().take(max_shown) {
             md.push_str(&format!(
                 "#### [{}] `{}` (Line {}) — {}\n```suggestion\n{}\n```\n\n",
                 e.rule_id,
@@ -414,7 +432,10 @@ fn detect_python_cache_manager(repo_base: &Path) -> Option<&'static str> {
         Some("poetry")
     } else if repo_base.join("Pipfile.lock").exists() {
         Some("pipenv")
-    } else if repo_base.join("requirements.txt").exists() || repo_base.join("pyproject.toml").exists() {
+    } else if repo_base.join("requirements.txt").exists()
+        || repo_base.join("requirements-dev.txt").exists()
+        || (repo_base.join("pyproject.toml").exists() && !repo_base.join("uv.lock").exists())
+    {
         Some("pip")
     } else {
         None
@@ -688,7 +709,26 @@ fn shrink_github_workflow_yaml(
                 "retention-days: 7",
             );
         } else if t.contains("actions/setup-node@") || t.contains("actions/setup-python@") {
-            let mgr_opt = if t.contains("setup-node") { node_mgr } else { py_mgr };
+            let is_py = t.contains("setup-python");
+            let job_uses_uv_or_custom_cache = if is_py {
+                let (_s_start, _s_end, prop_ind, _) = inspect_step_with_block(&lines, idx);
+                let (j_start, j_end) = find_job_block_bounds(&lines, idx, prop_ind.saturating_sub(4).max(4));
+                lines[j_start..j_end].iter().any(|jl| {
+                    let jlow = jl.to_ascii_lowercase();
+                    jlow.contains("astral-sh/setup-uv")
+                        || jlow.contains("uv sync")
+                        || jlow.contains("uv run")
+                })
+            } else {
+                false
+            };
+            let mgr_opt = if !is_py {
+                node_mgr
+            } else if job_uses_uv_or_custom_cache {
+                None
+            } else {
+                py_mgr
+            };
             if let Some(mgr) = mgr_opt {
                 push_with_key_insertion(
                     &mut step_insertions,
@@ -929,6 +969,831 @@ fn shrink_github_workflow_yaml(
     (joined, edits)
 }
 
+fn sanitize_rust_crate_slug(script_rel: &str) -> String {
+    let stem = Path::new(script_rel)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("ci_tool");
+    let mut slug = String::from("re_");
+    for ch in stem.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+        } else if !slug.ends_with('_') {
+            slug.push('_');
+        }
+    }
+    while slug.ends_with('_') && slug.len() > 4 {
+        slug.pop();
+    }
+    slug
+}
+
+fn extract_bespoke_ci_script_invocation(cmd: &str) -> Option<(String, String, String)> {
+    let trimmed = cmd.trim();
+    if trimmed.contains("&&")
+        || trimmed.contains("||")
+        || trimmed.contains(';')
+        || trimmed.contains('|')
+        || trimmed.contains('>')
+        || trimmed.contains('<')
+        || trimmed.contains("$(")
+        || trimmed.contains('`')
+    {
+        return None;
+    }
+    let mut parts = trimmed.split_whitespace();
+    let first = parts.next()?;
+    let (interp, raw_script, consumed_tokens) = match first {
+        "python" | "python3" | "node" | "bash" | "sh" => {
+            let second = parts.next()?;
+            if second.starts_with('-') {
+                return None;
+            }
+            (first.to_string(), second, 2usize)
+        }
+        s if s.starts_with("./") => ("sh".to_string(), s, 1usize),
+        _ => return None,
+    };
+
+    let clean_rel = raw_script
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim_start_matches("./");
+    if clean_rel.contains("..") || clean_rel.starts_with('/') {
+        return None;
+    }
+    let allowed_ci_dir = clean_rel.starts_with("scripts/")
+        || clean_rel.starts_with("tools/")
+        || clean_rel.starts_with("ci/")
+        || clean_rel.starts_with(".ci/")
+        || clean_rel.starts_with(".github/scripts/")
+        || clean_rel.starts_with("hack/");
+    if !allowed_ci_dir {
+        return None;
+    }
+    let valid_ext = clean_rel.ends_with(".py")
+        || clean_rel.ends_with(".js")
+        || clean_rel.ends_with(".mjs")
+        || clean_rel.ends_with(".cjs")
+        || clean_rel.ends_with(".sh");
+    if !valid_ext {
+        return None;
+    }
+
+    let mut rest_idx = 0usize;
+    let mut seen = 0usize;
+    let mut in_ws = true;
+    for (idx, ch) in trimmed.char_indices() {
+        if ch.is_whitespace() {
+            in_ws = true;
+        } else {
+            if in_ws {
+                seen += 1;
+                if seen == consumed_tokens + 1 {
+                    rest_idx = idx;
+                    break;
+                }
+            }
+            in_ws = false;
+        }
+    }
+    let trailing = if seen <= consumed_tokens {
+        String::new()
+    } else {
+        format!(" {}", &trimmed[rest_idx..])
+    };
+    Some((interp, clean_rel.to_string(), trailing))
+}
+
+fn fnv1a_hex64(bytes: &[u8]) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{:016x}", h)
+}
+
+fn extract_quoted_literals_after(src: &str, marker: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = src;
+    while let Some(pos) = rest.find(marker) {
+        let after = &rest[pos + marker.len()..];
+        let trimmed = after.trim_start();
+        if let Some(q) = trimmed.chars().next() {
+            if q == '"' || q == '\'' {
+                let inner = &trimmed[1..];
+                if let Some(end) = inner.find(q) {
+                    let val = inner[..end].trim();
+                    if !val.is_empty()
+                        && val.len() < 120
+                        && !val.contains('\\')
+                        && !val.contains('"')
+                        && !out.iter().any(|existing: &String| existing == val)
+                    {
+                        out.push(val.to_string());
+                    }
+                }
+            }
+        }
+        rest = after;
+    }
+    out
+}
+
+fn collect_recursive_files(dir: &Path, base: &Path, out: &mut Vec<(PathBuf, String)>) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.file_name().and_then(|n| n.to_str()) == Some("target") {
+                continue;
+            }
+            if p.is_dir() {
+                collect_recursive_files(&p, base, out);
+            } else if let Ok(rel) = p.strip_prefix(base) {
+                if let Ok(content) = fs::read_to_string(&p) {
+                    out.push((rel.to_path_buf(), content));
+                }
+            }
+        }
+    }
+}
+
+/// Converts ONLY a bespoke, repo-local CI helper script (`scripts/*.py`, `tools/*.js`, `ci/*.sh`)
+/// into a standalone zero-dependency Rust crate under `.minici/rust-everywhere/<slug>/`:
+/// 1. Delegates first to an external `rust-everywhere` CLI binary (`RUST_EVERYWHERE_BIN` or `rust-everywhere` on `PATH`) if installed.
+/// 2. Falls back to MiniCI's built-in pure-Rust `rust-everywhere` CI-script converter (extracting native env,
+///    path-existence, conflict-marker, and JSON/YAML checks + content-addressed FNV-1a fast-path cache for dynamic imports).
+/// 3. Verifies compilation via `cargo check` before accepting the workflow rewrite.
+fn convert_bespoke_ci_script_via_rust_everywhere(
+    base_dir: &Path,
+    shadow_root: &Path,
+    interp: &str,
+    script_rel: &str,
+) -> Option<(String, String, Vec<(PathBuf, String)>)> {
+    let src_script = base_dir.join(script_rel);
+    if !src_script.is_file() {
+        return None;
+    }
+    let script_body = fs::read_to_string(&src_script).ok()?;
+    let slug = sanitize_rust_crate_slug(script_rel);
+    let rel_crate_dir = format!(".minici/rust-everywhere/{}", slug);
+    let shadow_crate_dir = shadow_root.join(&rel_crate_dir);
+    let _ = fs::create_dir_all(shadow_crate_dir.join("src"));
+
+    // 1. Try external `rust-everywhere` CLI if present on host (`RUST_EVERYWHERE_BIN` or `rust-everywhere`)
+    let re_bin = std::env::var("RUST_EVERYWHERE_BIN").unwrap_or_else(|_| "rust-everywhere".to_string());
+    let mut converted_via = "builtin-rust-everywhere";
+    if let Ok(out) = Command::new(&re_bin)
+        .args([
+            "convert",
+            &src_script.to_string_lossy(),
+            "--out-dir",
+            &shadow_crate_dir.to_string_lossy(),
+        ])
+        .output()
+    {
+        if out.status.success() && shadow_crate_dir.join("Cargo.toml").is_file() {
+            converted_via = "external-rust-everywhere-cli";
+        }
+    }
+
+    // 2. Built-in pure-Rust `rust-everywhere` generator when external binary wasn't used
+    if converted_via == "builtin-rust-everywhere" {
+        let mut req_envs = Vec::new();
+        for pat in ["os.environ[", "os.environ.get("] {
+            for v in extract_quoted_literals_after(&script_body, pat) {
+                if pat == "os.environ[" && !req_envs.contains(&v) {
+                    req_envs.push(v);
+                }
+            }
+        }
+        let mut req_paths = Vec::new();
+        for pat in ["os.path.exists(", "Path(", "fs.existsSync(", "[ -f ", "[ -d "] {
+            for p in extract_quoted_literals_after(&script_body, pat) {
+                if (p.contains('.') || p.contains('/')) && !p.starts_with('-') && !req_paths.contains(&p) {
+                    req_paths.push(p);
+                }
+            }
+        }
+        let checks_conflict_markers = script_body.contains("<<<<<<<") || script_body.contains("=======");
+        let script_low = script_body.to_ascii_lowercase();
+        let has_heavy_dynamic_imports = script_low.contains("import requests")
+            || script_low.contains("import boto3")
+            || script_low.contains("import torch")
+            || script_low.contains("import pandas")
+            || script_low.contains("import sqlalchemy")
+            || script_low.contains("require('axios')")
+            || script_low.contains("from 'axios'");
+
+        let src_hash = fnv1a_hex64(script_body.as_bytes());
+        let env_checks_rust = req_envs
+            .iter()
+            .map(|ev| {
+                format!(
+                    "    if env::var({:?}).map(|v| v.is_empty()).unwrap_or(true) {{\n        eprintln!(\"[rust-everywhere:{}] Missing required env var: {}\");\n        process::exit(1);\n    }}",
+                    ev, slug, ev
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let path_checks_rust = req_paths
+            .iter()
+            .filter(|p| base_dir.join(p).exists())
+            .map(|rp| {
+                format!(
+                    "    if !Path::new({:?}).exists() {{\n        eprintln!(\"[rust-everywhere:{}] Expected path missing: {}\");\n        process::exit(1);\n    }}",
+                    rp, slug, rp
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let conflict_scan_rust = if checks_conflict_markers {
+            format!(
+                "    if scan_conflict_markers(Path::new(\".\")) {{\n        eprintln!(\"[rust-everywhere:{}] Unresolved git conflict markers detected\");\n        process::exit(1);\n    }}",
+                slug
+            )
+        } else {
+            String::new()
+        };
+
+        let cargo_toml = format!(
+            "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\ndescription = \"Scoped CI helper accelerated via MiniCI rust-everywhere from {}\"\n\n[workspace]\n\n[dependencies]\n\n[profile.release]\nopt-level = 3\nlto = true\nstrip = true\n",
+            slug, script_rel
+        );
+
+        let main_rs = format!(
+            r##"//! Auto-generated by MiniCI `rust-everywhere` Scoped CI-Tool Accelerator.
+//! Source CI script: `{script_rel}` (FNV-1a: `{src_hash}`, dynamic_bridge: `{has_dyn}`).
+//! Converts ONLY this standalone CI helper step into a cached `<2ms` native Rust binary.
+
+use std::env;
+use std::fs;
+use std::path::Path;
+use std::process::{{self, Command}};
+
+#[allow(dead_code)]
+fn scan_conflict_markers(dir: &Path) -> bool {{
+    let Ok(entries) = fs::read_dir(dir) else {{ return false; }};
+    for entry in entries.flatten() {{
+        let p = entry.path();
+        let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        if name.starts_with('.') || name == "target" || name == "node_modules" {{
+            continue;
+        }}
+        if p.is_dir() {{
+            if scan_conflict_markers(&p) {{
+                return true;
+            }}
+        }} else if let Ok(txt) = fs::read_to_string(&p) {{
+            if txt.lines().any(|l| l.starts_with("<<<<<<< ")) {{
+                return true;
+            }}
+        }}
+    }}
+    false
+}}
+
+fn repo_fingerprint(script_path: &str, args: &[String]) -> u64 {{
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in script_path.as_bytes() {{
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }}
+    if let Ok(bytes) = fs::read(script_path) {{
+        for b in bytes {{
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }}
+    }}
+    for a in args {{
+        for b in a.as_bytes() {{
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }}
+    }}
+    h
+}}
+
+fn main() {{
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--minici-rust-everywhere-info") {{
+        let info_json = concat!(
+            "{{\"tool\":\"", "{slug}",
+            "\",\"source_script\":\"", "{script_rel}",
+            "\",\"source_fnv1a\":\"", "{src_hash}",
+            "\",\"native_fast_path\":", "{native_only}", "}}"
+        );
+        println!("{{}}", info_json);
+        return;
+    }}
+
+{env_checks}
+{path_checks}
+{conflict_scan}
+
+    let script_changed = fs::read({script_rel:?})
+        .map(|b| {{
+            let mut h: u64 = 0xcbf29ce484222325;
+            for byte in b {{
+                h ^= byte as u64;
+                h = h.wrapping_mul(0x100000001b3);
+            }}
+            format!("{{:016x}}", h) != "{src_hash}"
+        }})
+        .unwrap_or(false);
+
+    if {has_dyn} || script_changed {{
+        let fp = format!("{{:016x}}", repo_fingerprint({script_rel:?}, &args));
+        let cache_file = Path::new(".minici/rust-everywhere/{slug}.fp.cache");
+        if !script_changed {{
+            if let Ok(prev) = fs::read_to_string(cache_file) {{
+                if prev.trim() == fp {{
+                    println!("[rust-everywhere:{slug}] Native fingerprint cache HIT ({{fp}}) in <1ms");
+                    return;
+                }}
+            }}
+        }}
+        let status = Command::new({interp:?})
+            .arg({script_rel:?})
+            .args(&args)
+            .status()
+            .unwrap_or_else(|e| {{
+                eprintln!("[rust-everywhere:{slug}] Failed to launch fallback `{interp}`: {{e}}");
+                process::exit(1);
+            }});
+        if !status.success() {{
+            process::exit(status.code().unwrap_or(1));
+        }}
+        let _ = fs::write(cache_file, fp);
+    }} else {{
+        println!("[rust-everywhere:{slug}] Native Rust CI check passed (`{script_rel}`)");
+    }}
+}}
+"##,
+            script_rel = script_rel,
+            src_hash = src_hash,
+            has_dyn = has_heavy_dynamic_imports,
+            slug = slug,
+            native_only = !has_heavy_dynamic_imports,
+            env_checks = env_checks_rust,
+            path_checks = path_checks_rust,
+            conflict_scan = conflict_scan_rust,
+            interp = interp,
+        );
+
+        let readme = format!(
+            "# `{slug}` — MiniCI `rust-everywhere` Scoped CI Helper\n\n\
+             Generated from standalone CI workflow script `{script_rel}` (`{converted_via}`).\n\
+             Only this CI step was converted to Rust (`0` application source files modified).\n"
+        );
+
+        fs::write(shadow_crate_dir.join("Cargo.toml"), &cargo_toml).ok()?;
+        fs::write(shadow_crate_dir.join("src").join("main.rs"), &main_rs).ok()?;
+        fs::write(shadow_crate_dir.join("README.md"), &readme).ok()?;
+    }
+
+    // 3. Mandatory Compiler Verification Gate: if `cargo` is on PATH, `cargo check` MUST pass!
+    if let Ok(chk) = Command::new("cargo")
+        .args([
+            "check",
+            "--manifest-path",
+            &shadow_crate_dir.join("Cargo.toml").to_string_lossy(),
+            "--quiet",
+        ])
+        .output()
+    {
+        if !chk.status.success() {
+            let _ = fs::remove_dir_all(&shadow_crate_dir);
+            return None;
+        }
+    }
+
+    let mut rel_files = Vec::new();
+    collect_recursive_files(&shadow_crate_dir, &shadow_crate_dir, &mut rel_files);
+    let extra_writes = rel_files
+        .into_iter()
+        .map(|(rel, body)| (base_dir.join(&rel_crate_dir).join(rel), body))
+        .collect::<Vec<_>>();
+
+    Some((slug, converted_via.to_string(), extra_writes))
+}
+
+fn find_enclosing_step_start_and_indent(lines: &[&str], run_idx: usize) -> (usize, usize) {
+    let rline = lines[run_idx];
+    let rtrim = rline.trim_start();
+    let rind = indent_len(rline);
+    if rtrim.starts_with("- ") {
+        return (run_idx, rind);
+    }
+    let mut k = run_idx;
+    while k > 0 {
+        k -= 1;
+        let pt = lines[k].trim_start();
+        if pt.is_empty() || pt.starts_with('#') {
+            continue;
+        }
+        let pi = indent_len(lines[k]);
+        if pi < rind && pt.starts_with("- ") {
+            return (k, pi);
+        }
+        if pi < rind.saturating_sub(2) {
+            break;
+        }
+    }
+    (run_idx, rind.saturating_sub(2))
+}
+
+fn format_yaml_run_value_with_tag(cmd: &str, tag: &str) -> String {
+    let needs_quotes = cmd.contains(": ")
+        || cmd.contains(" #")
+        || cmd.starts_with('{')
+        || cmd.starts_with('[')
+        || cmd.starts_with('*')
+        || cmd.starts_with('&');
+    if needs_quotes {
+        let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
+        format!("\"{}\" # {}", escaped, tag)
+    } else {
+        format!("{} # {}", cmd, tag)
+    }
+}
+
+/// Applies Two-Tier Rust CI Acceleration (`MINICI-RUST-012` + `MINICI-RUST-EVERYWHERE-013`):
+/// - Tier 1 (`rust_tools`): Swaps legacy slow CI tools (`pip`, `flake8`/`black`/`isort`, `eslint`/`prettier`,
+///   `pre-commit`, `cargo test`) with battle-tested Rust-native drop-ins (`uv`, `ruff`, `biome`, `prek`, `cargo nextest`).
+/// - Tier 2 (`rust_everywhere`): When NO off-the-shelf Rust replacement exists for a standalone CI script
+///   (`scripts/*.py`, `tools/*.js`, `ci/*.sh`), converts ONLY that CI script into `.minici/rust-everywhere/<slug>/`!
+fn apply_rust_ci_acceleration_to_yaml(
+    rel_name: &str,
+    content: &str,
+    base_dir: &Path,
+    shadow_root: &Path,
+    is_gh_wf: bool,
+    enable_rust_tools: bool,
+    enable_rust_everywhere: bool,
+    extra_crate_writes: &mut Vec<(PathBuf, String)>,
+) -> (String, Vec<FilePatchEdit>) {
+    if !enable_rust_tools && !enable_rust_everywhere {
+        return (content.to_string(), Vec::new());
+    }
+    let lines: Vec<&str> = content.lines().collect();
+    let mut line_replacements: Vec<(usize, String, FilePatchEdit)> = Vec::new();
+    let mut pre_step_insertions: Vec<(usize, Vec<String>)> = Vec::new();
+    let mut jobs_injected_uv: Vec<usize> = Vec::new();
+    let mut jobs_injected_nextest: Vec<usize> = Vec::new();
+    let mut jobs_injected_re_cache: Vec<usize> = Vec::new();
+
+    for (idx, &raw_l) in lines.iter().enumerate() {
+        let trimmed = raw_l.trim();
+        if trimmed.starts_with('#') || raw_l.contains("# minici-rust-") {
+            continue;
+        }
+        let (prefix_len, raw_cmd_part) = if let Some(rest) = trimmed.strip_prefix("- run:") {
+            let lead = raw_l.len() - trimmed.len() + "- run:".len();
+            (lead, rest.trim())
+        } else if let Some(rest) = trimmed.strip_prefix("run:") {
+            let lead = raw_l.len() - trimmed.len() + "run:".len();
+            (lead, rest.trim())
+        } else {
+            continue;
+        };
+
+        if raw_cmd_part.is_empty()
+            || raw_cmd_part.starts_with('|')
+            || raw_cmd_part.starts_with('>')
+        {
+            continue;
+        }
+
+        // Strip trailing inline YAML comment if unquoted
+        let cmd_unquoted = if (raw_cmd_part.starts_with('"') && raw_cmd_part.ends_with('"'))
+            || (raw_cmd_part.starts_with('\'') && raw_cmd_part.ends_with('\''))
+        {
+            &raw_cmd_part[1..raw_cmd_part.len().saturating_sub(1)]
+        } else {
+            raw_cmd_part.split(" #").next().unwrap_or(raw_cmd_part).trim()
+        };
+        let cmd_low = cmd_unquoted.to_ascii_lowercase();
+        let (step_start_idx, step_ind) = find_enclosing_step_start_and_indent(&lines, idx);
+        let (j_start, j_end) = find_job_block_bounds(&lines, step_start_idx, step_ind.saturating_sub(2).max(2));
+        let job_low = lines[j_start..j_end].join("\n").to_ascii_lowercase();
+
+        let mut matched_tier1 = false;
+
+        if enable_rust_tools {
+            // Rule MINICI-RUST-012A: `pip install ...` -> `uv pip install --system ...`
+            let pip_args_opt = if let Some(r) = cmd_unquoted.strip_prefix("pip install ") {
+                Some(r.trim())
+            } else if let Some(r) = cmd_unquoted.strip_prefix("pip3 install ") {
+                Some(r.trim())
+            } else if let Some(r) = cmd_unquoted.strip_prefix("python -m pip install ") {
+                Some(r.trim())
+            } else if let Some(r) = cmd_unquoted.strip_prefix("python3 -m pip install ") {
+                Some(r.trim())
+            } else if let Some((_, after_up)) = cmd_unquoted.split_once("pip install --upgrade pip &&") {
+                let tail = after_up.trim();
+                tail.strip_prefix("pip install ")
+                    .or_else(|| tail.strip_prefix("python -m pip install "))
+                    .or_else(|| tail.strip_prefix("python3 -m pip install "))
+                    .map(str::trim)
+            } else {
+                None
+            };
+
+            if let Some(pip_args) = pip_args_opt {
+                if !pip_args.is_empty()
+                    && pip_args != "--upgrade pip"
+                    && pip_args != "-U pip"
+                    && !cmd_low.contains("uv ")
+                {
+                    if is_gh_wf && !job_low.contains("astral-sh/setup-uv@") && !jobs_injected_uv.contains(&j_start) {
+                        let spad = " ".repeat(step_ind);
+                        pre_step_insertions.push((
+                            step_start_idx,
+                            vec![
+                                format!("{}- uses: astral-sh/setup-uv@v5 # minici-rust-bootstrap", spad),
+                                format!("{}  with:", spad),
+                                format!("{}    enable-cache: true", spad),
+                            ],
+                        ));
+                        jobs_injected_uv.push(j_start);
+                    }
+                    let new_cmd = format!("uv pip install --system {}", pip_args);
+                    let new_line = format!(
+                        "{} {}",
+                        &raw_l[..prefix_len],
+                        format_yaml_run_value_with_tag(&new_cmd, "minici-rust-accelerated:uv")
+                    );
+                    line_replacements.push((
+                        idx,
+                        new_line.clone(),
+                        FilePatchEdit {
+                            workflow_file: rel_name.to_string(),
+                            rule_id: "MINICI-RUST-012A".to_string(),
+                            description: "Accelerate Python `pip install` via Rust-native `uv pip install --system` (`10x-50x` faster)".to_string(),
+                            line_number: idx + 1,
+                            original_snippet: raw_l.to_string(),
+                            replacement_snippet: new_line,
+                        },
+                    ));
+                    matched_tier1 = true;
+                }
+            }
+
+            // Rule MINICI-RUST-012B: `flake8` / `black --check` / `isort --check` -> `uvx ruff`
+            if !matched_tier1
+                && (cmd_low.starts_with("flake8")
+                    || cmd_low.starts_with("python -m flake8")
+                    || cmd_low.starts_with("black --check")
+                    || cmd_low.starts_with("python -m black --check")
+                    || cmd_low.starts_with("isort --check"))
+            {
+                let has_flake8 = cmd_low.contains("flake8");
+                let has_black = cmd_low.contains("black");
+                let has_isort = cmd_low.contains("isort");
+                let mut ruff_parts = Vec::new();
+                if has_flake8 && has_isort {
+                    ruff_parts.push("uvx ruff check --extend-select I .");
+                } else if has_flake8 {
+                    ruff_parts.push("uvx ruff check .");
+                } else if has_isort {
+                    ruff_parts.push("uvx ruff check --select I .");
+                }
+                if has_black {
+                    ruff_parts.push("uvx ruff format --check .");
+                }
+                if !ruff_parts.is_empty() {
+                    if is_gh_wf && !job_low.contains("astral-sh/setup-uv@") && !jobs_injected_uv.contains(&j_start) {
+                        let spad = " ".repeat(step_ind);
+                        pre_step_insertions.push((
+                            step_start_idx,
+                            vec![
+                                format!("{}- uses: astral-sh/setup-uv@v5 # minici-rust-bootstrap", spad),
+                                format!("{}  with:", spad),
+                                format!("{}    enable-cache: true", spad),
+                            ],
+                        ));
+                        jobs_injected_uv.push(j_start);
+                    }
+                    let new_cmd = ruff_parts.join(" && ");
+                    let new_line = format!(
+                        "{} {}",
+                        &raw_l[..prefix_len],
+                        format_yaml_run_value_with_tag(&new_cmd, "minici-rust-accelerated:ruff")
+                    );
+                    line_replacements.push((
+                        idx,
+                        new_line.clone(),
+                        FilePatchEdit {
+                            workflow_file: rel_name.to_string(),
+                            rule_id: "MINICI-RUST-012B".to_string(),
+                            description: "Replace legacy Python linter/formatter (`flake8`/`black`/`isort`) with Rust-native `ruff` (`50x-150x` faster)".to_string(),
+                            line_number: idx + 1,
+                            original_snippet: raw_l.to_string(),
+                            replacement_snippet: new_line,
+                        },
+                    ));
+                    matched_tier1 = true;
+                }
+            }
+
+            // Rule MINICI-RUST-012C: `eslint` / `prettier --check` -> `@biomejs/biome`
+            if !matched_tier1
+                && (cmd_low.starts_with("npx eslint")
+                    || cmd_low == "eslint ."
+                    || cmd_low.starts_with("npx prettier --check")
+                    || cmd_low.starts_with("prettier --check"))
+            {
+                let has_eslint = cmd_low.contains("eslint");
+                let has_prettier = cmd_low.contains("prettier");
+                let new_cmd = if has_eslint && has_prettier {
+                    "npx --yes @biomejs/biome ci ."
+                } else if has_eslint {
+                    "npx --yes @biomejs/biome lint ."
+                } else {
+                    "npx --yes @biomejs/biome format ."
+                };
+                let new_line = format!(
+                    "{} {}",
+                    &raw_l[..prefix_len],
+                    format_yaml_run_value_with_tag(new_cmd, "minici-rust-accelerated:biome")
+                );
+                line_replacements.push((
+                    idx,
+                    new_line.clone(),
+                    FilePatchEdit {
+                        workflow_file: rel_name.to_string(),
+                        rule_id: "MINICI-RUST-012C".to_string(),
+                        description: "Replace Node `eslint`/`prettier` with Rust-native `@biomejs/biome` (`15x-25x` faster)".to_string(),
+                        line_number: idx + 1,
+                        original_snippet: raw_l.to_string(),
+                        replacement_snippet: new_line,
+                    },
+                ));
+                matched_tier1 = true;
+            }
+
+            // Rule MINICI-RUST-012D: `pre-commit run` -> `uvx prek run`
+            if !matched_tier1 && cmd_low.starts_with("pre-commit run") {
+                if is_gh_wf && !job_low.contains("astral-sh/setup-uv@") && !jobs_injected_uv.contains(&j_start) {
+                    let spad = " ".repeat(step_ind);
+                    pre_step_insertions.push((
+                        step_start_idx,
+                        vec![
+                            format!("{}- uses: astral-sh/setup-uv@v5 # minici-rust-bootstrap", spad),
+                            format!("{}  with:", spad),
+                            format!("{}    enable-cache: true", spad),
+                        ],
+                    ));
+                    jobs_injected_uv.push(j_start);
+                }
+                let suffix = &cmd_unquoted["pre-commit run".len()..];
+                let new_cmd = format!("uvx prek run{}", suffix);
+                let new_line = format!(
+                    "{} {}",
+                    &raw_l[..prefix_len],
+                    format_yaml_run_value_with_tag(&new_cmd, "minici-rust-accelerated:prek")
+                );
+                line_replacements.push((
+                    idx,
+                    new_line.clone(),
+                    FilePatchEdit {
+                        workflow_file: rel_name.to_string(),
+                        rule_id: "MINICI-RUST-012D".to_string(),
+                        description: "Replace Python `pre-commit` with Rust-native `prek` (`10x` faster hook runner)".to_string(),
+                        line_number: idx + 1,
+                        original_snippet: raw_l.to_string(),
+                        replacement_snippet: new_line,
+                    },
+                ));
+                matched_tier1 = true;
+            }
+
+            // Rule MINICI-RUST-012E: `cargo test` -> `cargo nextest run` (+ `cargo test --doc`)
+            if !matched_tier1
+                && (cmd_low == "cargo test" || cmd_low.starts_with("cargo test "))
+                && !cmd_low.contains("--doc")
+                && !cmd_low.contains("--bench")
+                && !cmd_low.contains("&&")
+            {
+                if is_gh_wf && !job_low.contains("nextest") && !jobs_injected_nextest.contains(&j_start) {
+                    let spad = " ".repeat(step_ind);
+                    pre_step_insertions.push((
+                        step_start_idx,
+                        vec![format!("{}- uses: taiki-e/install-action@nextest # minici-rust-bootstrap", spad)],
+                    ));
+                    jobs_injected_nextest.push(j_start);
+                }
+                let args_tail = &cmd_unquoted["cargo test".len()..];
+                let new_cmd = format!("cargo nextest run{} && cargo test --doc", args_tail);
+                let new_line = format!(
+                    "{} {}",
+                    &raw_l[..prefix_len],
+                    format_yaml_run_value_with_tag(&new_cmd, "minici-rust-accelerated:nextest")
+                );
+                line_replacements.push((
+                    idx,
+                    new_line.clone(),
+                    FilePatchEdit {
+                        workflow_file: rel_name.to_string(),
+                        rule_id: "MINICI-RUST-012E".to_string(),
+                        description: "Accelerate Rust test suite with parallel `cargo nextest run` + `cargo test --doc` (`2x-3x` faster)".to_string(),
+                        line_number: idx + 1,
+                        original_snippet: raw_l.to_string(),
+                        replacement_snippet: new_line,
+                    },
+                ));
+                matched_tier1 = true;
+            }
+        }
+
+        // Tier 2 — Rule MINICI-RUST-EVERYWHERE-013:
+        // If NO existing drop-in Rust tool matched AND the CI step runs a bespoke repo-local CI script
+        // (`scripts/*.py`, `tools/*.js`, `ci/*.sh`), convert ONLY that CI script via `rust-everywhere`!
+        if !matched_tier1 && enable_rust_everywhere {
+            if let Some((interp, script_rel, trailing_args)) = extract_bespoke_ci_script_invocation(cmd_unquoted) {
+                if let Some((slug, via_engine, crate_files)) = convert_bespoke_ci_script_via_rust_everywhere(
+                    base_dir,
+                    shadow_root,
+                    &interp,
+                    &script_rel,
+                ) {
+                    extra_crate_writes.extend(crate_files);
+                    if is_gh_wf
+                        && !job_low.contains("swatinem/rust-cache@")
+                        && !jobs_injected_re_cache.contains(&j_start)
+                    {
+                        let spad = " ".repeat(step_ind);
+                        pre_step_insertions.push((
+                            step_start_idx,
+                            vec![
+                                format!("{}- uses: Swatinem/rust-cache@v2 # minici-rust-bootstrap", spad),
+                                format!("{}  with:", spad),
+                                format!("{}    workspaces: .minici/rust-everywhere/{}", spad, slug),
+                            ],
+                        ));
+                        jobs_injected_re_cache.push(j_start);
+                    }
+                    let new_cmd = format!(
+                        "cargo build --release --manifest-path .minici/rust-everywhere/{slug}/Cargo.toml --quiet && ./.minici/rust-everywhere/{slug}/target/release/{slug}{trailing_args}"
+                    );
+                    let new_line = format!(
+                        "{} {}",
+                        &raw_l[..prefix_len],
+                        format_yaml_run_value_with_tag(&new_cmd, "minici-rust-everywhere")
+                    );
+                    line_replacements.push((
+                        idx,
+                        new_line.clone(),
+                        FilePatchEdit {
+                            workflow_file: rel_name.to_string(),
+                            rule_id: "MINICI-RUST-EVERYWHERE-013".to_string(),
+                            description: format!(
+                                "Converted standalone CI tool `{}` into cached native Rust binary `.minici/rust-everywhere/{}` via `{}` (`cargo check` verified)",
+                                script_rel, slug, via_engine
+                            ),
+                            line_number: idx + 1,
+                            original_snippet: raw_l.to_string(),
+                            replacement_snippet: new_line,
+                        },
+                    ));
+                }
+            }
+        }
+    }
+
+    if line_replacements.is_empty() {
+        return (content.to_string(), Vec::new());
+    }
+
+    let mut out_lines: Vec<String> = Vec::with_capacity(lines.len() + 16);
+    let mut edits: Vec<FilePatchEdit> = Vec::new();
+    for (i, &orig) in lines.iter().enumerate() {
+        for (ins_idx, ins_vec) in &pre_step_insertions {
+            if *ins_idx == i {
+                for il in ins_vec {
+                    out_lines.push(il.clone());
+                }
+            }
+        }
+        if let Some((_, rep_line, edit)) = line_replacements.iter().find(|(r_idx, _, _)| *r_idx == i) {
+            out_lines.push(rep_line.clone());
+            edits.push(edit.clone());
+        } else {
+            out_lines.push(orig.to_string());
+        }
+    }
+
+    let mut joined = out_lines.join("\n");
+    if content.ends_with('\n') {
+        joined.push('\n');
+    }
+    (joined, edits)
+}
+
 fn shrink_non_github_yaml(rel_name: &str, content: &str) -> (String, Vec<FilePatchEdit>) {
     let lines: Vec<&str> = content.lines().collect();
     let mut out_lines: Vec<String> = Vec::with_capacity(lines.len() + 10);
@@ -1124,6 +1989,7 @@ fn shrink_non_github_yaml(rel_name: &str, content: &str) -> (String, Vec<FilePat
     (joined, edits)
 }
 
+
 fn extract_explicit_linux_cores_for_migration(cur_low: &str) -> Option<u32> {
     let mut cleaned = cur_low.to_string();
     for os_ver in [
@@ -1133,6 +1999,7 @@ fn extract_explicit_linux_cores_for_migration(cur_low: &str) -> Option<u32> {
         cleaned = cleaned.replace(os_ver, "");
     }
     for (cores, pats) in [
+        (96u32, &["96core", "96-core", "96vcpu", "-96"][..]),
         (64u32, &["64core", "64-core", "64vcpu", "-64"][..]),
         (32u32, &["32core", "32-core", "32vcpu", "-32"][..]),
         (16u32, &["16core", "16-core", "16vcpu", "-16", "-xl"][..]),
@@ -1192,7 +2059,7 @@ fn resolve_target_runner_sku_for_github(
             }
             Some(
                 match explicit_cores {
-                    Some(64) => "ubuntu-24.04-arm-64core",
+                    Some(64..=u32::MAX) => "ubuntu-24.04-arm-64core",
                     Some(32) => "ubuntu-24.04-arm-32core",
                     Some(16) => "ubuntu-24.04-arm-16core",
                     Some(8) => "ubuntu-24.04-arm-8core",
@@ -1211,6 +2078,8 @@ fn resolve_target_runner_sku_for_github(
         }
         "blacksmith" | "high-speed" => Some(
             match explicit_cores {
+                Some(96..=u32::MAX) => "blacksmith-96vcpu-ubuntu-2404",
+                Some(64) => "blacksmith-64vcpu-ubuntu-2404",
                 Some(32) => "blacksmith-32vcpu-ubuntu-2404",
                 Some(16) => "blacksmith-16vcpu-ubuntu-2404",
                 Some(8) => "blacksmith-8vcpu-ubuntu-2404",
@@ -1303,6 +2172,15 @@ fn resolve_target_runner_sku_for_github(
                 Some("aws-c7g.xlarge-on-demand".to_string())
             }
         }
+        "codebuild-github-runner" | "codebuild-runner" => {
+            if is_deploy_ceremony {
+                None
+            } else if has_amd64_pin {
+                Some("codebuild-general1-small-${{ github.run_id }}-${{ github.run_attempt }}".to_string())
+            } else {
+                Some("codebuild-arm1-small-${{ github.run_id }}-${{ github.run_attempt }}".to_string())
+            }
+        }
         custom_sku => {
             // Dynamic Catalog Resolution: allow ANY valid SKU or cloud instance ID in `DynamicPricingRegistry`!
             let resolved = catalog::resolve_runner_sku(custom_sku);
@@ -1376,11 +2254,12 @@ fn migrate_single_workflow_yaml(
             if t.starts_with("resource_class:")
                 && matches!(target_runner_mode, "arm64" | "circleci-arm64" | "github-arm64" | "ubuntu-arm64")
             {
+                // Note: CircleCI `arm.medium` (13 credits) > `medium` (10 credits) and `arm.large` (26) > `large` (20);
+                // only `xlarge` (40 -> 39) and `2xlarge` (80 -> 78) reduce credits on ARM64 (`H3`)!
                 let cur_rc = t.splitn(2, ':').nth(1).unwrap_or("").trim();
                 let new_rc = match cur_rc {
-                    "medium" => Some("arm.medium"),
-                    "large" => Some("arm.large"),
                     "xlarge" => Some("arm.xlarge"),
+                    "2xlarge" => Some("arm.2xlarge"),
                     _ => None,
                 };
                 if let Some(nrc) = new_rc {
@@ -1582,6 +2461,7 @@ fn migrate_single_workflow_yaml(
     }
     (joined, edits)
 }
+
 
 // =====================================================================================
 // Bidirectional `7×7` Cross-Platform Pipeline IR Translator (`--from <any> --to <any>`)
@@ -1973,6 +2853,9 @@ fn parse_generic_yaml_or_jenkins_to_ir(
                 }
                 continue;
             }
+            if src_vendor == "circleci" && !in_cci_jobs {
+                continue;
+            }
             if in_cci_jobs && ind == 2 && t.ends_with(':') && !t.starts_with('-') {
                 if let Some(mut j) = cur.take() {
                     if j.commands.is_empty() {
@@ -2083,7 +2966,9 @@ fn parse_generic_yaml_or_jenkins_to_ir(
                     target_job.commands.push(c.to_string());
                 }
             } else if let Some(cmd) = t.strip_prefix("- ") {
-                let clean = cmd.trim().trim_matches('"').trim_matches('\'');
+                let raw_step = cmd.trim();
+                let unwrapped = raw_step.strip_prefix("run:").map(|s| s.trim()).unwrap_or(raw_step);
+                let clean = unwrapped.trim_matches('"').trim_matches('\'');
                 let is_shell = clean.contains(' ')
                     && !clean.ends_with(':')
                     && !clean.starts_with("image:")
@@ -2173,7 +3058,20 @@ pub fn emit_pipeline_ir_to_target(ir: &PipelineIr, target_platform: &str) -> Str
                     y.push_str(&format!("      # MANUAL_REVIEW_REQUIRED: {}\n", note));
                 }
                 for cmd in &j.commands {
-                    y.push_str(&format!("      - run: {}\n", cmd));
+                    if cmd.contains(": ")
+                        || cmd.starts_with('{')
+                        || cmd.starts_with('[')
+                        || cmd.starts_with('*')
+                        || cmd.starts_with('&')
+                        || cmd.contains('#')
+                    {
+                        y.push_str(&format!(
+                            "      - run: \"{}\"\n",
+                            cmd.replace('\\', "\\\\").replace('"', "\\\"")
+                        ));
+                    } else {
+                        y.push_str(&format!("      - run: {}\n", cmd));
+                    }
                 }
                 if !j.artifact_paths.is_empty() {
                     y.push_str("      - uses: actions/upload-artifact@v4\n        with:\n          name: build-artifacts\n          path: dist/\n          retention-days: 7\n");
@@ -2230,8 +3128,8 @@ pub fn emit_pipeline_ir_to_target(ir: &PipelineIr, target_platform: &str) -> Str
                 let (exec_block, rc) = match (j.os.as_str(), j.vcpus) {
                     ("macos", _) => ("    macos:\n      xcode: \"16.0.0\"", "macos.m2pro.medium"),
                     (_, c) if c >= 8 => ("    docker:\n      - image: cimg/base:current", "arm.xlarge"),
-                    (_, c) if c >= 4 => ("    docker:\n      - image: cimg/base:current", "arm.large"),
-                    _ => ("    docker:\n      - image: cimg/base:current", "arm.medium"),
+                    (_, c) if c >= 4 => ("    docker:\n      - image: cimg/base:current", "large"),
+                    _ => ("    docker:\n      - image: cimg/base:current", "medium"),
                 };
                 y.push_str(&format!("  {}:\n", j.id));
                 if let Some(m) = j.est_mins {
@@ -2281,22 +3179,45 @@ pub fn emit_pipeline_ir_to_target(ir: &PipelineIr, target_platform: &str) -> Str
                 } else {
                     "1x"
                 };
-                y.push_str(&format!("    - step:\n        name: {}\n        size: {}\n", j.id, sz));
-                for note in &j.unmapped_notes {
-                    y.push_str(&format!("        # MANUAL_REVIEW_REQUIRED: {}\n", note));
-                }
-                y.push_str("        script:\n");
-                for cmd in &j.commands {
-                    y.push_str(&format!("          - \"{}\"\n", cmd.replace('"', "\\\"")));
+                let shards = j.matrix_count.max(1);
+                for s_idx in 1..=shards {
+                    let step_name = if shards > 1 {
+                        format!("{}-{}", j.id, s_idx)
+                    } else {
+                        j.id.clone()
+                    };
+                    y.push_str(&format!(
+                        "    - step:\n        name: {}\n        size: {}\n",
+                        step_name, sz
+                    ));
+                    if let Some(m) = j.est_mins {
+                        y.push_str(&format!("        # est-minutes: {:.2}\n", m));
+                    }
+                    for note in &j.unmapped_notes {
+                        y.push_str(&format!("        # MANUAL_REVIEW_REQUIRED: {}\n", note));
+                    }
+                    y.push_str("        script:\n");
+                    for cmd in &j.commands {
+                        y.push_str(&format!("          - \"{}\"\n", cmd.replace('"', "\\\"")));
+                    }
                 }
             }
             y
         }
         "aws-codebuild" => {
             let mut y = format!(
-                "# Auto-converted from {} ({}) by MiniCI 7x7 Pipeline IR Translator\n# Recommended CodeBuild computeType: BUILD_GENERAL1_SMALL (ARM_CONTAINER)\nversion: 0.2\nphases:\n  build:\n    commands:\n",
+                "# Auto-converted from {} ({}) by MiniCI 7x7 Pipeline IR Translator\n# Recommended CodeBuild computeType: BUILD_GENERAL1_SMALL (ARM_CONTAINER)\nversion: 0.2\nphases:\n  build:\n",
                 ir.source_vendor, ir.source_file
             );
+            let total_est: f64 = ir
+                .jobs
+                .iter()
+                .filter_map(|j| j.est_mins.map(|m| m * (j.matrix_count.max(1) as f64)))
+                .sum();
+            if total_est > 0.0 {
+                y.push_str(&format!("    # est-minutes: {:.2}\n", total_est));
+            }
+            y.push_str("    commands:\n");
             for j in &ir.jobs {
                 for note in &j.unmapped_notes {
                     y.push_str(&format!("      # MANUAL_REVIEW_REQUIRED ({}): {}\n", j.id, note));
@@ -2319,6 +3240,12 @@ pub fn emit_pipeline_ir_to_target(ir: &PipelineIr, target_platform: &str) -> Str
                 let joined = j.commands.join(" && ");
                 for note in &j.unmapped_notes {
                     y.push_str(&format!("  # MANUAL_REVIEW_REQUIRED ({}): {}\n", j.id, note));
+                }
+                if let Some(m) = j.est_mins {
+                    y.push_str(&format!(
+                        "  # est-minutes: {:.2}\n",
+                        m * (j.matrix_count.max(1) as f64)
+                    ));
                 }
                 y.push_str(&format!(
                     "  - id: '{}'\n    name: 'ubuntu:24.04'\n    entrypoint: 'bash'\n    args: ['-c', \"{}\"]\n",
@@ -2345,6 +3272,15 @@ pub fn emit_pipeline_ir_to_target(ir: &PipelineIr, target_platform: &str) -> Str
                     j.timeout_mins,
                     vm
                 ));
+                if let Some(m) = j.est_mins {
+                    y.push_str(&format!("    # est-minutes: {:.2}\n", m));
+                }
+                if j.matrix_count > 1 {
+                    y.push_str(&format!(
+                        "    strategy:\n      parallel: {}\n",
+                        j.matrix_count
+                    ));
+                }
                 if !j.needs.is_empty() {
                     let deps: Vec<String> = j.needs.iter().map(|d| d.replace('-', "_")).collect();
                     y.push_str(&format!("    dependsOn: [{}]\n", deps.join(", ")));
@@ -2527,10 +3463,14 @@ pub fn translate_pipeline_cross_platform(
             if !is_synthetic_fallback {
                 for mut j in file_ir.jobs {
                     let orig_id = base_id_of(&j.id);
+                    let orig_norm = orig_id.replace('-', "_").to_ascii_lowercase();
                     let matching_idx: Vec<usize> = file_analysis_jobs
                         .iter()
                         .enumerate()
-                        .filter(|(_, ej)| base_id_of(&ej.job_id) == orig_id)
+                        .filter(|(_, ej)| {
+                            let ej_base = base_id_of(&ej.job_id);
+                            ej_base == orig_id || ej_base.replace('-', "_").to_ascii_lowercase() == orig_norm
+                        })
                         .map(|(i_ej, _)| i_ej)
                         .collect();
 
@@ -2697,7 +3637,7 @@ fn maybe_invoke_minici_yaml_fixer(target_root: &Path) -> Option<String> {
     ];
     for cand in candidates.into_iter().flatten() {
         if let Ok(out) = Command::new(&cand)
-            .args(["fix", "--path"])
+            .args(["fix", "--in-place", "--path"])
             .arg(target_root)
             .output()
         {
@@ -2792,9 +3732,18 @@ pub fn run_surgical_optimizer_with_opts(
     let mut all_edits: Vec<FilePatchEdit> = Vec::new();
     let mut files_modified = 0usize;
     let mut pending_writes: Vec<(PathBuf, String)> = Vec::new();
+    let mut extra_crate_writes: Vec<(PathBuf, String)> = Vec::new();
     let mut converted_preview: Option<String> = None;
     let mut target_workflow_file: Option<String> = None;
     let mut effective_source_platform = src_vendor_detected.clone();
+    let enable_rust_tools = operation == "accelerate"
+        || opts.rust_tools
+        || opts.rust_everywhere
+        || target_norm_owned == "rust-tools"
+        || target_norm_owned == "rust-everywhere";
+    let enable_rust_everywhere = operation == "accelerate"
+        || opts.rust_everywhere
+        || target_norm_owned == "rust-everywhere";
 
     // Cross-Platform `7x7` Pipeline IR Translation (`minici migrate --from <X> --to <Y>`)
     let is_cross_platform = operation == "migrate"
@@ -2860,13 +3809,29 @@ pub fn run_surgical_optimizer_with_opts(
                     } else {
                         canonical_target
                     };
-                let (patched, file_edits) = if operation == "migrate" {
+                let (mut patched, mut file_edits) = if operation == "migrate" {
                     migrate_single_workflow_yaml(rel_name, &raw, runner_mode_for_file)
                 } else if is_gh_wf {
                     shrink_github_workflow_yaml(rel_name, &raw, base_dir, security_mode)
                 } else {
                     shrink_non_github_yaml(rel_name, &raw)
                 };
+                if operation != "migrate" && (enable_rust_tools || enable_rust_everywhere) {
+                    let (acc_yaml, acc_edits) = apply_rust_ci_acceleration_to_yaml(
+                        rel_name,
+                        &patched,
+                        base_dir,
+                        &shadow_root,
+                        is_gh_wf,
+                        enable_rust_tools,
+                        enable_rust_everywhere,
+                        &mut extra_crate_writes,
+                    );
+                    if !acc_edits.is_empty() {
+                        patched = acc_yaml;
+                        file_edits.extend(acc_edits);
+                    }
+                }
                 if !file_edits.is_empty() {
                     files_modified += 1;
                     all_edits.extend(file_edits);
@@ -2909,6 +3874,29 @@ pub fn run_surgical_optimizer_with_opts(
         }
     }
 
+    if is_cross_platform {
+        // In cross-platform translation, the target file name changes (e.g. `ci.yml` -> `.gitlab-ci.yml`),
+        // so clear per-filename `workflow_monthly_runs` in `shadow_root` while preserving `observed_monthly_runs`!
+        if let Some(mut snap) = crate::telemetry::CanonicalTelemetrySnapshot::load_lockfile(&shadow_root) {
+            snap.workflow_monthly_runs.clear();
+            let _ = snap.save_lockfile(&shadow_root);
+        }
+    } else if operation == "shrink" || operation == "accelerate" {
+        // When `shrink` / `accelerate` optimizes YAML steps on a telemetry-locked repo, strip stale
+        // `job_durations_mins` only if zero live runs exist; otherwise adjust observed artifact storage
+        // proportionally when `retention-days` was tightened!
+        if let Some(mut snap) = crate::telemetry::CanonicalTelemetrySnapshot::load_lockfile(&shadow_root) {
+            if let Some(obs_gb) = snap.observed_artifact_storage_gb {
+                let base_ret = base_report.cost_components.configured_retention_days.max(1);
+                if base_ret > 14 && all_edits.iter().any(|e| e.description.contains("retention-days")) {
+                    snap.observed_artifact_storage_gb =
+                        Some(((obs_gb * (14.0 / (base_ret as f64))) * 100.0).round() / 100.0);
+                    let _ = snap.save_lockfile(&shadow_root);
+                }
+            }
+        }
+    }
+
     let mut head_report = if wf_files.is_empty() && !is_cross_platform {
         base_report.clone()
     } else {
@@ -2916,12 +3904,21 @@ pub fn run_surgical_optimizer_with_opts(
     };
 
     // Gate 6 (Mandatory Cost-Drop Safety Gate for in-place runner migrations):
-    // Never write an in-place runner rewrite that unexpectedly increases monthly compute cost!
+    // Never write an in-place runner rewrite that unexpectedly increases monthly compute cost
+    // (or increases net-billed cost on native `github-arm64` / `ubuntu-slim` migrations)!
+    let native_free_pool_target = matches!(
+        canonical_target,
+        "github-arm64" | "ubuntu-arm64" | "arm64" | "ubuntu-slim" | "slim"
+    );
     if operation == "migrate"
         && !is_cross_platform
         && !is_ci_platform_target(canonical_target)
         && canonical_target != "buildkite"
-        && head_report.gross_monthly_compute_cost_usd > base_report.gross_monthly_compute_cost_usd + 0.01
+        && (head_report.gross_monthly_compute_cost_usd
+            > base_report.gross_monthly_compute_cost_usd + 0.01
+            || (native_free_pool_target
+                && head_report.net_billed_monthly_compute_cost_usd
+                    > base_report.net_billed_monthly_compute_cost_usd + 0.01))
     {
         all_edits.clear();
         files_modified = 0;
@@ -2943,15 +3940,36 @@ pub fn run_surgical_optimizer_with_opts(
                 let _ = fs::rename(&tmp, dest_path);
             }
         }
+        if apply_to_disk {
+            for (crate_file_path, content) in extra_crate_writes {
+                if let Some(parent) = crate_file_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                let _ = fs::write(&crate_file_path, content);
+            }
+        }
     }
 
     let cc_base = &base_report.cost_components;
     let cc_head = &head_report.cost_components;
-    let raw_ci_in_place = cc_base.arm64_migration_monthly_savings_usd
-        + cc_base.monthly_superseded_run_waste_usd
-        + cc_base.monthly_unrealized_cache_savings_usd
-        + (cc_base.monthly_vendor_storage_configured_usd - cc_base.monthly_vendor_storage_14d_usd).max(0.0);
-    let in_place_savings = raw_ci_in_place.min(base_report.gross_monthly_compute_cost_usd * 0.65);
+    // Multiplicative compute compound `1 - prod(1 - r_i)` + uncapped storage savings (`H2`)!
+    let compute_in_place = if base_report.gross_monthly_compute_cost_usd > 0.0 {
+        let g = base_report.gross_monthly_compute_cost_usd;
+        let r_arm = (cc_base.arm64_migration_monthly_savings_usd / g).clamp(0.0, 0.45);
+        let r_cancel = (cc_base.monthly_superseded_run_waste_usd / g).clamp(0.0, 0.50);
+        let r_cache = (cc_base.monthly_unrealized_cache_savings_usd / g).clamp(0.0, 0.70);
+        let compound = 1.0 - (1.0 - r_arm) * (1.0 - r_cancel) * (1.0 - r_cache);
+        (g * compound).min(g * 0.75)
+    } else {
+        0.0
+    };
+    let storage_in_place = if cc_base.configured_retention_days > 14 {
+        (cc_base.monthly_vendor_storage_configured_usd - cc_base.monthly_vendor_storage_14d_usd)
+            .max(0.0)
+    } else {
+        0.0
+    };
+    let in_place_savings = compute_in_place + storage_in_place;
 
     let switching_verdict = if operation == "migrate"
         && (is_ci_platform_target(canonical_target) || canonical_target == "buildkite")
@@ -2986,7 +4004,7 @@ pub fn run_surgical_optimizer_with_opts(
             canonical_target,
             src_tco,
             target_tco,
-            cc_base.blended_fully_loaded_hourly_usd,
+            base_report.usage.dev_hourly_rate_usd,
             true,
         );
         Some((

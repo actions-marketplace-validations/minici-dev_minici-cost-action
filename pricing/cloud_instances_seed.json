@@ -97,11 +97,11 @@
       "os": "linux",
       "arch": "x86_64",
       "vcpus": 2,
-      "ram_gb": 4.0,
-      "on_demand_hr_usd": 0.0416,
-      "spot_hr_usd": 0.0124,
-      "on_demand_per_min_usd": 0.00069,
-      "spot_per_min_usd": 0.00021
+      "ram_gb": 8.0,
+      "on_demand_hr_usd": 0.0832,
+      "spot_hr_usd": 0.025,
+      "on_demand_per_min_usd": 0.00139,
+      "spot_per_min_usd": 0.00042
     },
     {
       "provider": "self-hosted-aws",
@@ -109,11 +109,11 @@
       "os": "linux",
       "arch": "x86_64",
       "vcpus": 4,
-      "ram_gb": 8.0,
-      "on_demand_hr_usd": 0.0832,
-      "spot_hr_usd": 0.0248,
-      "on_demand_per_min_usd": 0.00139,
-      "spot_per_min_usd": 0.00041
+      "ram_gb": 16.0,
+      "on_demand_hr_usd": 0.1664,
+      "spot_hr_usd": 0.0499,
+      "on_demand_per_min_usd": 0.00277,
+      "spot_per_min_usd": 0.00083
     },
     {
       "provider": "self-hosted-aws",
@@ -121,11 +121,11 @@
       "os": "linux",
       "arch": "x86_64",
       "vcpus": 8,
-      "ram_gb": 16.0,
-      "on_demand_hr_usd": 0.1664,
-      "spot_hr_usd": 0.0496,
-      "on_demand_per_min_usd": 0.00277,
-      "spot_per_min_usd": 0.00083
+      "ram_gb": 32.0,
+      "on_demand_hr_usd": 0.3328,
+      "spot_hr_usd": 0.0998,
+      "on_demand_per_min_usd": 0.00555,
+      "spot_per_min_usd": 0.00166
     },
     {
       "provider": "self-hosted-aws",
@@ -145,11 +145,11 @@
       "os": "linux",
       "arch": "x86_64",
       "vcpus": 2,
-      "ram_gb": 4.0,
-      "on_demand_hr_usd": 0.0376,
-      "spot_hr_usd": 0.0112,
-      "on_demand_per_min_usd": 0.00063,
-      "spot_per_min_usd": 0.00019
+      "ram_gb": 8.0,
+      "on_demand_hr_usd": 0.0752,
+      "spot_hr_usd": 0.0226,
+      "on_demand_per_min_usd": 0.00125,
+      "spot_per_min_usd": 0.00038
     },
     {
       "provider": "self-hosted-aws",
@@ -157,11 +157,11 @@
       "os": "linux",
       "arch": "x86_64",
       "vcpus": 4,
-      "ram_gb": 8.0,
-      "on_demand_hr_usd": 0.0752,
-      "spot_hr_usd": 0.0224,
-      "on_demand_per_min_usd": 0.00125,
-      "spot_per_min_usd": 0.00037
+      "ram_gb": 16.0,
+      "on_demand_hr_usd": 0.1504,
+      "spot_hr_usd": 0.0451,
+      "on_demand_per_min_usd": 0.00251,
+      "spot_per_min_usd": 0.00075
     },
     {
       "provider": "self-hosted-aws",
@@ -169,11 +169,11 @@
       "os": "linux",
       "arch": "x86_64",
       "vcpus": 8,
-      "ram_gb": 16.0,
-      "on_demand_hr_usd": 0.1504,
-      "spot_hr_usd": 0.0448,
-      "on_demand_per_min_usd": 0.00251,
-      "spot_per_min_usd": 0.00075
+      "ram_gb": 32.0,
+      "on_demand_hr_usd": 0.3008,
+      "spot_hr_usd": 0.0902,
+      "on_demand_per_min_usd": 0.00501,
+      "spot_per_min_usd": 0.0015
     },
     {
       "provider": "self-hosted-aws",
@@ -182,10 +182,10 @@
       "arch": "arm64",
       "vcpus": 2,
       "ram_gb": 2.0,
-      "on_demand_hr_usd": 0.0336,
-      "spot_hr_usd": 0.01,
-      "on_demand_per_min_usd": 0.00056,
-      "spot_per_min_usd": 0.00017
+      "on_demand_hr_usd": 0.0168,
+      "spot_hr_usd": 0.005,
+      "on_demand_per_min_usd": 0.00028,
+      "spot_per_min_usd": 0.00008
     },
     {
       "provider": "self-hosted-aws",
@@ -205,11 +205,11 @@
       "os": "linux",
       "arch": "arm64",
       "vcpus": 2,
-      "ram_gb": 4.0,
-      "on_demand_hr_usd": 0.0336,
-      "spot_hr_usd": 0.01,
-      "on_demand_per_min_usd": 0.00056,
-      "spot_per_min_usd": 0.00017
+      "ram_gb": 8.0,
+      "on_demand_hr_usd": 0.0672,
+      "spot_hr_usd": 0.0202,
+      "on_demand_per_min_usd": 0.00112,
+      "spot_per_min_usd": 0.00034
     },
     {
       "provider": "self-hosted-aws",
@@ -217,11 +217,11 @@
       "os": "linux",
       "arch": "arm64",
       "vcpus": 4,
-      "ram_gb": 8.0,
-      "on_demand_hr_usd": 0.0672,
-      "spot_hr_usd": 0.02,
-      "on_demand_per_min_usd": 0.00112,
-      "spot_per_min_usd": 0.00033
+      "ram_gb": 16.0,
+      "on_demand_hr_usd": 0.1344,
+      "spot_hr_usd": 0.0403,
+      "on_demand_per_min_usd": 0.00224,
+      "spot_per_min_usd": 0.00067
     },
     {
       "provider": "self-hosted-aws",
@@ -229,11 +229,11 @@
       "os": "linux",
       "arch": "arm64",
       "vcpus": 8,
-      "ram_gb": 16.0,
-      "on_demand_hr_usd": 0.1344,
-      "spot_hr_usd": 0.04,
-      "on_demand_per_min_usd": 0.00224,
-      "spot_per_min_usd": 0.00067
+      "ram_gb": 32.0,
+      "on_demand_hr_usd": 0.2688,
+      "spot_hr_usd": 0.0806,
+      "on_demand_per_min_usd": 0.00448,
+      "spot_per_min_usd": 0.00134
     },
     {
       "provider": "self-hosted-aws",

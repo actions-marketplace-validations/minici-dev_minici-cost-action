@@ -50,6 +50,14 @@ inputs:
     description: "Optional Slack Incoming Webhook URL to deliver Block Kit CI FinOps & Pull Request cost diff receipts"
     required: false
     default: ""
+  cloud-key:
+    description: "Optional Polar.sh MiniCI Cloud Key (Starter $1 / Pro $10 / Team Flex) for unlisted /r/<id> report links, 30d/365d trend ledger & org policy sync"
+    required: false
+    default: ""
+  cloud-api-url:
+    description: "MiniCI Cloud Worker API base URL (used only when cloud-key is provided)"
+    required: false
+    default: "https://minici-cost-action.raza-aamir01.workers.dev"
 
 outputs:
   gross_monthly_compute_cost_usd:
@@ -154,6 +162,12 @@ outputs:
   provenance_mode:
     description: "Telemetry provenance mode (static_heuristic, live_telemetry, or invoice_reconciled)"
     value: ${{ steps.minici.outputs.provenance_mode }}
+  cloud_share_url:
+    description: "Unlisted MiniCI Cloud FinOps report permalink URL (when cloud-key is provided)"
+    value: ${{ steps.minici.outputs.cloud_share_url }}
+  cloud_badge_url:
+    description: "Live 30d/365d CI cost trend SVG badge URL (when cloud-key is provided)"
+    value: ${{ steps.minici.outputs.cloud_badge_url }}
 
 runs:
   using: "composite"
@@ -177,19 +191,26 @@ runs:
         INPUT_POST_PR_COMMENT: ${{ inputs.post-pr-comment }}
         INPUT_SUGGEST_FIXES: ${{ inputs.suggest-fixes }}
         INPUT_SLACK_WEBHOOK_URL: ${{ inputs.slack-webhook-url }}
+        INPUT_CLOUD_KEY: ${{ inputs.cloud-key }}
+        INPUT_CLOUD_API_URL: ${{ inputs.cloud-api-url }}
         EVENT_NAME: ${{ github.event_name }}
         EVENT_PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
       run: |
-        BIN_PATH="${ACTION_PATH}/target/release/minici"
+        OS_RAW="$(uname -s 2>/dev/null || echo Unknown)"
+        EXE_EXT=""
+        case "$OS_RAW" in
+          MINGW*|MSYS*|CYGWIN*|Windows_NT*) EXE_EXT=".exe" ;;
+        esac
+        BIN_PATH="${ACTION_PATH}/target/release/minici${EXE_EXT}"
         if ! "$BIN_PATH" --version >/dev/null 2>&1; then
           mkdir -p "${ACTION_PATH}/target/release"
-          OS_RAW="$(uname -s)"
-          ARCH_RAW="$(uname -m)"
+          ARCH_RAW="$(uname -m 2>/dev/null || echo x86_64)"
           ASSET=""
           if [ "$OS_RAW" = "Linux" ] && [ "$ARCH_RAW" = "x86_64" ]; then ASSET="minici-linux-x86_64"; fi
           if [ "$OS_RAW" = "Linux" ] && { [ "$ARCH_RAW" = "aarch64" ] || [ "$ARCH_RAW" = "arm64" ]; }; then ASSET="minici-linux-aarch64"; fi
           if [ "$OS_RAW" = "Darwin" ] && [ "$ARCH_RAW" = "arm64" ]; then ASSET="minici-macos-aarch64"; fi
           if [ "$OS_RAW" = "Darwin" ] && [ "$ARCH_RAW" = "x86_64" ]; then ASSET="minici-macos-x86_64"; fi
+          if [ -n "$EXE_EXT" ]; then ASSET="minici-windows-x86_64.exe"; fi
           REL_BASE="https://github.com/minici-dev/minici-cost-action/releases/latest/download"
           if [[ "${ACTION_REF:-}" == v*.*.* ]]; then
             REL_BASE="https://github.com/minici-dev/minici-cost-action/releases/download/${ACTION_REF}"
@@ -211,7 +232,7 @@ runs:
             if [ "$VERIFIED_OK" = "1" ]; then
               rm -f "$BIN_PATH"
               mv "${TMP_DL}/${ASSET}" "$BIN_PATH"
-              chmod +x "$BIN_PATH"
+              chmod +x "$BIN_PATH" 2>/dev/null || true
             fi
           fi
           rm -rf "$TMP_DL"
@@ -220,23 +241,52 @@ runs:
           cargo build --release --manifest-path "${ACTION_PATH}/crates/minici/Cargo.toml"
           mkdir -p "${ACTION_PATH}/target/release"
           rm -f "$BIN_PATH"
-          cp "${ACTION_PATH}/crates/minici/target/release/minici" "$BIN_PATH"
+          cp "${ACTION_PATH}/crates/minici/target/release/minici${EXE_EXT}" "$BIN_PATH"
         fi
         if [ "${EVENT_NAME:-}" = "issue_comment" ] && [ -n "${EVENT_PR_NUMBER:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
-          PR_JSON="$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${EVENT_PR_NUMBER}")"
+          SHOULD_ROUTE="$(python3 -c '
+        import json, os, re
+        p = os.environ.get("GITHUB_EVENT_PATH", "")
+        if not p or not os.path.isfile(p):
+            print("0"); raise SystemExit(0)
+        ev = json.load(open(p))
+        if not ev.get("issue", {}).get("pull_request"):
+            print("0"); raise SystemExit(0)
+        c = ev.get("comment", {})
+        if str(c.get("user", {}).get("type", "")).lower() == "bot" or str(c.get("user", {}).get("login", "")).endswith("[bot]"):
+            print("0"); raise SystemExit(0)
+        body = str(c.get("body", ""))
+        if "<!-- minici-" in body or "MiniCI Pull Request CI/CD Cost Diff" in body:
+            print("0"); raise SystemExit(0)
+        cleaned = "\n".join(re.sub(r"`[^`]*`", "", ln) for ln in body.splitlines() if not ln.lstrip().startswith(">"))
+        print("1" if "@minici" in cleaned.lower() else "0")
+        ')"
+          if [ "$SHOULD_ROUTE" != "1" ]; then
+            echo "Skipping issue_comment event (not a direct human @minici PR command)."
+            exit 0
+          fi
+          GH_API="${GITHUB_API_URL:-https://api.github.com}"
+          GH_API="${GH_API%/}"
+          PR_JSON="$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" "${GH_API}/repos/${GITHUB_REPOSITORY}/pulls/${EVENT_PR_NUMBER}")"
           BASE_REF="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get("base",{}).get("ref","main"))' <<< "$PR_JSON")"
           git fetch origin "refs/pull/${EVENT_PR_NUMBER}/head:minici-pr-head" "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
           git checkout minici-pr-head
           "$BIN_PATH" comment github \
             --path "$INPUT_PATH" \
             --compare-to "origin/${BASE_REF}" \
+            --tier "$INPUT_TIER" \
+            --prs-per-week "$INPUT_PRS_PER_WEEK" \
+            --pushes-per-pr "$INPUT_PUSHES_PER_PR" \
+            --dev-hourly-rate "$INPUT_DEV_HOURLY_RATE" \
             --pr "$EVENT_PR_NUMBER" \
             --event-path "$GITHUB_EVENT_PATH" \
             --behavior new \
             --post || true
+          exit 0
         fi
         EXTRA_BD_ARGS=()
         if [ "$INPUT_LIVE_TELEMETRY" = "true" ]; then
+          "$BIN_PATH" telemetry sync --path "$INPUT_PATH" --quiet >/dev/null 2>&1 || true
           EXTRA_BD_ARGS+=(--live)
         fi
         if [ -n "$INPUT_BILLING_CSV" ]; then
@@ -287,6 +337,10 @@ runs:
             "$BIN_PATH" comment github \
               --path "$INPUT_PATH" \
               --compare-to "$INPUT_COMPARE_TO" \
+              --tier "$INPUT_TIER" \
+              --prs-per-week "$INPUT_PRS_PER_WEEK" \
+              --pushes-per-pr "$INPUT_PUSHES_PER_PR" \
+              --dev-hourly-rate "$INPUT_DEV_HOURLY_RATE" \
               --event-path "$GITHUB_EVENT_PATH" \
               --behavior update \
               "$SUGGEST_FLAG" \
@@ -297,6 +351,10 @@ runs:
             "$BIN_PATH" comment slack \
               --path "$INPUT_PATH" \
               --compare-to "$INPUT_COMPARE_TO" \
+              --tier "$INPUT_TIER" \
+              --prs-per-week "$INPUT_PRS_PER_WEEK" \
+              --pushes-per-pr "$INPUT_PUSHES_PER_PR" \
+              --dev-hourly-rate "$INPUT_DEV_HOURLY_RATE" \
               --webhook-url "$INPUT_SLACK_WEBHOOK_URL" \
               --quiet || true
           fi
@@ -307,6 +365,10 @@ runs:
         elif [ -n "${INPUT_SLACK_WEBHOOK_URL:-}" ]; then
           "$BIN_PATH" comment slack \
             --path "$INPUT_PATH" \
+            --tier "$INPUT_TIER" \
+            --prs-per-week "$INPUT_PRS_PER_WEEK" \
+            --pushes-per-pr "$INPUT_PUSHES_PER_PR" \
+            --dev-hourly-rate "$INPUT_DEV_HOURLY_RATE" \
             --webhook-url "$INPUT_SLACK_WEBHOOK_URL" \
             --quiet || true
         fi
@@ -367,5 +429,25 @@ runs:
             ws("spend_anomaly_alert_active", str(cc.get("spend_anomaly_and_forecast", {}).get("spend_anomaly_alert_active", False)).lower())
             ws("provenance_mode", d.get("provenance_mode", "static_heuristic"))
         '
+        fi
+        if [ -n "${INPUT_CLOUD_KEY:-}" ]; then
+          CLOUD_SYNC_ARGS=(--path "$INPUT_PATH" --key "$INPUT_CLOUD_KEY" --api-url "$INPUT_CLOUD_API_URL" --format json --quiet)
+          if [ -n "$INPUT_COMPARE_TO" ]; then
+            CLOUD_SYNC_ARGS+=(--compare-to "$INPUT_COMPARE_TO")
+          fi
+          "$BIN_PATH" cloud-sync "${CLOUD_SYNC_ARGS[@]}" >/dev/null 2>&1 || true
+          SHARE_JSON="$("$BIN_PATH" share --path "$INPUT_PATH" --key "$INPUT_CLOUD_KEY" --api-url "$INPUT_CLOUD_API_URL" --format json --quiet 2>/dev/null || true)"
+          if [ -n "$SHARE_JSON" ] && [ -n "${GITHUB_OUTPUT:-}" ]; then
+            python3 -c '
+        import json, os, sys
+        try:
+            s = json.loads(sys.stdin.read())
+            with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                if s.get("share_url"): f.write(f"cloud_share_url={s[\"share_url\"]}\n")
+                if s.get("badge_url"): f.write(f"cloud_badge_url={s[\"badge_url\"]}\n")
+        except Exception:
+            pass
+            ' <<< "$SHARE_JSON"
+          fi
         fi
         rm -f .minici_breakdown.md .minici_diff.md .minici_breakdown.json

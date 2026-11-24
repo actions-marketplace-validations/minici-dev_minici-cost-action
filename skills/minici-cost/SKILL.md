@@ -46,10 +46,13 @@ If the `minici` MCP server is connected in this session (`minici_breakdown`, `mi
 Run inside any repository containing `.github/workflows/*.yml`, `.gitlab-ci.yml`, `.circleci/config.yml`, `bitbucket-pipelines.yml`, `buildspec.yml`, `cloudbuild.yaml`, or `azure-pipelines.yml`:
 
 ```bash
-# Human-readable unified summary + bottleneck breakdown
+# Human-readable unified summary + Top-15 cost drivers (pass `--all` for full monorepo table, `--ascii` for non-UTF8 terminals)
 minici breakdown --path .
 
-# Structured JSON output (24 FinOps models, per-job breakdown, phase shares)
+# Token-efficient agent digest (<2KB JSON with top jobs, `line_start`/`line_end`, and `next_actions`)
+minici breakdown --path . --format json --compact --quiet
+
+# Full 24-model FinOps ledger + per-job `line_start`/`line_end` spans
 minici breakdown --path . --format json --quiet
 ```
 
@@ -77,8 +80,12 @@ Always run `minici diff` after editing any CI workflow file or when reviewing a 
 minici diff --path . --compare-to HEAD
 minici diff --path . --compare-to origin/main
 
-# Generate sticky-comment Markdown diff table
+# Generate sticky-comment Markdown diff table (or platform-native PR/MR/Slack payloads)
 minici diff --path . --compare-to origin/main --format markdown
+minici comment github --path . --compare-to origin/main
+minici comment gitlab --path . --compare-to origin/main
+minici comment bitbucket --path . --compare-to origin/main
+minici comment slack --path . --compare-to origin/main
 ```
 
 ### 4. Apply Surgical, Comment-Preserving YAML Fixes (`shrink`)
@@ -92,6 +99,9 @@ When asked to reduce CI bills, fix missing `concurrency.cancel-in-progress`, add
 2. **Apply in place (preserves 100% of `#` YAML comments and formatting):**
    ```bash
    minici shrink --path . --apply
+   # Optional: also swap legacy Python/Node/Rust CI steps to Rust (uv/ruff/biome/prek/nextest)
+   # and convert bespoke standalone CI scripts (scripts/*.py, tools/*.js, ci/*.sh) via rust-everywhere:
+   minici accelerate --path . --apply
    ```
 3. **Verify the exact post-fix dollar and minute delta:**
    ```bash

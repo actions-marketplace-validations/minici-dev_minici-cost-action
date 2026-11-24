@@ -35,11 +35,39 @@ runs:
         OUT_FILE: ${{ inputs.output-path }}
       run: |
         set -euo pipefail
+        OUT_FILE="${OUT_FILE:-.minici/step_hardware_telemetry.json}"
         mkdir -p "$(dirname "$OUT_FILE")"
         CPU_PCT="35.0"
         RAM_PCT="45.0"
 
-        if [ -r /proc/stat ] && [ -r /proc/meminfo ]; then
+        if [ -r /sys/fs/cgroup/cpu.stat ] && [ -r /sys/fs/cgroup/memory.current ]; then
+          U1="$(awk '/^usage_usec/ {print $2}' /sys/fs/cgroup/cpu.stat 2>/dev/null || echo 0)"
+          SLEEP_S="${SAMPLE_SECS:-2}"
+          if ! [[ "$SLEEP_S" =~ ^[0-9]+$ ]] || [ "$SLEEP_S" -lt 1 ]; then SLEEP_S=1; fi
+          if [ "$SLEEP_S" -gt 10 ]; then SLEEP_S=10; fi
+          sleep "$SLEEP_S"
+          U2="$(awk '/^usage_usec/ {print $2}' /sys/fs/cgroup/cpu.stat 2>/dev/null || echo 0)"
+          CORES="$(nproc 2>/dev/null || echo 2)"
+          if [ -r /sys/fs/cgroup/cpu.max ]; then
+            CG_QUOTA="$(awk '{print $1}' /sys/fs/cgroup/cpu.max 2>/dev/null || echo max)"
+            CG_PERIOD="$(awk '{print $2}' /sys/fs/cgroup/cpu.max 2>/dev/null || echo 100000)"
+            if [ "$CG_QUOTA" != "max" ] && [ "${CG_PERIOD:-0}" -gt 0 ] 2>/dev/null; then
+              CORES="$(awk -v q="$CG_QUOTA" -v p="$CG_PERIOD" 'BEGIN { c = q / p; printf "%.2f", (c > 0.25 ? c : 1.0) }')"
+            fi
+          fi
+          CPU_PCT="$(awk -v u1="${U1:-0}" -v u2="${U2:-0}" -v s="$SLEEP_S" -v c="$CORES" 'BEGIN { du = u2 - u1; denom = s * 1000000.0 * c; v = (denom > 0 && du >= 0) ? ((du * 100.0) / denom) : 35.0; if (v > 100) v = 100; printf "%.1f", v }')"
+          MCUR="$(cat /sys/fs/cgroup/memory.current 2>/dev/null || echo 0)"
+          MMAX="$(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo max)"
+          if [ "$MMAX" != "max" ] && [ "${MMAX:-0}" -gt 0 ] 2>/dev/null; then
+            RAM_PCT="$(awk -v mc="$MCUR" -v mm="$MMAX" 'BEGIN { v = (mc * 100.0) / mm; if (v > 100) v = 100; printf "%.1f", v }')"
+          elif [ -r /proc/meminfo ]; then
+            MEM_TOT="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
+            MEM_AVAIL="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+            if [ -n "$MEM_TOT" ] && [ -n "$MEM_AVAIL" ] && [ "$MEM_TOT" -gt 0 ]; then
+              RAM_PCT="$(awk -v mt="$MEM_TOT" -v ma="$MEM_AVAIL" 'BEGIN { printf "%.1f", ((mt - ma) * 100.0) / mt }')"
+            fi
+          fi
+        elif [ -r /proc/stat ] && [ -r /proc/meminfo ]; then
           read -r _ u1 n1 s1 i1 w1 q1 sq1 st1 _ < /proc/stat
           SLEEP_S="${SAMPLE_SECS:-2}"
           if ! [[ "$SLEEP_S" =~ ^[0-9]+$ ]] || [ "$SLEEP_S" -lt 1 ]; then SLEEP_S=1; fi
@@ -68,7 +96,8 @@ runs:
           PAGE_SIZE="$({ vm_stat 2>/dev/null || true; } | awk '/page size of/ {gsub(/[^0-9]/,"",$8); print ($8 ? $8 : 16384)}')"
           ACTIVE_P="$({ vm_stat 2>/dev/null || true; } | awk '/Pages active:/ {gsub(/\./,"",$3); print $3+0}')"
           WIRED_P="$({ vm_stat 2>/dev/null || true; } | awk '/Pages wired down:/ {gsub(/\./,"",$4); print $4+0}')"
-          RAM_PCT="$(awk -v a="${ACTIVE_P:-0}" -v w="${WIRED_P:-0}" -v ps="${PAGE_SIZE:-16384}" -v tot="$MEM_BYTES" 'BEGIN { u = (a + w) * ps; printf "%.1f", (tot > 0) ? ((u * 100.0) / tot) : 45.0 }')"
+          COMP_P="$({ vm_stat 2>/dev/null || true; } | awk '/Pages occupied by compressor:/ {gsub(/\./,"",$5); print $5+0}')"
+          RAM_PCT="$(awk -v a="${ACTIVE_P:-0}" -v w="${WIRED_P:-0}" -v cp="${COMP_P:-0}" -v ps="${PAGE_SIZE:-16384}" -v tot="$MEM_BYTES" 'BEGIN { u = (a + w + cp) * ps; printf "%.1f", (tot > 0) ? ((u * 100.0) / tot) : 45.0 }')"
         fi
 
         cat > "$OUT_FILE" <<EOF

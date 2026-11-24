@@ -42,7 +42,7 @@ rm -f "$REPO_ROOT/target/release/minici" "$HOME/.local/bin/minici" 2>/dev/null |
 cp "$BIN" "$REPO_ROOT/target/release/minici"
 cp "$BIN" "$HOME/.local/bin/minici" 2>/dev/null || true
 VER=$("$BIN" --version)
-[[ "$VER" == "minici 0.9.0" || "$VER" == "minici 0.8.0" || "$VER" == "minici 0.7.0" || "$VER" == "minici 0.6.0" || "$VER" == "minici 0.5.0" || "$VER" == "minici 0.4.0" || "$VER" == "minici 0.3.0" || "$VER" == "minici 0.2.0" || "$VER" == "minici 0.1.0" ]] || { echo "❌ FAIL: Unexpected version $VER"; exit 1; }
+[[ "$VER" == "minici 0.9.1" || "$VER" == "minici 0.9.0" || "$VER" == "minici 0.8.0" || "$VER" == "minici 0.7.0" || "$VER" == "minici 0.6.0" || "$VER" == "minici 0.5.0" || "$VER" == "minici 0.4.0" || "$VER" == "minici 0.3.0" || "$VER" == "minici 0.2.0" || "$VER" == "minici 0.1.0" ]] || { echo "❌ FAIL: Unexpected version $VER"; exit 1; }
 echo "✅ PASS ($VER synced)"
 PASS_COUNT=$((PASS_COUNT + 1))
 
@@ -59,7 +59,11 @@ fi
 PERM_OUT=$("$BIN" permissions check --path "$REPO_ROOT" --offline --format json)
 echo "$PERM_OUT" | grep -q '"source_code_access_required": false' || { echo "❌ FAIL: Permissions check failed"; exit 1; }
 "$BIN" shrink --path "$REPO_ROOT" --format json >/dev/null
+"$BIN" accelerate --path "$REPO_ROOT" --format json >/dev/null
 "$BIN" migrate --path "$REPO_ROOT" --to github-arm64 --format json >/dev/null
+if command -v node >/dev/null 2>&1 && [ -f "$REPO_ROOT/tests/test_worker_omnichannel.mjs" ]; then
+  node "$REPO_ROOT/tests/test_worker_omnichannel.mjs" >/dev/null
+fi
 "$BIN" ask "How much do we save moving to ARM64?" --path "$REPO_ROOT" --format json >/dev/null
 "$BIN" cloud-price c7g.xlarge --region us-east-1 --format json >/dev/null
 echo "✅ PASS (24 FinOps models + permissions + shrink/migrate + cloud-price + zero vendor leak)"
@@ -132,6 +136,8 @@ for flag in $DISCOVERED_FLAGS; do
   case "$flag" in
     --path|--repo) "$BIN" breakdown "$flag" "$REPO_ROOT" --quiet >/dev/null ;;
     --format) "$BIN" breakdown --path "$REPO_ROOT" --format json --quiet >/dev/null ;;
+    --compact) "$BIN" breakdown --path "$REPO_ROOT" --format json --compact --quiet >/dev/null ;;
+    --all|--ascii) "$BIN" breakdown --path "$REPO_ROOT" "$flag" --quiet >/dev/null ;;
     --report|--out-file)
       TMP_F=$(mktemp)
       "$BIN" breakdown --path "$REPO_ROOT" "$flag" "$TMP_F.json" --quiet >/dev/null
