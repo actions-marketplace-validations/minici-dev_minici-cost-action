@@ -24,7 +24,7 @@ Never estimate CI runner rates, OS multipliers (`10x` macOS, `2x` Windows), or `
 Check whether `minici` is on `PATH`. If needed, run `bash scripts/ensure_minici.sh` from the installed skill directory. For a pinned Cargo install, run:
 
 ```bash
-cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 45f57abdaf9e2987451d8767fb2e164adf22c864 minici
+cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 0fceb7a0ba81403e8ec3262970ff6f4ccd8c8c18 minici
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 

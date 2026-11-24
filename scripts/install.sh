@@ -28,7 +28,7 @@ esac
 ASSET="minici-${OS}-${ARCH}"
 if [ "$VERSION" = "latest" ]; then
   BASE_URL="https://github.com/${REPO}/releases/latest/download"
-  SOURCE_REF="45f57abdaf9e2987451d8767fb2e164adf22c864"
+  SOURCE_REF="0fceb7a0ba81403e8ec3262970ff6f4ccd8c8c18"
 else
   BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
   SOURCE_REF="refs/tags/${VERSION}"

@@ -16,7 +16,7 @@ REPO_INSTALLER="${SCRIPT_DIR}/../../../scripts/install.sh"
 if [ -f "$REPO_INSTALLER" ]; then
   bash "$REPO_INSTALLER"
 else
-  cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 45f57abdaf9e2987451d8767fb2e164adf22c864 minici
+  cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 0fceb7a0ba81403e8ec3262970ff6f4ccd8c8c18 minici
 fi
 
 minici --version

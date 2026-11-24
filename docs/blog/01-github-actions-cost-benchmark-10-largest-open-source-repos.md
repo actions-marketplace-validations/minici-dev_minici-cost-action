@@ -109,7 +109,7 @@ In **`supabase/supabase`**, compute is already lean (`$284.05/mo`), so `minici` 
 
 ```bash
 # 1. Install MiniCI (pinned Rust source, 0 external crates)
-cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 45f57abdaf9e2987451d8767fb2e164adf22c864 minici
+cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 0fceb7a0ba81403e8ec3262970ff6f4ccd8c8c18 minici
 
 # 2. Audit any public GitHub repository remotely without cloning:
 minici breakdown --repo pydantic/pydantic

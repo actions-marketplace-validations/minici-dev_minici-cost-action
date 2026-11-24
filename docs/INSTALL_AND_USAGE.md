@@ -1,6 +1,6 @@
 # MiniCI (`minici-cost-action`) — Installation & Usage Guide
 
-This guide covers installing and running `minici` (`v0.9.1`) as a **Local CLI**, **GitHub Action**, **Interactive `@minici` PR Bot**, **Shift-Left Git / IDE Hook**, and **`8`-Tool MCP Server**.
+This guide covers installing and running `minici` (`v0.9.2`) as a **Local CLI**, **GitHub Action**, **Interactive `@minici` PR Bot**, **Shift-Left Git / IDE Hook**, and **`8`-Tool MCP Server**.
 
 * **Terminal Demo (`.mp4`):** [`../web/how-to-install-and-use.mp4`](../web/how-to-install-and-use.mp4)
 * **Asciinema Recording (`.cast`):** [`../web/how-to-install-and-use.cast`](../web/how-to-install-and-use.cast)
@@ -14,9 +14,9 @@ This guide covers installing and running `minici` (`v0.9.1`) as a **Local CLI**,
 ### Option A: Install a pinned release with Cargo
 
 ```bash
-cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 45f57abdaf9e2987451d8767fb2e164adf22c864 minici
+cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 0fceb7a0ba81403e8ec3262970ff6f4ccd8c8c18 minici
 minici --version
-# -> minici 0.9.1
+# -> minici 0.9.2
 ```
 
 ### Option B: Build Offline from Source (`~1.5s`)
@@ -33,7 +33,7 @@ cp crates/minici/target/release/minici ~/.local/bin/minici
 ### Option C: Install a verified release binary (Linux and macOS)
 
 ```bash
-MINICI_VERSION=v0.9.1 bash scripts/install.sh
+MINICI_VERSION=v0.9.2 bash scripts/install.sh
 ```
 
 ---
