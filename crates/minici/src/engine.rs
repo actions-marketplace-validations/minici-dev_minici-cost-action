@@ -183,6 +183,12 @@ impl ExpandedJobCost {
     }
 }
 
+/// Single source of truth for "what does migrating eligible Linux x64 jobs to ARM64 save per month".
+/// Used by `breakdown` (recommendation + actions), the `migrate` receipt and the `migrate` JSON.
+pub fn arm64_migration_savings_usd(cc: &CostComponentsBreakdown) -> f64 {
+    (cc.arm64_migration_monthly_savings_usd.max(0.0) * 100.0).round() / 100.0
+}
+
 #[derive(Debug, Clone)]
 pub struct CostComponentsBreakdown {
     // 1. Build Minutes Cost (published cloud & vendor rate cards)
@@ -839,10 +845,10 @@ impl BreakdownReport {
                 shrink_savings, cc.jobs_missing_timeout_minutes_count
             ));
         }
-        if cc.arm64_migration_monthly_savings_usd >= 1.0 {
+        if arm64_migration_savings_usd(cc) >= 1.0 {
             actions.push(format!(
                 "{{\"mcp_tool\":\"minici_migrate\",\"cli_cmd\":\"minici migrate --path . --to github-arm64\",\"est_monthly_savings_usd\":{:.2}}}",
-                cc.arm64_migration_monthly_savings_usd
+                arm64_migration_savings_usd(cc)
             ));
         }
         if cc.monthly_unfiltered_check_savings_usd >= 5.0 {

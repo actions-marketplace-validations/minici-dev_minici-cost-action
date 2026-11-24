@@ -6886,7 +6886,8 @@ jobs:
             .expect("run generated rust-everywhere binary");
         assert!(run_out.status.success());
         let stdout_s = String::from_utf8_lossy(&run_out.stdout);
-        assert!(stdout_s.contains("Native Rust CI check passed"));
+        // The helper delegates to the original script; it must never print an unconditional pass banner.
+        assert!(!stdout_s.contains("Native Rust CI check passed"));
 
         // 4. Strict YAML 1.2 AST check (`Psych.parse_file` via ruby if installed)
         if let Ok(rb) = Command::new("ruby")
@@ -6905,7 +6906,7 @@ jobs:
             );
         }
 
-        // 5. Verify external `RUST_EVERYWHERE_BIN` CLI delegation path (`external-rust-everywhere-cli`)!
+        // 5. An external `RUST_EVERYWHERE_BIN` converter's output cannot be parity-verified, so it must NOT be used.
         let ext_dir = std::env::temp_dir().join("minici_v091_ext_re_bin_test");
         let _ = fs::remove_dir_all(&ext_dir);
         fs::create_dir_all(ext_dir.join(".github/workflows")).unwrap();
@@ -6938,10 +6939,12 @@ jobs:
             ext_receipt
                 .edits
                 .iter()
-                .any(|e| e.description.contains("external-rust-everywhere-cli")),
-            "Expected external-rust-everywhere-cli delegation, got: {:?}",
+                .all(|e| !e.description.contains("external-rust-everywhere-cli")),
+            "external converter output must not replace a CI step, got: {:?}",
             ext_receipt.edits
         );
+        let ext_main = fs::read_to_string(ext_dir.join(".minici/rust-everywhere/re_custom_gate/src/main.rs")).unwrap_or_default();
+        assert!(!ext_main.contains("external rust-everywhere ok"));
         let _ = fs::remove_dir_all(&ext_dir);
 
         // 6. Verify `codebuild-github-runner` 1-line `runs-on:` migration preserves GitHub Actions YAML!

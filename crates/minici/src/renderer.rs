@@ -787,7 +787,7 @@ pub fn render_breakdown_csv(r: &BreakdownReport) -> String {
     out
 }
 
-fn build_contextual_recommendation(r: &BreakdownReport) -> String {
+pub(crate) fn build_contextual_recommendation(r: &BreakdownReport) -> String {
     let cc = &r.cost_components;
     let hosted_total_jobs = r
         .total_expanded_matrix_jobs
@@ -819,7 +819,8 @@ fn build_contextual_recommendation(r: &BreakdownReport) -> String {
             (r.gross_monthly_compute_cost_usd - r.monthly_self_hosted_spot_cost_usd).max(0.0);
         if blacksmith_savings_usd >= 20.0 {
             format!(
-                "Right-size heavy jobs to ARM64 / High-Speed Runners (${:.2}/mo, saves ${:.2}/mo) or Cloud Spot (${:.2}/mo, saves ${:.2}/mo)",
+                "Switch eligible Linux x64 jobs to ARM64 runners (saves ${:.2}/mo) or right-size heavy jobs to High-Speed Runners (${:.2}/mo, saves ${:.2}/mo) or Cloud Spot (${:.2}/mo, saves ${:.2}/mo)",
+                crate::engine::arm64_migration_savings_usd(cc),
                 r.monthly_blacksmith_cost_usd,
                 blacksmith_savings_usd,
                 r.monthly_self_hosted_spot_cost_usd,
@@ -832,10 +833,10 @@ fn build_contextual_recommendation(r: &BreakdownReport) -> String {
                 r.monthly_self_hosted_spot_cost_usd,
                 spot_savings_usd
             )
-        } else if cc.arm64_migration_monthly_savings_usd >= 1.0 {
+        } else if crate::engine::arm64_migration_savings_usd(cc) >= 1.0 {
             format!(
                 "Switch eligible Linux x64 jobs to ARM64 runners (saves ${:.2}/mo)",
-                cc.arm64_migration_monthly_savings_usd
+                crate::engine::arm64_migration_savings_usd(cc)
             )
         } else if cc.jobs_uploading_artifacts > 0 && cc.configured_retention_days > 14 {
             format!(
