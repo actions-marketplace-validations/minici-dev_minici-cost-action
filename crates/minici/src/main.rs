@@ -31,7 +31,7 @@ fn print_help() {
 }
 
 pub fn help_text() -> &'static str {
-    "minici 0.9.1 — MiniCI: Sub-Millisecond CI/CD Cost Breakdown, PR Diff & Quota Receipt Engine\n\
+    concat!("minici ", env!("CARGO_PKG_VERSION"), " — MiniCI: Sub-Millisecond CI/CD Cost Breakdown, PR Diff & Quota Receipt Engine\n\
 Author: Aamir Raza <raza.aamir01@gmail.com>\n\n\
 USAGE:\n  \
   minici <COMMAND> [OPTIONS]\n\n\
@@ -73,7 +73,7 @@ OPTIONS (breakdown):\n  \
   --dev-hourly-rate <USD>    Assumed developer hourly rate in USD (pass 0 to disable) [default: 65]\n  \
   --hook <NAME>              Run as Shift-Left Git pre-push / IDE PreToolUse hook\n  \
   --benchmark                Run 100-iteration microsecond/millisecond latency benchmark\n  \
-  --quiet, -q                Non-interactive silent mode (suppress progress & terminal banners)\n"
+  --quiet, -q                Non-interactive silent mode (suppress progress & terminal banners)\n")
 }
 
 fn extract_json_id(raw: &str) -> String {
@@ -2384,7 +2384,7 @@ fn main() {
         return;
     }
     if args[0] == "--version" || args[0] == "-V" || args[0] == "version" {
-        println!("minici 0.9.1");
+        println!("minici {}", env!("CARGO_PKG_VERSION"));
         return;
     }
 

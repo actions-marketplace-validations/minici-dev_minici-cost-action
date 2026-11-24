@@ -38,7 +38,8 @@ echo -n "⏳ [Gate 2/9] Building Release Binary... "
 cargo build --release --manifest-path crates/minici/Cargo.toml --quiet
 BIN="$REPO_ROOT/crates/minici/target/release/minici"
 VER=$("$BIN" --version)
-[[ "$VER" == "minici 0.9.2" || "$VER" == "minici 0.9.1" || "$VER" == "minici 0.9.0" || "$VER" == "minici 0.8.0" || "$VER" == "minici 0.7.0" || "$VER" == "minici 0.6.0" || "$VER" == "minici 0.5.0" || "$VER" == "minici 0.4.0" || "$VER" == "minici 0.3.0" || "$VER" == "minici 0.2.0" || "$VER" == "minici 0.1.0" ]] || { echo "❌ FAIL: Unexpected version $VER"; exit 1; }
+PACKAGE_VERSION="$(awk -F '"' '/^version = / { print $2; exit }' crates/minici/Cargo.toml)"
+[[ "$VER" == "minici $PACKAGE_VERSION" ]] || { echo "❌ FAIL: Unexpected version $VER"; exit 1; }
 echo "✅ PASS ($VER)"
 PASS_COUNT=$((PASS_COUNT + 1))
 
