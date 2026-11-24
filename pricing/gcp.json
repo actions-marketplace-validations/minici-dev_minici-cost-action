@@ -5,7 +5,7 @@
   "secondary_source_urls": [
     "https://cloud.google.com/deploy/pricing"
   ],
-  "checked_on": "2026-11-11",
+  "checked_on": "2026-11-24",
   "rules": {
     "infracost_delegated": true,
     "infracost_service": "Compute Engine",
@@ -257,5 +257,6 @@
       "status": "official",
       "infracost_service": "Artifact Registry"
     }
-  ]
+  ],
+  "verified_at": "2026-11-24"
 }

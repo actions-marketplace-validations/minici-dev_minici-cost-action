@@ -5,7 +5,7 @@
   "secondary_source_urls": [
     "https://support.atlassian.com/bitbucket-cloud/docs/runners/"
   ],
-  "checked_on": "2026-11-01",
+  "checked_on": "2026-11-24",
   "rules": {
     "build_minute_usd": 0.01,
     "extra_minutes_pack_1000_usd": 10.0,
@@ -26,7 +26,7 @@
       "minutes_rollover": false
     },
     "standard": {
-      "seat_usd_per_month": 3.3,
+      "seat_usd_per_month": 3.65,
       "included_minutes": 2500,
       "included_storage_gb": 5.0,
       "included_cache_gb_per_repo": 0,
@@ -34,7 +34,7 @@
       "minutes_rollover": false
     },
     "premium": {
-      "seat_usd_per_month": 6.6,
+      "seat_usd_per_month": 8.0,
       "included_minutes": 3500,
       "included_storage_gb": 10.0,
       "included_cache_gb_per_repo": 0,
@@ -69,7 +69,7 @@
       "cores": 0,
       "gpu": false,
       "unit": "user_month",
-      "usd": 3.3,
+      "usd": 3.65,
       "plan": "standard",
       "included_qty": 2500,
       "uses_allowance": false,
@@ -87,7 +87,7 @@
       "cores": 0,
       "gpu": false,
       "unit": "user_month",
-      "usd": 6.6,
+      "usd": 8.0,
       "plan": "premium",
       "included_qty": 3500,
       "uses_allowance": false,
@@ -289,5 +289,6 @@
       "checked_on": "2026-11-01",
       "status": "official"
     }
-  ]
+  ],
+  "verified_at": "2026-11-24"
 }
