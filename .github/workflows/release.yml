@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Run Rust Unit & CLI Contract Lock Suite
         run: cargo test --manifest-path crates/minici/Cargo.toml
       - name: Verify release version and canonical SKU catalog
@@ -61,7 +61,7 @@ jobs:
             artifact: minici-windows-x86_64.exe
             bin_name: minici.exe
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install Rust Target ${{ matrix.target }}
         run: rustup target add ${{ matrix.target }}
       - name: Build Zero-Dependency Release Binary
@@ -71,7 +71,7 @@ jobs:
         run: |
           mkdir -p dist
           cp "crates/minici/target/${{ matrix.target }}/release/${{ matrix.bin_name }}" "dist/${{ matrix.artifact }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}
@@ -83,10 +83,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: release-assets
           merge-multiple: true
@@ -99,10 +99,11 @@ jobs:
       - name: Publish GitHub Release & Update Floating v1 Tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           TAG_NAME="${GITHUB_REF_NAME}"
           if [[ "$TAG_NAME" != v* ]]; then
-            TAG_NAME="${{ inputs.tag }}"
+            TAG_NAME="$INPUT_TAG"
           fi
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             gh release upload "$TAG_NAME" release-assets/* --clobber
