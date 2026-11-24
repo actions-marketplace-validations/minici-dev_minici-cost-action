@@ -49,11 +49,12 @@ jobs:
             target: aarch64-unknown-linux-musl
             artifact: minici-linux-aarch64
             bin_name: minici
-          - os: macos-latest
+          # Both macOS targets build on Intel: arm64 hosted runners are often capacity-cancelled.
+          - os: macos-15-intel
             target: aarch64-apple-darwin
             artifact: minici-macos-aarch64
             bin_name: minici
-          - os: macos-latest
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             artifact: minici-macos-x86_64
             bin_name: minici
