@@ -210,7 +210,7 @@ runs:
           if [ "$OS_RAW" = "Linux" ] && { [ "$ARCH_RAW" = "aarch64" ] || [ "$ARCH_RAW" = "arm64" ]; }; then ASSET="minici-linux-aarch64"; fi
           if [ "$OS_RAW" = "Darwin" ] && [ "$ARCH_RAW" = "arm64" ]; then ASSET="minici-macos-aarch64"; fi
           if [ "$OS_RAW" = "Darwin" ] && [ "$ARCH_RAW" = "x86_64" ]; then ASSET="minici-macos-x86_64"; fi
-          if [ -n "$EXE_EXT" ]; then ASSET="minici-windows-x86_64.exe"; fi
+          if [ -n "$EXE_EXT" ]; then ASSET="minici-windows-x86_64.exe"; [ "${RUNNER_ARCH:-}" = "ARM64" ] && ASSET="minici-windows-arm64.exe"; fi
           REL_BASE=""
           if [[ "${ACTION_REF:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             REL_BASE="https://github.com/minici-dev/minici-cost-action/releases/download/${ACTION_REF}"
