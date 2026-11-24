@@ -648,9 +648,9 @@ fn resolve_target_to_dir_ext(raw_spec: &str, force_refresh: bool, quiet: bool) -
             }
         }
 
-        // 2. Check if a verified snapshot exists in `/Users/araza/personal/top10-github-repos/` (Instant Offline/Local Fallback!)
-        if let Ok(home) = env::var("HOME") {
-            let top10 = Path::new(&home).join("personal").join("top10-github-repos");
+        // 2. Check the configured directory for offline workflow snapshots.
+        if let Some(top10) = env::var_os("MINICI_SNAPSHOT_DIR").filter(|dir| !dir.is_empty()) {
+            let top10 = PathBuf::from(top10);
             if top10.exists() {
                 let norm = slug.to_lowercase().replace(['.', '_'], "-");
                 if let Ok(entries) = fs::read_dir(&top10) {
@@ -5748,7 +5748,7 @@ jobs:
         fs::create_dir_all(dir.join(".github/workflows")).unwrap();
         fs::write(
             dir.join(".github/workflows/ci.yml"),
-            "name: Maxim\non: pull_request\njobs:\n  heavy:\n    runs-on: blacksmith-4vcpu-ubuntu-2404\n    est-minutes: 6.0\n    strategy:\n      matrix:\n        shard: [1, 2, 3, 4]\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/upload-artifact@v4\n        with:\n          retention-days: 1\n  light:\n    runs-on: ubuntu-latest\n    est-minutes: 1.0\n    steps:\n      - run: echo ok\n",
+            "name: CI fixture\non: pull_request\njobs:\n  heavy:\n    runs-on: blacksmith-4vcpu-ubuntu-2404\n    est-minutes: 6.0\n    strategy:\n      matrix:\n        shard: [1, 2, 3, 4]\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/upload-artifact@v4\n        with:\n          retention-days: 1\n  light:\n    runs-on: ubuntu-latest\n    est-minutes: 1.0\n    steps:\n      - run: echo ok\n",
         )
         .unwrap();
         let rep = analyze_path(&dir, None);

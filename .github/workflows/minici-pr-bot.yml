@@ -40,12 +40,16 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           BASE_REF_DEFAULT: ${{ github.base_ref }}
         run: |
+          BIN_DIR="$(mktemp -d)"
+          trap 'rm -rf "$BIN_DIR"' EXIT
+          BIN="$BIN_DIR/bin/minici"
           if [ -f "crates/minici/Cargo.toml" ]; then
-            cargo build --release --manifest-path crates/minici/Cargo.toml
-            BIN="$(pwd)/crates/minici/target/release/minici"
+            cargo build --locked --release --manifest-path crates/minici/Cargo.toml
+            mkdir -p "$BIN_DIR/bin"
+            cp crates/minici/target/release/minici "$BIN"
           else
-            curl -fsSL https://raw.githubusercontent.com/minici-dev/minici-cost-action/v1/scripts/install.sh | MINICI_INSTALL_DIR="$(pwd)/.minici-bin" bash
-            BIN="$(pwd)/.minici-bin/minici"
+            cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git \
+              --rev 45f57abdaf9e2987451d8767fb2e164adf22c864 --root "$BIN_DIR" minici
           fi
           if [ "$EVENT_NAME" = "issue_comment" ]; then
             GH_API="${GITHUB_API_URL:-https://api.github.com}"

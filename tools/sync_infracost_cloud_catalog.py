@@ -94,7 +94,7 @@ def discover_infracost_api_key() -> str | None:
 
 
 def batch_fetch_via_infracost_v2_cli(ec2_types: list[str]) -> dict[str, float]:
-    bin_path = shutil.which("infracost") or ("/opt/homebrew/bin/infracost" if Path("/opt/homebrew/bin/infracost").is_file() else None)
+    bin_path = shutil.which("infracost")
     if not bin_path or not ec2_types:
         return {}
     ver_out = subprocess.run([bin_path, "--version"], capture_output=True, text=True)

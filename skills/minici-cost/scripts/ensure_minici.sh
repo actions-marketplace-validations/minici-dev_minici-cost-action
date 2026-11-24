@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ensures the `minici` binary is installed and available on PATH.
-# Uses only SHA-256 verified GitHub Release binaries (with `cargo install` fallback).
+# Uses the bundled installer or builds a pinned revision with Cargo.
 set -euo pipefail
 
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
@@ -16,7 +16,7 @@ REPO_INSTALLER="${SCRIPT_DIR}/../../../scripts/install.sh"
 if [ -f "$REPO_INSTALLER" ]; then
   bash "$REPO_INSTALLER"
 else
-  curl -fsSL https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/scripts/install.sh | bash
+  cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 45f57abdaf9e2987451d8767fb2e164adf22c864 minici
 fi
 
 minici --version

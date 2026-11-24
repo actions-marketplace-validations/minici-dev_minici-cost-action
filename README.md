@@ -7,7 +7,7 @@
 <p align="center">
   <strong>AI coding and rapid shipping have created a 10&times; Pull Request storm — yet CI/CD billing stays invisible until the month-end invoice lands.</strong><br />
   Meanwhile, developers lose hours in slow queues and reruns with zero cost or time visibility per workflow, build phase, or step.<br />
-  <strong>MiniCI</strong> posts the exact compute delta, developer wait-time cost, and <strong>1-click YAML fixes</strong> right on every Pull Request in under 2 ms — with zero API keys and zero external code uploads.
+  <strong>MiniCI</strong> posts the estimated compute delta, developer wait-time cost, and <strong>1-click YAML fixes</strong> right on every Pull Request in under 2 ms — with zero API keys and zero external code uploads.
 </p>
 
 <p align="center">
@@ -171,14 +171,14 @@ MiniCI never blocks PRs by default (`exit 0`), but platform teams can gate extre
 
 ## Local CLI Quickstart (Zero-Clone Audit)
 
-Install the SHA-256 verified binary (Linux & macOS), install via Cargo, or download from [GitHub Releases](https://github.com/minici-dev/minici-cost-action/releases/latest):
+Build the pinned release with Cargo, or download release binaries and checksums from [GitHub Releases](https://github.com/minici-dev/minici-cost-action/releases/latest):
 
 ```bash
-# Option A: Prebuilt SHA-256 verified installer (Linux & macOS)
-curl -fsSL https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/scripts/install.sh | bash
+# Option A: Install from a pinned source revision
+cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 45f57abdaf9e2987451d8767fb2e164adf22c864 minici
 
-# Option B: Cargo install (or `cargo build --release` offline — 0 external crates)
-cargo install --git https://github.com/minici-dev/minici-cost-action.git minici
+# Option B: Build from a local checkout
+cargo install --locked --path crates/minici
 ```
 
 Try it immediately — locally or against any public GitHub repo without cloning:

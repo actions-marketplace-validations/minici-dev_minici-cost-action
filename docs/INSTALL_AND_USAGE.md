@@ -11,10 +11,10 @@ This guide covers installing and running `minici` (`v0.9.1`) as a **Local CLI**,
 
 `crates/minici` uses **100% Rust standard library (`std`) with zero external crate dependencies**. Prebuilt binaries are published for Linux (`x86_64`, `aarch64`), macOS (`aarch64`, `x86_64`), and Windows (`x86_64`), verified against `SHA256SUMS.txt`.
 
-### Option A: 1-Line Prebuilt Installer (Linux & macOS)
+### Option A: Install a pinned release with Cargo
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/scripts/install.sh | bash
+cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 45f57abdaf9e2987451d8767fb2e164adf22c864 minici
 minici --version
 # -> minici 0.9.1
 ```
@@ -30,10 +30,10 @@ mkdir -p ~/.local/bin
 cp crates/minici/target/release/minici ~/.local/bin/minici
 ```
 
-### Option C: Install via `cargo install`
+### Option C: Install a verified release binary (Linux and macOS)
 
 ```bash
-cargo install --git https://github.com/minici-dev/minici-cost-action.git minici
+MINICI_VERSION=v0.9.1 bash scripts/install.sh
 ```
 
 ---
@@ -112,6 +112,8 @@ minici self-update
 ```
 
 ---
+
+Set `MINICI_SNAPSHOT_DIR` to opt into offline workflow snapshots for remote repository audits. The benchmark verifier also accepts `--fresh-dir` for its world-scale fixtures.
 
 ## 3. GitHub Action Integration (`action.yml`)
 

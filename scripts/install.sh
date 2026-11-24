@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# MiniCI 1-Line Portable Installer (`scripts/install.sh`)
+# MiniCI Portable Installer (`scripts/install.sh`)
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/scripts/install.sh | bash
+#   bash scripts/install.sh
 # ==============================================================================
 set -euo pipefail
 
@@ -28,8 +28,10 @@ esac
 ASSET="minici-${OS}-${ARCH}"
 if [ "$VERSION" = "latest" ]; then
   BASE_URL="https://github.com/${REPO}/releases/latest/download"
+  SOURCE_REF="45f57abdaf9e2987451d8767fb2e164adf22c864"
 else
   BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+  SOURCE_REF="refs/tags/${VERSION}"
 fi
 
 mkdir -p "$INSTALL_DIR"
@@ -62,9 +64,11 @@ if curl -fsSL "${BASE_URL}/${ASSET}" -o "${TMP_DIR}/minici" 2>/dev/null \
 fi
 
 if [ "$INSTALLED_PREBUILT" = "0" ]; then
-  echo "⚙️ Verified release asset + SHA256SUMS.txt not yet cached; compiling std-only Rust binary from source (< 2s)..."
-  git clone --depth 1 "https://github.com/${REPO}.git" "${TMP_DIR}/src"
-  cargo build --release --manifest-path "${TMP_DIR}/src/crates/minici/Cargo.toml"
+  echo "⚙️ Verified release asset + SHA256SUMS.txt not yet cached; compiling std-only Rust binary from source..."
+  git init -q "${TMP_DIR}/src"
+  git -C "${TMP_DIR}/src" fetch --depth 1 "https://github.com/${REPO}.git" "${SOURCE_REF}"
+  git -C "${TMP_DIR}/src" checkout --detach FETCH_HEAD
+  cargo build --locked --release --manifest-path "${TMP_DIR}/src/crates/minici/Cargo.toml"
   rm -f "${INSTALL_DIR}/minici"
   cp "${TMP_DIR}/src/crates/minici/target/release/minici" "${INSTALL_DIR}/minici"
   chmod +x "${INSTALL_DIR}/minici"

@@ -21,18 +21,11 @@ Never estimate CI runner rates, OS multipliers (`10x` macOS, `2x` Windows), or `
 
 ## Step 0: Ensure `minici` Is Available
 
-Before running your first `minici` command in a session, check whether `minici` is on `PATH` (or in `~/.local/bin/minici`). If not installed, run the bundled bootstrap script (Linux & macOS, SHA-256 verified, zero API keys):
+Check whether `minici` is on `PATH`. If needed, run `bash scripts/ensure_minici.sh` from the installed skill directory. For a pinned Cargo install, run:
 
 ```bash
-command -v minici >/dev/null 2>&1 || export PATH="$HOME/.local/bin:$PATH"
-command -v minici >/dev/null 2>&1 || bash "$(dirname "$0")/scripts/ensure_minici.sh"
-```
-
-If invoking from outside the skill directory without a relative path, install directly via:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/scripts/install.sh | bash
-export PATH="$HOME/.local/bin:$PATH"
+cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 45f57abdaf9e2987451d8767fb2e164adf22c864 minici
+export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
 If the `minici` MCP server is connected in this session (`minici_breakdown`, `minici_diff`, `minici_shrink`, `minici_migrate`, `minici_anomalies`, `minici_sync_live`, `minici_permissions`, `minici_ask`), you may call either the MCP tools or the `minici` CLI — both execute the identical deterministic Rust engine.

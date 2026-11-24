@@ -13,6 +13,7 @@ and prints a deterministic Before/After Founder Case-Study Receipt.
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -35,17 +36,17 @@ def resolve_minici_bin(repo_root: Path) -> Path:
 
 
 def seed_jev_fixture_if_needed(dest: Path) -> str:
-    candidates = [
-        Path.home() / "personal" / "Jev",
-        Path.home() / "personal" / "jev",
-    ]
-    for c in candidates:
-        if (c / ".github" / "workflows").is_dir():
-            shutil.copytree(c / ".github", dest / ".github")
-            for manifest in ["Cargo.toml", "CMakeLists.txt", "package.json"]:
-                if (c / manifest).is_file():
-                    shutil.copy2(c / manifest, dest / manifest)
-            return f"Local repository ({c})"
+    local_fixture = os.environ.get("MINICI_JEV_FIXTURE")
+    if local_fixture:
+        source = Path(local_fixture).expanduser()
+        workflows = source / ".github" / "workflows"
+        if not workflows.is_dir():
+            raise ValueError("MINICI_JEV_FIXTURE must point to a repository with GitHub workflows")
+        shutil.copytree(workflows, dest / ".github" / "workflows")
+        for manifest in ("Cargo.toml", "CMakeLists.txt", "package.json"):
+            if (source / manifest).is_file():
+                shutil.copy2(source / manifest, dest / manifest)
+        return "Configured local repository"
 
     wf = dest / ".github" / "workflows"
     wf.mkdir(parents=True, exist_ok=True)

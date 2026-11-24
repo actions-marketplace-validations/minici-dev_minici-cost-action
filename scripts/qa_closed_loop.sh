@@ -4,7 +4,7 @@
 # ==============================================================================
 # Runs the complete 8-Gate End-to-End Closed-Loop QA Verification in < 3 seconds:
 #   Gate 1: Cargo Unit & Integration Tests (8/8 tests)
-#   Gate 2: Release Binary Compilation & Sync (`crates/minici` -> `target/release` & `~/.local/bin`)
+#   Gate 2: Release Binary Compilation
 #   Gate 3: Golden Math & Ceiling Rounding CLI Check (`breakdown --format json`)
 #   Gate 4: Customer Mode vs. Owner Debug Mode Flag Separation Check
 #   Gate 5: Zero-Delta Git Branch Diff Check (`diff --compare-to HEAD` == +$0.00/mo)
@@ -33,17 +33,13 @@ PASSED_TESTS=$(echo "$TEST_SUMMARY" | grep -E "test result: ok\." | awk '{print 
 echo "✅ PASS (${PASSED_TESTS}/${PASSED_TESTS} unit + formula receipt + contract tests)"
 PASS_COUNT=$((PASS_COUNT + 1))
 
-# Gate 2: Release Binary Build & Path Sync
-echo -n "⏳ [Gate 2/9] Building Release Binary & Syncing Action/Local Paths... "
+# Gate 2: Release Binary Build
+echo -n "⏳ [Gate 2/9] Building Release Binary... "
 cargo build --release --manifest-path crates/minici/Cargo.toml --quiet
 BIN="$REPO_ROOT/crates/minici/target/release/minici"
-mkdir -p "$REPO_ROOT/target/release" "$HOME/.local/bin"
-rm -f "$REPO_ROOT/target/release/minici" "$HOME/.local/bin/minici" 2>/dev/null || true
-cp "$BIN" "$REPO_ROOT/target/release/minici"
-cp "$BIN" "$HOME/.local/bin/minici" 2>/dev/null || true
 VER=$("$BIN" --version)
 [[ "$VER" == "minici 0.9.1" || "$VER" == "minici 0.9.0" || "$VER" == "minici 0.8.0" || "$VER" == "minici 0.7.0" || "$VER" == "minici 0.6.0" || "$VER" == "minici 0.5.0" || "$VER" == "minici 0.4.0" || "$VER" == "minici 0.3.0" || "$VER" == "minici 0.2.0" || "$VER" == "minici 0.1.0" ]] || { echo "❌ FAIL: Unexpected version $VER"; exit 1; }
-echo "✅ PASS ($VER synced)"
+echo "✅ PASS ($VER)"
 PASS_COUNT=$((PASS_COUNT + 1))
 
 # Gate 3: CLI Breakdown JSON, 24 FinOps Models, Least-Privilege Permissions & Optimizer Check
@@ -168,10 +164,10 @@ for flag in $DISCOVERED_FLAGS; do
   esac
 done
 echo "✅ PASS ($FLAG_COUNT/$FLAG_COUNT discovered flags dynamically executed)"
-if [ -d "$HOME/.minici/10-repos-cache" ] || [ -d "/tmp/minici-cost-10-repos" ]; then
-  echo -n "⏳ [Gate 9B/9] Verifying 27-Repo Golden Baseline (17 Existing + 10 Fresh x 3 Modes)... "
+if [ -d "$HOME/.minici/10-repos-cache" ] || [ -d "${TMPDIR:-/tmp}/minici-cost-10-repos" ]; then
+  echo -n "⏳ [Gate 9B/9] Verifying 25-Repo Golden Baseline (15 Existing + 10 Fresh x 3 Modes)... "
   python3 "$REPO_ROOT/tools/verify_10_repos_all_modes.py" >/dev/null
-  echo "✅ PASS (27/27 repos • 0.00% KPI deviation against locked baseline)"
+  echo "✅ PASS (Available fixtures match locked baseline)"
 fi
 PASS_COUNT=$((PASS_COUNT + 1))
 
