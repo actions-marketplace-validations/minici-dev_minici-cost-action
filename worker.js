@@ -519,7 +519,8 @@ async function fetchLiveGitHubRepoSummary(slug, ghToken, windowDays = 30) {
  */
 async function getRepoReportThreeLayer(slug, windowDays, env, ctx, forceRefresh = false) {
   const clampedDays = Math.max(1, Math.min(365, Number(windowDays) || 30));
-  const l1Url = `https://cache.minici.dev/v1/report/${slug}?days=${clampedDays}`;
+  // Cache-API key only (never fetched), so it lives on the canonical host, not a separate subdomain
+  const l1Url = `https://minici.dev/v1/report/${slug}?days=${clampedDays}`;
   const l1Key = new Request(l1Url, { method: "GET" });
   const kvKey = `report:${slug}:${clampedDays}d`;
   const edgeCache = typeof caches !== "undefined" && caches.default ? caches.default : null;
@@ -1479,6 +1480,14 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    // minici.dev is the one canonical host; www is a 301 alias for it
+    if (url.hostname === "www.minici.dev") {
+      return new Response(null, {
+        status: 301,
+        headers: { location: `https://minici.dev${url.pathname}${url.search}` }
+      });
+    }
+
     if (
       request.method === "OPTIONS" &&
       (url.pathname === "/health" ||
@@ -1682,7 +1691,7 @@ export default {
         for (const d of [7, 30, 60, 90]) {
           if (edgeCache) {
             await edgeCache
-              .delete(new Request(`https://cache.minici.dev/v1/report/${slug}?days=${d}`))
+              .delete(new Request(`https://minici.dev/v1/report/${slug}?days=${d}`))
               .catch(() => {});
           }
           if (env && env.MINICI_KV) {

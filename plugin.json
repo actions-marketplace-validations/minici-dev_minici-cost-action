@@ -8,7 +8,7 @@
     "name": "MiniCI",
     "url": "https://github.com/minici-dev"
   },
-  "homepage": "https://api.minici.dev",
+  "homepage": "https://minici.dev",
   "repository": "https://github.com/minici-dev/minici-cost-action",
   "suggestedPrompts": [
     "Audit this repository's CI/CD workflows, monthly compute spend, and top phase bottlenecks",

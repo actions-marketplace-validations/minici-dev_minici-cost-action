@@ -6,14 +6,16 @@
   "name": "minici-cost-action",
   "main": "worker.js",
   "compatibility_date": "2025-01-01",
-  // API origin (default for MINICI_API_URL / action `api-url`). Other minici.dev hosts in use
-  // (e.g. cache.minici.dev, the L1 report-cache origin) need their own routes; see README.
+  // One official host: https://minici.dev serves web/ (static assets) and the API routes.
+  // www is redirected to the apex in worker.js, so the Worker must run first for every request.
   "routes": [
-    { "pattern": "api.minici.dev", "custom_domain": true }
+    { "pattern": "minici.dev", "custom_domain": true },
+    { "pattern": "www.minici.dev", "custom_domain": true }
   ],
   "assets": {
     "directory": "./web",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    "run_worker_first": true
   },
   "ai": {
     "binding": "AI"

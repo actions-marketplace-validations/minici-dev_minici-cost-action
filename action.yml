@@ -1,6 +1,6 @@
 name: "MiniCI — CI/CD Cost Breakdown, PR Diff & Quota Receipt"
 description: "See what each Pull Request adds to your CI bill & dev wait time before merge. Sticky PR diff + 1-click YAML fixes."
-author: "MiniCI maintainers"
+author: "MiniCI"
 branding:
   icon: "dollar-sign"
   color: "green"
@@ -57,7 +57,7 @@ inputs:
   api-url:
     description: "MiniCI API base URL (used only when cloud-key is provided; override for self-hosted or staging Workers)"
     required: false
-    default: "https://api.minici.dev"
+    default: "https://minici.dev"
 
 outputs:
   gross_monthly_compute_cost_usd:

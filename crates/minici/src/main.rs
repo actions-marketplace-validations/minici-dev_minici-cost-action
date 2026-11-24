@@ -952,7 +952,7 @@ fn minici_credentials_path() -> PathBuf {
 fn default_cloud_api_url() -> String {
     env::var("MINICI_API_URL")
         .or_else(|_| env::var("MINICI_CLOUD_URL"))
-        .unwrap_or_else(|_| "https://api.minici.dev".to_string())
+        .unwrap_or_else(|_| "https://minici.dev".to_string())
         .trim_end_matches('/')
         .to_string()
 }

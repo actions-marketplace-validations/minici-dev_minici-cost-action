@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DOCS_BLOG = REPO_ROOT / "docs" / "blog"
 WEB_BLOG = REPO_ROOT / "web" / "blog"
 # Same single config value as the CLI/action: MINICI_API_URL overrides the default origin.
-SITE_ORIGIN = os.environ.get("MINICI_API_URL", "https://api.minici.dev").rstrip("/")
+SITE_ORIGIN = os.environ.get("MINICI_API_URL", "https://minici.dev").rstrip("/")
 
 ARTICLES = [
     {

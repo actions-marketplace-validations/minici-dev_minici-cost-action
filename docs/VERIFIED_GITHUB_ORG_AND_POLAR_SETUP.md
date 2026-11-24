@@ -15,7 +15,7 @@ This guide provides the exact zero-cost (`$0.00/mo`) workflow to activate:
    - **MiniCI Starter** (`$1/month` — `minici share` unlisted cloud links, 30-day trend ledger for up to 3 repos, live SVG badge)
    - **MiniCI Pro** (`$10/month` — Automated Friday Slack FinOps digest, real-time 1.5x spend velocity alerts, 15-repo dashboard, 365d retention)
    - **MiniCI Team Flex** (`Custom/month` pay-what-you-want — Unlimited repos, central org PR budget gate policy, synced enterprise custom runner rates)
-2. In **`https://polar.sh/dashboard/minici/settings/webhooks`**, add endpoint **`https://api.minici.dev/v1/webhook/polar`** (events: `subscription.*`, `benefit_grant.*`) and bind `POLAR_WEBHOOK_SECRET` in Cloudflare Worker secrets.
+2. In **`https://polar.sh/dashboard/minici/settings/webhooks`**, add endpoint **`https://minici.dev/v1/webhook/polar`** (events: `subscription.*`, `benefit_grant.*`) and bind `POLAR_WEBHOOK_SECRET` in Cloudflare Worker secrets.
 3. Go to **`https://polar.sh/dashboard/minici/storefront`** (or **Settings -> Storefront**) and toggle **Enable Public Storefront** -> **Save**.
 3. Verify `curl -sI https://polar.sh/minici` returns `HTTP/2 200`. Every PR and repo visitor clicking **Sponsor** on GitHub now lands directly on your Polar checkout page.
 
@@ -51,7 +51,7 @@ This guide provides the exact zero-cost (`$0.00/mo`) workflow to activate:
     "email": "<owner-email>"
   },
   "records": {
-    "CNAME": "api.minici.dev",
+    "CNAME": "minici.dev",
     "TXT": [
       "PASTE_GITHUB_ORG_CHALLENGE_TOKEN_HERE"
     ]

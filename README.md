@@ -31,6 +31,43 @@
 
 ---
 
+## GitHub Action: What It Does
+
+MiniCI estimates what each Pull Request adds to your CI/CD bill and developer wait time, posts one sticky PR comment, and suggests verified YAML patches (`shrink` + ARM64). It runs on your runner, works without an API key, and uploads no code. Website: **[minici.dev](https://minici.dev)**
+
+## Usage
+
+```yaml
+- uses: actions/checkout@v4
+  with: { fetch-depth: 0 }
+- uses: minici-dev/minici-cost-action@v1
+  with:
+    compare-to: origin/${{ github.base_ref }}
+    post-pr-comment: "true"
+```
+
+Give the job `pull-requests: write` so the sticky comment can be posted.
+
+| Input | Default | Purpose |
+| :--- | :--- | :--- |
+| `compare-to` | `""` | Base ref for the Pull Request cost delta |
+| `post-pr-comment` | `false` | Post or update one sticky PR comment |
+| `tier` | `auto` | Plan quota tier |
+| `dev-hourly-rate` | `65` | Hourly rate for wait-time cost |
+| `billing-csv` | `""` | Optional invoice CSV for exact billing |
+| `api-url` | `https://minici.dev` | API origin override (used with `cloud-key`) |
+
+| Output | Meaning |
+| :--- | :--- |
+| `gross_monthly_compute_cost_usd` | Gross monthly CI compute cost (USD) |
+| `net_billed_monthly_compute_cost_usd` | Net billed monthly cost after the free-tier allowance (USD) |
+| `cost_per_merged_pr_usd` | Cost per merged Pull Request (USD) |
+| `recoverable_ci_and_wait_monthly_usd` | Recoverable CI and wait cost per month (USD) |
+
+Read outputs as `steps.<id>.outputs.<name>`. Full lists: [Action Inputs & Outputs](#action-inputs--outputs).
+
+---
+
 ## What Your Team Sees on Every Pull Request
 
 MiniCI runs non-blocking (`exit 0`), updates **one sticky comment** per PR, and attaches committable **Files changed** suggestions when workflow waste is detected:
@@ -193,7 +230,7 @@ minici migrate --path . --to github-arm64        # Check 6-gate ARM64 savings or
 minici init-hooks --path .                       # Wire Antigravity, Claude Code, VS Code, Git & PR hooks
 ```
 
-[![MiniCI Terminal Demo](https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/web/how-to-install-and-use.png)](https://api.minici.dev/how-to-install-and-use.mp4)
+[![MiniCI Terminal Demo](https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/web/how-to-install-and-use.png)](https://minici.dev/how-to-install-and-use.mp4)
 
 ### Verified Speed on World-Scale Open-Source Pipelines
 
@@ -329,21 +366,22 @@ Expose all 8 deterministic CI FinOps tools (`minici_breakdown`, `minici_diff`, `
 
 ## Endpoints & Overrides
 
-MiniCI's hosted API origin is one config value, defaulting to `https://api.minici.dev`:
+MiniCI's hosted API origin is one config value, defaulting to `https://minici.dev`:
 
 | Surface | Override | Default |
 |---|---|---|
-| CLI (`minici share`, `minici comment`, cloud sync) | `MINICI_API_URL` env var (`MINICI_CLOUD_URL` is still read as a legacy alias) | `https://api.minici.dev` |
-| GitHub Action | `api-url` input (replaces the old `cloud-api-url` input) | `https://api.minici.dev` |
-| GitHub App / Slack manifests (`integrations/*-manifest.json`) | `{{MINICI_API_URL}}` placeholder, substituted before upload: `sed "s#{{MINICI_API_URL}}#$MINICI_API_URL#g" integrations/github-app-manifest.json` | `https://api.minici.dev` |
-| Blog generator (`tools/build_seo_blog_hub.py`) | `MINICI_API_URL` env var | `https://api.minici.dev` |
+| CLI (`minici share`, `minici comment`, cloud sync) | `MINICI_API_URL` env var (`MINICI_CLOUD_URL` is still read as a legacy alias) | `https://minici.dev` |
+| GitHub Action | `api-url` input (replaces the old `cloud-api-url` input) | `https://minici.dev` |
+| GitHub App / Slack manifests (`integrations/*-manifest.json`) | `{{MINICI_API_URL}}` placeholder, substituted before upload: `sed "s#{{MINICI_API_URL}}#$MINICI_API_URL#g" integrations/github-app-manifest.json` | `https://minici.dev` |
+| Blog generator (`tools/build_seo_blog_hub.py`) | `MINICI_API_URL` env var | `https://minici.dev` |
 
 Static pages in `web/` (blog canonicals, `sitemap.xml`, `robots.txt`) hold the literal default origin, since they cannot read env vars. `web/setup-github-app.html` takes its origin from one `MINICI_API_URL` constant at the top of its script.
 
 Hostnames in use under `minici.dev`:
 
-- `api.minici.dev`: the Worker's custom domain (`routes` in `wrangler.jsonc`, `custom_domain: true`).
-- `cache.minici.dev`: the L1 report-cache origin that `worker.js` calls for `/v1/report/...`. It is not routed by `wrangler.jsonc` yet, so it needs its own custom-domain route on the same Worker before that path works.
+- `minici.dev` (apex): the one official host. It serves the website (`web/`) and the Worker API through the `routes` in `wrangler.jsonc` (`custom_domain: true`).
+- `www.minici.dev`: 301-redirects to `https://minici.dev` (in `worker.js`).
+- The L1 report cache (`/v1/report/...`) uses `https://minici.dev/v1/report/...` only as a Cache API key. It is never fetched, so it needs no separate subdomain. There is no `api.` or `cache.` subdomain.
 
 ## Troubleshooting
 
