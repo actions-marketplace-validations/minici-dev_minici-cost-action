@@ -38,7 +38,7 @@ echo -n "⏳ [Gate 2/9] Building Release Binary... "
 cargo build --release --manifest-path crates/minici/Cargo.toml --quiet
 BIN="$REPO_ROOT/crates/minici/target/release/minici"
 VER=$("$BIN" --version)
-[[ "$VER" == "minici 0.9.1" || "$VER" == "minici 0.9.0" || "$VER" == "minici 0.8.0" || "$VER" == "minici 0.7.0" || "$VER" == "minici 0.6.0" || "$VER" == "minici 0.5.0" || "$VER" == "minici 0.4.0" || "$VER" == "minici 0.3.0" || "$VER" == "minici 0.2.0" || "$VER" == "minici 0.1.0" ]] || { echo "❌ FAIL: Unexpected version $VER"; exit 1; }
+[[ "$VER" == "minici 0.9.2" || "$VER" == "minici 0.9.1" || "$VER" == "minici 0.9.0" || "$VER" == "minici 0.8.0" || "$VER" == "minici 0.7.0" || "$VER" == "minici 0.6.0" || "$VER" == "minici 0.5.0" || "$VER" == "minici 0.4.0" || "$VER" == "minici 0.3.0" || "$VER" == "minici 0.2.0" || "$VER" == "minici 0.1.0" ]] || { echo "❌ FAIL: Unexpected version $VER"; exit 1; }
 echo "✅ PASS ($VER)"
 PASS_COUNT=$((PASS_COUNT + 1))
 
@@ -165,7 +165,7 @@ for flag in $DISCOVERED_FLAGS; do
 done
 echo "✅ PASS ($FLAG_COUNT/$FLAG_COUNT discovered flags dynamically executed)"
 if [ -d "$HOME/.minici/10-repos-cache" ] || [ -d "${TMPDIR:-/tmp}/minici-cost-10-repos" ]; then
-  echo -n "⏳ [Gate 9B/9] Verifying 25-Repo Golden Baseline (15 Existing + 10 Fresh x 3 Modes)... "
+  echo -n "⏳ [Gate 9B/9] Verifying 17-Repo Golden Baseline (7 Primary + 10 Fresh x 3 Modes)... "
   python3 "$REPO_ROOT/tools/verify_10_repos_all_modes.py" >/dev/null
   echo "✅ PASS (Available fixtures match locked baseline)"
 fi

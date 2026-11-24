@@ -6389,7 +6389,7 @@ jobs:
     #[test]
     fn test_v090_proxy_headers_csv_merge_live_weighting_and_4ide_hooks() {
         // 1. Proxy CONNECT + 301 Redirect final HTTP header parser (Bugs #1, #2, #6)
-        let proxied_404 = "HTTP/1.1 200 Connection established\r\n\r\nHTTP/2 301 \r\nlocation: https://api.github.com/organizations/Eazy-Ops/settings/billing/usage\r\n\r\nHTTP/2 404 \r\netag: \"abc123\"\r\nx-ratelimit-remaining: 4988\r\n\r\n{\"message\":\"Not Found\"}";
+        let proxied_404 = "HTTP/1.1 200 Connection established\r\n\r\nHTTP/2 301 \r\nlocation: https://api.github.com/organizations/example-org/settings/billing/usage\r\n\r\nHTTP/2 404 \r\netag: \"abc123\"\r\nx-ratelimit-remaining: 4988\r\n\r\n{\"message\":\"Not Found\"}";
         let (code, hdrs, body) = permissions::parse_final_curl_http_response(proxied_404);
         assert_eq!(code, 404);
         assert!(hdrs.contains("x-ratelimit-remaining: 4988"));

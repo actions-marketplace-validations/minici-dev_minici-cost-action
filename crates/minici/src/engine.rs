@@ -3998,7 +3998,7 @@ fn detect_workflow_hygiene_signals(target: &Path) -> WorkflowHygieneSignals {
                 }
             }
         }
-        // Fallback for monorepos with nested `<subdir>/.github/workflows` (e.g., `Eazy-Ops/Automation` `cron/.github/workflows`)
+        // Fallback for monorepos with nested `<subdir>/.github/workflows`
         if wf_files.is_empty() {
             if let Ok(sub_entries) = fs::read_dir(base_dir) {
                 let mut sub_dirs: Vec<_> = sub_entries
@@ -4975,7 +4975,7 @@ pub fn analyze_path_with_telemetry(
                 }
             }
         }
-        // Fallback for monorepos with nested `<subdir>/.github/workflows` (e.g., `Eazy-Ops/Automation` `cron/.github/workflows`)
+        // Fallback for monorepos with nested `<subdir>/.github/workflows`
         if workflow_count == 0 {
             if let Ok(sub_entries) = fs::read_dir(target) {
                 let mut sub_dirs: Vec<_> = sub_entries
