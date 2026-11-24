@@ -1,0 +1,51 @@
+image: node:20
+
+definitions:
+  caches:
+    npm-deps: ~/.npm
+  steps:
+    - step: &lint
+        name: Lint
+        caches:
+          - npm-deps
+        script:
+          - npm ci
+          - npm run lint
+    - step: &test
+        name: Test
+        size: 2x
+        caches:
+          - npm-deps
+        script:
+          - npm ci
+          - npm test -- --coverage
+        artifacts:
+          - coverage/**
+    - step: &build
+        name: Build
+        caches:
+          - npm-deps
+        script:
+          - npm ci
+          - npm run build
+        artifacts:
+          - dist/**
+
+pipelines:
+  default:
+    - step: *lint
+    - step: *test
+  pull-requests:
+    '**':
+      - step: *lint
+      - step: *test
+  branches:
+    main:
+      - step: *lint
+      - step: *test
+      - step: *build
+      - step:
+          name: Deploy staging
+          deployment: staging
+          script:
+            - ./scripts/deploy.sh staging

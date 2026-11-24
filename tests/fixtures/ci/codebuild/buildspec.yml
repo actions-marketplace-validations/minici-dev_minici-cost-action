@@ -1,0 +1,39 @@
+version: 0.2
+
+env:
+  variables:
+    NODE_ENV: "ci"
+  parameter-store:
+    NPM_TOKEN: "/ci/npm/token"
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+    commands:
+      - npm ci
+  pre_build:
+    commands:
+      - npm run lint
+  build:
+    commands:
+      - npm test -- --coverage
+      - npm run build
+  post_build:
+    commands:
+      - echo "Build completed on $(date)"
+
+reports:
+  unit-tests:
+    files:
+      - "reports/junit.xml"
+    file-format: JUNITXML
+
+artifacts:
+  files:
+    - "dist/**/*"
+  base-directory: dist
+
+cache:
+  paths:
+    - "node_modules/**/*"
