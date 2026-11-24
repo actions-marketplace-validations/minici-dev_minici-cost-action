@@ -1,0 +1,1207 @@
+SOURCE: https://cloud.google.com/build/pricing
+FETCHED: 2026-11-24 (curl, text extracted from HTML)
+---
+Cloud Build pricing | Google Cloud
+Cloud Build pricing
+Cloud Build charges for build-minutes consumed. A build-minute is incurred every minute that a build is in process. Partial minutes are billed at the actual number of seconds consumed. Network egress will be charged according to standard rates.
+Each billing account comes with 2,500 free build-minutes per month.1
+Build-minutes are not incurred for the time that a build is queued. Charges are accrued to the billing account associated with the Google Cloud console project that initiated the build.
+ | 
+Machine type
+ | 
+Virtual CPUs
+ | 
+Memory (GB)
+ | 
+Quick Start
+ | 
+Price (USD) per minute
+ | 
+e2-standard-2
+ | 
+2
+ | 
+8
+ | 
+Yes
+ | $0.006
+1This promotional free tier is for e2-standard-2 machine types in the default pool, and the limit is subject to change.
+Iowa (us-central1)
+Johannesburg (africa-south1)
+Taiwan (asia-east1)
+Hong Kong (asia-east2)
+Tokyo (asia-northeast1)
+Osaka (asia-northeast2)
+Seoul (asia-northeast3)
+Mumbai (asia-south1)
+Delhi (asia-south2)
+Singapore (asia-southeast1)
+Jakarta (asia-southeast2)
+Bangkok (asia-southeast3)
+Sydney (australia-southeast1)
+Melbourne (australia-southeast2)
+Warsaw (europe-central2)
+Finland (europe-north1)
+Stockholm (europe-north2)
+Madrid (europe-southwest1)
+Belgium (europe-west1)
+Berlin (europe-west10)
+Turin (europe-west12)
+London (europe-west2)
+Frankfurt (europe-west3)
+Netherlands (europe-west4)
+Zurich (europe-west6)
+Milan (europe-west8)
+Paris (europe-west9)
+Doha (me-central1)
+Dammam (me-central2)
+Tel Aviv (me-west1)
+Montreal (northamerica-northeast1)
+Toronto (northamerica-northeast2)
+Mexico (northamerica-south1)
+Sao Paulo (southamerica-east1)
+Santiago (southamerica-west1)
+Iowa (us-central1)
+Oklahoma (us-central2)
+South Carolina (us-east1)
+Northern Virginia (us-east4)
+Columbus (us-east5)
+Dallas (us-south1)
+Oregon (us-west1)
+Los Angeles (us-west2)
+Salt Lake City (us-west3)
+Las Vegas (us-west4)
+Phoenix (us-west8)
+ | 
+Machine type
+ | 
+Virtual CPUs
+ | 
+Memory (GB)
+ | 
+Quick Start
+ | 
+Price (USD) per minute
+ | 
+e2-medium
+ | 
+1
+ | 
+4
+ | 
+No
+ | $0.003
+ | 
+e2-highcpu-8
+ | 
+8
+ | 
+8
+ | 
+No
+ | $0.0156
+ | 
+e2-highcpu-32
+ | 
+32
+ | 
+32
+ | 
+No
+ | $0.0624
+Cloud Build continues to offer n1-highcpu-8 and n1-highcpu-32 machine types. They are offered at the same price as e2-highcpu-8 and e2-highcpu-32.
+You can request extra SSD storage for the VM that runs your build. The first 100GB is free, and you can request up to 4000GB. The price can differ per region, as shown in the tables on this page.
+E2 SSD global pricing
+The following table shows the pricing for builds run in the default pool
+HourlyHourly
+MonthlyMonthly
+ | 
+SSD
+ | 
+Price (USD)
+ | 
+Global region
+ | $0.000232877 / 1 gibibyte hour
+E2 SSD regional pricing
+The following table shows the regional pricing for builds run in the default pool and private pool
+Iowa (us-central1)
+Johannesburg (africa-south1)
+Taiwan (asia-east1)
+Hong Kong (asia-east2)
+Tokyo (asia-northeast1)
+Osaka (asia-northeast2)
+Seoul (asia-northeast3)
+Mumbai (asia-south1)
+Delhi (asia-south2)
+Singapore (asia-southeast1)
+Jakarta (asia-southeast2)
+Bangkok (asia-southeast3)
+Sydney (australia-southeast1)
+Melbourne (australia-southeast2)
+Warsaw (europe-central2)
+Finland (europe-north1)
+Stockholm (europe-north2)
+Madrid (europe-southwest1)
+Belgium (europe-west1)
+Berlin (europe-west10)
+Turin (europe-west12)
+London (europe-west2)
+Frankfurt (europe-west3)
+Netherlands (europe-west4)
+Zurich (europe-west6)
+Milan (europe-west8)
+Paris (europe-west9)
+Doha (me-central1)
+Dammam (me-central2)
+Tel Aviv (me-west1)
+Montreal (northamerica-northeast1)
+Toronto (northamerica-northeast2)
+Mexico (northamerica-south1)
+Sao Paulo (southamerica-east1)
+Santiago (southamerica-west1)
+Iowa (us-central1)
+Oklahoma (us-central2)
+South Carolina (us-east1)
+Northern Virginia (us-east4)
+Columbus (us-east5)
+Dallas (us-south1)
+Oregon (us-west1)
+Los Angeles (us-west2)
+Salt Lake City (us-west3)
+Las Vegas (us-west4)
+Phoenix (us-west8)
+HourlyHourly
+MonthlyMonthly
+ | 
+SSD
+ | 
+Price (USD)
+ | 
+Worker SSD
+ | $0.000232877 / 1 gibibyte hour
+Private pools pricing
+E2 standard machine types
+Iowa (us-central1)
+Johannesburg (africa-south1)
+Taiwan (asia-east1)
+Hong Kong (asia-east2)
+Tokyo (asia-northeast1)
+Osaka (asia-northeast2)
+Seoul (asia-northeast3)
+Mumbai (asia-south1)
+Delhi (asia-south2)
+Singapore (asia-southeast1)
+Jakarta (asia-southeast2)
+Bangkok (asia-southeast3)
+Sydney (australia-southeast1)
+Melbourne (australia-southeast2)
+Warsaw (europe-central2)
+Finland (europe-north1)
+Stockholm (europe-north2)
+Madrid (europe-southwest1)
+Belgium (europe-west1)
+Berlin (europe-west10)
+Turin (europe-west12)
+London (europe-west2)
+Frankfurt (europe-west3)
+Netherlands (europe-west4)
+Zurich (europe-west6)
+Milan (europe-west8)
+Paris (europe-west9)
+Doha (me-central1)
+Dammam (me-central2)
+Tel Aviv (me-west1)
+Montreal (northamerica-northeast1)
+Toronto (northamerica-northeast2)
+Mexico (northamerica-south1)
+Sao Paulo (southamerica-east1)
+Santiago (southamerica-west1)
+Iowa (us-central1)
+Oklahoma (us-central2)
+South Carolina (us-east1)
+Northern Virginia (us-east4)
+Columbus (us-east5)
+Dallas (us-south1)
+Oregon (us-west1)
+Los Angeles (us-west2)
+Salt Lake City (us-west3)
+Las Vegas (us-west4)
+Phoenix (us-west8)
+ | 
+Machine type
+ | 
+Virtual CPUs
+ | 
+Memory (GB)
+ | 
+Price (USD)
+ | 
+e2-medium
+ | 
+1
+ | 
+4
+ | $0.003 / 1 minute
+ | 
+e2-standard-2
+ | 
+2
+ | 
+8
+ | $0.006 / 1 minute
+ | 
+e2-standard-4
+ | 
+4
+ | 
+16
+ | $0.012 / 1 minute
+ | 
+e2-standard-8
+ | 
+8
+ | 
+32
+ | $0.024 / 1 minute
+ | 
+e2-standard-16
+ | 
+16
+ | 
+64
+ | $0.048 / 1 minute
+ | 
+e2-standard-32
+ | 
+32
+ | 
+128
+ | $0.096 / 1 minute
+E2 high-memory machine types
+Iowa (us-central1)
+Johannesburg (africa-south1)
+Taiwan (asia-east1)
+Hong Kong (asia-east2)
+Tokyo (asia-northeast1)
+Osaka (asia-northeast2)
+Seoul (asia-northeast3)
+Mumbai (asia-south1)
+Delhi (asia-south2)
+Singapore (asia-southeast1)
+Jakarta (asia-southeast2)
+Bangkok (asia-southeast3)
+Sydney (australia-southeast1)
+Melbourne (australia-southeast2)
+Warsaw (europe-central2)
+Finland (europe-north1)
+Stockholm (europe-north2)
+Madrid (europe-southwest1)
+Belgium (europe-west1)
+Berlin (europe-west10)
+Turin (europe-west12)
+London (europe-west2)
+Frankfurt (europe-west3)
+Netherlands (europe-west4)
+Zurich (europe-west6)
+Milan (europe-west8)
+Paris (europe-west9)
+Doha (me-central1)
+Dammam (me-central2)
+Tel Aviv (me-west1)
+Montreal (northamerica-northeast1)
+Toronto (northamerica-northeast2)
+Mexico (northamerica-south1)
+Sao Paulo (southamerica-east1)
+Santiago (southamerica-west1)
+Iowa (us-central1)
+Oklahoma (us-central2)
+South Carolina (us-east1)
+Northern Virginia (us-east4)
+Columbus (us-east5)
+Dallas (us-south1)
+Oregon (us-west1)
+Los Angeles (us-west2)
+Salt Lake City (us-west3)
+Las Vegas (us-west4)
+Phoenix (us-west8)
+ | 
+Machine type
+ | 
+Virtual CPUs
+ | 
+Memory (GB)
+ | 
+Price (USD)
+ | 
+e2-highmem-2
+ | 
+2
+ | 
+16
+ | $0.0088 / 1 minute
+ | 
+e2-highmem-4
+ | 
+4
+ | 
+32
+ | $0.0176 / 1 minute
+ | 
+e2-highmem-8
+ | 
+8
+ | 
+64
+ | $0.0352 / 1 minute
+ | 
+e2-highmem-16
+ | 
+16
+ | 
+128
+ | $0.0704 / 1 minute
+E2 high-cpu machine types
+Iowa (us-central1)
+Johannesburg (africa-south1)
+Taiwan (asia-east1)
+Hong Kong (asia-east2)
+Tokyo (asia-northeast1)
+Osaka (asia-northeast2)
+Seoul (asia-northeast3)
+Mumbai (asia-south1)
+Delhi (asia-south2)
+Singapore (asia-southeast1)
+Jakarta (asia-southeast2)
+Bangkok (asia-southeast3)
+Sydney (australia-southeast1)
+Melbourne (australia-southeast2)
+Warsaw (europe-central2)
+Finland (europe-north1)
+Stockholm (europe-north2)
+Madrid (europe-southwest1)
+Belgium (europe-west1)
+Berlin (europe-west10)
+Turin (europe-west12)
+London (europe-west2)
+Frankfurt (europe-west3)
+Netherlands (europe-west4)
+Zurich (europe-west6)
+Milan (europe-west8)
+Paris (europe-west9)
+Doha (me-central1)
+Dammam (me-central2)
+Tel Aviv (me-west1)
+Montreal (northamerica-northeast1)
+Toronto (northamerica-northeast2)
+Mexico (northamerica-south1)
+Sao Paulo (southamerica-east1)
+Santiago (southamerica-west1)
+Iowa (us-central1)
+Oklahoma (us-central2)
+South Carolina (us-east1)
+Northern Virginia (us-east4)
+Columbus (us-east5)
+Dallas (us-south1)
+Oregon (us-west1)
+Los Angeles (us-west2)
+Salt Lake City (us-west3)
+Las Vegas (us-west4)
+Phoenix (us-west8)
+ | 
+Machine type
+ | 
+Virtual CPUs
+ | 
+Memory (GB)
+ | 
+Price (USD)
+ | 
+e2-highcpu-2
+ | 
+2
+ | 
+2
+ | $0.0039 / 1 minute
+ | 
+e2-highcpu-4
+ | 
+4
+ | 
+4
+ | $0.0078 / 1 minute
+ | 
+e2-highcpu-8
+ | 
+8
+ | 
+8
+ | $0.0156 / 1 minute
+ | 
+e2-highcpu-16
+ | 
+16
+ | 
+16
+ | $0.0312 / 1 minute
+ | 
+e2-highcpu-32
+ | 
+32
+ | 
+32
+ | $0.0624 / 1 minute
+SSD for E2 machine types
+The following table shows the regional pricing for SSDs in builds run in the private pool
+Iowa (us-central1)
+Johannesburg (africa-south1)
+Taiwan (asia-east1)
+Hong Kong (asia-east2)
+Tokyo (asia-northeast1)
+Osaka (asia-northeast2)
+Seoul (asia-northeast3)
+Mumbai (asia-south1)
+Delhi (asia-south2)
+Singapore (asia-southeast1)
+Jakarta (asia-southeast2)
+Bangkok (asia-southeast3)
+Sydney (australia-southeast1)
+Melbourne (australia-southeast2)
+Warsaw (europe-central2)
+Finland (europe-north1)
+Stockholm (europe-north2)
+Madrid (europe-southwest1)
+Belgium (europe-west1)
+Berlin (europe-west10)
+Turin (europe-west12)
+London (europe-west2)
+Frankfurt (europe-west3)
+Netherlands (europe-west4)
+Zurich (europe-west6)
+Milan (europe-west8)
+Paris (europe-west9)
+Doha (me-central1)
+Dammam (me-central2)
+Tel Aviv (me-west1)
+Montreal (northamerica-northeast1)
+Toronto (northamerica-northeast2)
+Mexico (northamerica-south1)
+Sao Paulo (southamerica-east1)
+Santiago (southamerica-west1)
+Iowa (us-central1)
+Oklahoma (us-central2)
+South Carolina (us-east1)
+Northern Virginia (us-east4)
+Columbus (us-east5)
+Dallas (us-south1)
+Oregon (us-west1)
+Los Angeles (us-west2)
+Salt Lake City (us-west3)
+Las Vegas (us-west4)
+Phoenix (us-west8)
+HourlyHourly
+MonthlyMonthly
+ | 
+SSD
+ | 
+Price (USD)
+ | 
+Worker SSD
+ | $0.000232877
+N2D standard machine types
+Iowa (us-central1)
+Johannesburg (africa-south1)
+Taiwan (asia-east1)
+Hong Kong (asia-east2)
+Tokyo (asia-northeast1)
+Osaka (asia-northeast2)
+Seoul (asia-northeast3)
+Mumbai (asia-south1)
+Delhi (asia-south2)
+Singapore (asia-southeast1)
+Jakarta (asia-southeast2)
+Sydney (australia-southeast1)
+Melbourne (australia-southeast2)
+Warsaw (europe-central2)
+Finland (europe-north1)
+Madrid (europe-southwest1)
+Belgium (europe-west1)
+Berlin (europe-west10)
+Turin (europe-west12)
+London (europe-west2)
+Frankfurt (europe-west3)
+Netherlands (europe-west4)
+Zurich (europe-west6)
+Milan (europe-west8)
+Paris (europe-west9)
+Doha (me-central1)
+Dammam (me-central2)
+Tel Aviv (me-west1)
+Montreal (northamerica-northeast1)
+Toronto (northamerica-northeast2)
+Sao Paulo (southamerica-east1)
+Santiago (southamerica-west1)
+Iowa (us-central1)
+South Carolina (us-east1)
+Northern Virginia (us-east4)
+Columbus (us-east5)
+Dallas (us-south1)
+Oregon (us-west1)
+Los Angeles (us-west2)
+Salt Lake City (us-west3)
+Las Vegas (us-west4)
+ | 
+Machine type
+ | 
+Virtual CPUs
+ | 
+Memory (GB)
+ | 
+Price (USD)
+ | 
+n2d-standard-2
+ | 
+2
+ | 
+8
+ | $0.007562 / 1 minute
+ | 
+n2d-standard-4
+ | 
+4
+ | 
+16
+ | $0.015124 / 1 minute
+ | 
+n2d-standard-8
+ | 
+8
+ | 
+32
+ | $0.030248 / 1 minute
+ | 
+n2d-standard-16
+ | 
+16
+ | 
+64
+ | $0.060496 / 1 minute
+ | 
+n2d-standard-32
+ | 
+32
+ | 
+128
+ | $0.120992 / 1 minute
+ | 
+n2d-standard-48
+ | 
+48
+ | 
+192
+ | $0.181488 / 1 minute
+ | 
+n2d-standard-64
+ | 
+64
+ | 
+256
+ | $0.241984 / 1 minute
+ | 
+n2d-standard-80
+ | 
+80
+ | 
+320
+ | $0.30248 / 1 minute
+ | 
+n2d-standard-96
+ | 
+96
+ | 
+384
+ | $0.362976 / 1 minute
+ | 
+n2d-standard-128
+ | 
+128
+ | 
+512
+ | $0.483968 / 1 minute
+ | 
+n2d-standard-224
+ | 
+224
+ | 
+896
+ | $0.846944 / 1 minute
+N2D high-memory machine types
+Iowa (us-central1)
+Johannesburg (africa-south1)
+Taiwan (asia-east1)
+Hong Kong (asia-east2)
+Tokyo (asia-northeast1)
+Osaka (asia-northeast2)
+Seoul (asia-northeast3)
+Mumbai (asia-south1)
+Delhi (asia-south2)
+Singapore (asia-southeast1)
+Jakarta (asia-southeast2)
+Sydney (australia-southeast1)
+Melbourne (australia-southeast2)
+Warsaw (europe-central2)
+Finland (europe-north1)
+Madrid (europe-southwest1)
+Belgium (europe-west1)
+Berlin (europe-west10)
+Turin (europe-west12)
+London (europe-west2)
+Frankfurt (europe-west3)
+Netherlands (europe-west4)
+Zurich (europe-west6)
+Milan (europe-west8)
+Paris (europe-west9)
+Doha (me-central1)
+Dammam (me-central2)
+Tel Aviv (me-west1)
+Montreal (northamerica-northeast1)
+Toronto (northamerica-northeast2)
+Sao Paulo (southamerica-east1)
+Santiago (southamerica-west1)
+Iowa (us-central1)
+South Carolina (us-east1)
+Northern Virginia (us-east4)
+Columbus (us-east5)
+Dallas (us-south1)
+Oregon (us-west1)
+Los Angeles (us-west2)
+Salt Lake City (us-west3)
+Las Vegas (us-west4)
+ | 
+Machine type
+ | 
+Virtual CPUs
+ | 
+Memory (GB)
+ | 
+Price (USD)
+ | 
+n2d-highmem-2
+ | 
+2
+ | 
+16
+ | $0.01109 / 1 minute
+ | 
+n2d-highmem-4
+ | 
+4
+ | 
+32
+ | $0.02218 / 1 minute
+ | 
+n2d-highmem-8
+ | 
+8
+ | 
+64
+ | $0.04436 / 1 minute
+ | 
+n2d-highmem-16
+ | 
+16
+ | 
+128
+ | $0.08872 / 1 minute
+ | 
+n2d-highmem-32
+ | 
+32
+ | 
+256
+ | $0.17744 / 1 minute
+ | 
+n2d-highmem-48
+ | 
+48
+ | 
+384
+ | $0.26616 / 1 minute
+ | 
+n2d-highmem-64
+ | 
+64
+ | 
+512
+ | $0.35488 / 1 minute
+ | 
+n2d-highmem-80
+ | 
+80
+ | 
+640
+ | $0.4436 / 1 minute
+ | 
+n2d-highmem-96
+ | 
+96
+ | 
+768
+ | $0.53232 / 1 minute
+N2D high-cpu machine types
+Iowa (us-central1)
+Johannesburg (africa-south1)
+Taiwan (asia-east1)
+Hong Kong (asia-east2)
+Tokyo (asia-northeast1)
+Osaka (asia-northeast2)
+Seoul (asia-northeast3)
+Mumbai (asia-south1)
+Delhi (asia-south2)
+Singapore (asia-southeast1)
+Jakarta (asia-southeast2)
+Sydney (australia-southeast1)
+Melbourne (australia-southeast2)
+Warsaw (europe-central2)
+Finland (europe-north1)
+Madrid (europe-southwest1)
+Belgium (europe-west1)
+Berlin (europe-west10)
+Turin (europe-west12)
+London (europe-west2)
+Frankfurt (europe-west3)
+Netherlands (europe-west4)
+Zurich (europe-west6)
+Milan (europe-west8)
+Paris (europe-west9)
+Doha (me-central1)
+Dammam (me-central2)
+Tel Aviv (me-west1)
+Montreal (northamerica-northeast1)
+Toronto (northamerica-northeast2)
+Sao Paulo (southamerica-east1)
+Santiago (southamerica-west1)
+Iowa (us-central1)
+South Carolina (us-east1)
+Northern Virginia (us-east4)
+Columbus (us-east5)
+Dallas (us-south1)
+Oregon (us-west1)
+Los Angeles (us-west2)
+Salt Lake City (us-west3)
+Las Vegas (us-west4)
+ | 
+Machine type
+ | 
+Virtual CPUs
+ | 
+Memory (GB)
+ | 
+Price (USD)
+ | 
+n2d-highcpu-2
+ | 
+2
+ | 
+2
+ | $0.004916 / 1 minute
+ | 
+n2d-highcpu-4
+ | 
+4
+ | 
+4
+ | $0.009832 / 1 minute
+ | 
+n2d-highcpu-8
+ | 
+8
+ | 
+8
+ | $0.019664 / 1 minute
+ | 
+n2d-highcpu-16
+ | 
+16
+ | 
+16
+ | $0.039328 / 1 minute
+ | 
+n2d-highcpu-32
+ | 
+32
+ | 
+32
+ | $0.078656 / 1 minute
+ | 
+n2d-highcpu-48
+ | 
+48
+ | 
+48
+ | $0.117984 / 1 minute
+ | 
+n2d-highcpu-64
+ | 
+64
+ | 
+64
+ | $0.157312 / 1 minute
+ | 
+n2d-highcpu-80
+ | 
+80
+ | 
+80
+ | $0.19664 / 1 minute
+ | 
+n2d-highcpu-96
+ | 
+96
+ | 
+96
+ | $0.235968 / 1 minute
+ | 
+n2d-highcpu-128
+ | 
+128
+ | 
+128
+ | $0.314624 / 1 minute
+ | 
+n2d-highcpu-224
+ | 
+224
+ | 
+224
+ | $0.550592 / 1 minute
+SSD for N2D machine types
+The following table shows the regional pricing for SSDs in builds run in the private pool
+Iowa (us-central1)
+Johannesburg (africa-south1)
+Taiwan (asia-east1)
+Hong Kong (asia-east2)
+Tokyo (asia-northeast1)
+Osaka (asia-northeast2)
+Seoul (asia-northeast3)
+Mumbai (asia-south1)
+Delhi (asia-south2)
+Singapore (asia-southeast1)
+Jakarta (asia-southeast2)
+Sydney (australia-southeast1)
+Melbourne (australia-southeast2)
+Warsaw (europe-central2)
+Finland (europe-north1)
+Madrid (europe-southwest1)
+Belgium (europe-west1)
+Berlin (europe-west10)
+Turin (europe-west12)
+London (europe-west2)
+Frankfurt (europe-west3)
+Netherlands (europe-west4)
+Zurich (europe-west6)
+Milan (europe-west8)
+Paris (europe-west9)
+Doha (me-central1)
+Dammam (me-central2)
+Tel Aviv (me-west1)
+Montreal (northamerica-northeast1)
+Toronto (northamerica-northeast2)
+Sao Paulo (southamerica-east1)
+Santiago (southamerica-west1)
+Iowa (us-central1)
+South Carolina (us-east1)
+Northern Virginia (us-east4)
+Columbus (us-east5)
+Dallas (us-south1)
+Oregon (us-west1)
+Los Angeles (us-west2)
+Salt Lake City (us-west3)
+Las Vegas (us-west4)
+Phoenix (us-west8)
+HourlyHourly
+MonthlyMonthly
+ | 
+SSD
+ | 
+Price (USD)
+ | 
+Private Pools SSD
+ | $0.000232877 / 1 gibibyte hour
+C3 standard machine types
+Iowa (us-central1)
+Tokyo (asia-northeast1)
+Singapore (asia-southeast1)
+Sydney (australia-southeast1)
+Belgium (europe-west1)
+London (europe-west2)
+Frankfurt (europe-west3)
+Netherlands (europe-west4)
+Paris (europe-west9)
+Dammam (me-central2)
+Tel Aviv (me-west1)
+Montreal (northamerica-northeast1)
+Sao Paulo (southamerica-east1)
+Iowa (us-central1)
+South Carolina (us-east1)
+Northern Virginia (us-east4)
+Columbus (us-east5)
+Oregon (us-west1)
+Los Angeles (us-west2)
+Salt Lake City (us-west3)
+Las Vegas (us-west4)
+ | 
+Machine type
+ | 
+Virtual CPUs
+ | 
+Memory (GB)
+ | 
+Price (USD)
+ | 
+c3-standard-4
+ | 
+4
+ | 
+16
+ | $0.01772 / 1 minute
+ | 
+c3-standard-8
+ | 
+8
+ | 
+32
+ | $0.03544 / 1 minute
+ | 
+c3-standard-22
+ | 
+22
+ | 
+88
+ | $0.09746 / 1 minute
+ | 
+c3-standard-44
+ | 
+44
+ | 
+176
+ | $0.19492 / 1 minute
+ | 
+c3-standard-88
+ | 
+88
+ | 
+352
+ | $0.38984 / 1 minute
+ | 
+c3-standard-176
+ | 
+176
+ | 
+704
+ | $0.77968 / 1 minute
+C3 high-memory machine types
+Iowa (us-central1)
+Tokyo (asia-northeast1)
+Singapore (asia-southeast1)
+Sydney (australia-southeast1)
+Belgium (europe-west1)
+London (europe-west2)
+Frankfurt (europe-west3)
+Netherlands (europe-west4)
+Paris (europe-west9)
+Dammam (me-central2)
+Tel Aviv (me-west1)
+Montreal (northamerica-northeast1)
+Sao Paulo (southamerica-east1)
+Iowa (us-central1)
+South Carolina (us-east1)
+Northern Virginia (us-east4)
+Columbus (us-east5)
+Oregon (us-west1)
+Los Angeles (us-west2)
+Salt Lake City (us-west3)
+Las Vegas (us-west4)
+ | 
+Machine type
+ | 
+Virtual CPUs
+ | 
+Memory (GB)
+ | 
+Price (USD)
+ | 
+c3-highmem-4
+ | 
+4
+ | 
+32
+ | $0.025272 / 1 minute
+ | 
+c3-highmem-8
+ | 
+8
+ | 
+64
+ | $0.050544 / 1 minute
+ | 
+c3-highmem-22
+ | 
+22
+ | 
+176
+ | $0.138996 / 1 minute
+ | 
+c3-highmem-44
+ | 
+44
+ | 
+352
+ | $0.277992 / 1 minute
+ | 
+c3-highmem-88
+ | 
+88
+ | 
+704
+ | $0.555984 / 1 minute
+ | 
+c3-highmem-176
+ | 
+176
+ | 
+1408
+ | $1.111968 / 1 minute
+C3 high-cpu machine types
+Iowa (us-central1)
+Tokyo (asia-northeast1)
+Singapore (asia-southeast1)
+Sydney (australia-southeast1)
+Belgium (europe-west1)
+London (europe-west2)
+Frankfurt (europe-west3)
+Netherlands (europe-west4)
+Paris (europe-west9)
+Dammam (me-central2)
+Tel Aviv (me-west1)
+Montreal (northamerica-northeast1)
+Sao Paulo (southamerica-east1)
+Iowa (us-central1)
+South Carolina (us-east1)
+Northern Virginia (us-east4)
+Columbus (us-east5)
+Oregon (us-west1)
+Los Angeles (us-west2)
+Salt Lake City (us-west3)
+Las Vegas (us-west4)
+ | 
+Machine type
+ | 
+Virtual CPUs
+ | 
+Memory (GB)
+ | 
+Price (USD)
+ | 
+c3-highcpu-4
+ | 
+4
+ | 
+8
+ | $0.013944 / 1 minute
+ | 
+c3-highcpu-8
+ | 
+8
+ | 
+16
+ | $0.027888 / 1 minute
+ | 
+c3-highcpu-22
+ | 
+22
+ | 
+44
+ | $0.076692 / 1 minute
+ | 
+c3-highcpu-44
+ | 
+44
+ | 
+88
+ | $0.153384 / 1 minute
+ | 
+c3-highcpu-88
+ | 
+88
+ | 
+176
+ | $0.306768 / 1 minute
+ | 
+c3-highcpu-176
+ | 
+176
+ | 
+352
+ | $0.613536 / 1 minute
+SSD for C3 machine types
+The following table shows the regional pricing for SSDs in builds run in the private pool
+Iowa (us-central1)
+Johannesburg (africa-south1)
+Taiwan (asia-east1)
+Hong Kong (asia-east2)
+Tokyo (asia-northeast1)
+Osaka (asia-northeast2)
+Seoul (asia-northeast3)
+Mumbai (asia-south1)
+Delhi (asia-south2)
+Singapore (asia-southeast1)
+Jakarta (asia-southeast2)
+Sydney (australia-southeast1)
+Melbourne (australia-southeast2)
+Warsaw (europe-central2)
+Finland (europe-north1)
+Madrid (europe-southwest1)
+Belgium (europe-west1)
+Berlin (europe-west10)
+Turin (europe-west12)
+London (europe-west2)
+Frankfurt (europe-west3)
+Netherlands (europe-west4)
+Zurich (europe-west6)
+Milan (europe-west8)
+Paris (europe-west9)
+Doha (me-central1)
+Dammam (me-central2)
+Tel Aviv (me-west1)
+Montreal (northamerica-northeast1)
+Toronto (northamerica-northeast2)
+Sao Paulo (southamerica-east1)
+Santiago (southamerica-west1)
+Iowa (us-central1)
+South Carolina (us-east1)
+Northern Virginia (us-east4)
+Columbus (us-east5)
+Dallas (us-south1)
+Oregon (us-west1)
+Los Angeles (us-west2)
+Salt Lake City (us-west3)
+Las Vegas (us-west4)
+Phoenix (us-west8)
+HourlyHourly
+MonthlyMonthly
+ | 
+SSD
+ | 
+Price (USD)
+ | 
+Private Pools SSD
+ | $0.000232877 / 1 gibibyte hour
+Additional costs
+When using Cloud Build, you might also incur costs for:
+Cloud Logging or Cloud Storage costs for logs, depending on your build configuration. For more information, see the Cloud Logging and Cloud Storage pricing pages.
+Storing images and artifacts in Artifact Registry. For more information, see Artifact Registry pricing.
+Storing an image in Container Registry. For more information, see Container Registry pricing page.
+Networks costs on peered network. For more information, see Networking pricing page.
+Request a custom quote
+With Google Cloud's pay-as-you-go pricing, you only pay for the services you use. Connect with our sales team to get a custom quote for your organization.
+Contact sales

@@ -1,11 +1,12 @@
 {
   "platform": "gitlab",
   "source_label": "GitLab official",
-  "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+  "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
   "secondary_source_urls": [
-    "https://about.gitlab.com/pricing/"
+    "https://about.gitlab.com/pricing/",
+    "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html"
   ],
-  "checked_on": "2026-11-01",
+  "checked_on": "2026-11-24",
   "rules": {
     "compute_minute_usd": 0.01,
     "public_repo_standard_free": true,
@@ -182,7 +183,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "per_second",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-01",
       "status": "official",
       "cost_factor": 1,
@@ -201,7 +202,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "per_second",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-01",
       "status": "official",
       "cost_factor": 1
@@ -219,7 +220,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "per_second",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-01",
       "status": "official",
       "cost_factor": 2,
@@ -238,7 +239,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "per_second",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-01",
       "status": "official",
       "cost_factor": 3,
@@ -257,7 +258,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "per_second",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-01",
       "status": "official",
       "cost_factor": 6,
@@ -276,7 +277,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "per_second",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-01",
       "status": "official",
       "cost_factor": 12,
@@ -295,7 +296,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "per_second",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-01",
       "status": "official",
       "cost_factor": 1
@@ -313,7 +314,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "per_second",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-01",
       "status": "official",
       "cost_factor": 2
@@ -331,7 +332,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "per_second",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-01",
       "status": "official",
       "cost_factor": 3
@@ -349,7 +350,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "per_second",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-01",
       "status": "official",
       "cost_factor": 6,
@@ -368,7 +369,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "per_second",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-01",
       "status": "official",
       "cost_factor": 6
@@ -386,7 +387,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "per_second",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-01",
       "status": "official",
       "cost_factor": 12
@@ -404,7 +405,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "per_second",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-01",
       "status": "official",
       "cost_factor": 1,
@@ -423,7 +424,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "per_second",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-01",
       "status": "official",
       "cost_factor": 1
@@ -441,7 +442,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "per_second",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-01",
       "status": "official",
       "cost_factor": 7
@@ -459,7 +460,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "exact_seconds",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-11",
       "status": "official",
       "cost_factor": 0.5
@@ -477,7 +478,7 @@
       "included_qty": 0,
       "uses_allowance": true,
       "rounding": "exact_seconds",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-11",
       "status": "official",
       "cost_factor": 0.008
@@ -495,10 +496,11 @@
       "included_qty": 0,
       "uses_allowance": false,
       "rounding": "per_second",
-      "source_url": "https://docs.gitlab.com/ee/ci/pipelines/cicd_minutes.html",
+      "source_url": "https://docs.gitlab.com/ci/pipelines/compute_minutes/",
       "checked_on": "2026-11-01",
       "status": "official",
       "effective_usd": 0.0
     }
-  ]
+  ],
+  "verified_at": "2026-11-24"
 }

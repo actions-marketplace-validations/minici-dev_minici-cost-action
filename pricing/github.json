@@ -3,18 +3,19 @@
   "source_label": "GitHub official",
   "source_url": "https://docs.github.com/en/billing/managing-billing-for-your-products/managing-billing-for-github-actions/about-billing-for-github-actions",
   "secondary_source_urls": [
+    "https://docs.github.com/en/billing/reference/actions-runner-pricing",
     "https://docs.github.com/en/actions/using-github-hosted-runners/using-larger-runners/about-larger-runners",
     "https://github.com/pricing"
   ],
-  "checked_on": "2026-11-01",
+  "checked_on": "2026-11-24",
   "rules": {
     "public_repo_standard_free": true,
     "minutes_rollover": false,
     "job_rounding": "ceil_minute_per_job",
     "allowance_os_multipliers": {
       "linux": 1,
-      "windows": 2,
-      "macos": 10
+      "windows": 1.67,
+      "macos": 10.33
     },
     "included_cache_gb_per_repo": 10,
     "storage_overage_usd_per_gb_month": 0.25,
@@ -29,13 +30,14 @@
       "included_cache_gb_per_repo": 10,
       "allowance_os_multipliers": {
         "linux": 1,
-        "windows": 2,
-        "macos": 10
+        "windows": 1.67,
+        "macos": 10.33
       },
       "public_repo_standard_free": true,
       "concurrent_jobs": 20,
       "concurrent_macos_jobs": 5,
-      "minutes_rollover": false
+      "minutes_rollover": false,
+      "included_usd_per_month": 12
     },
     "pro": {
       "seat_usd_per_month": 4.0,
@@ -44,13 +46,14 @@
       "included_cache_gb_per_repo": 10,
       "allowance_os_multipliers": {
         "linux": 1,
-        "windows": 2,
-        "macos": 10
+        "windows": 1.67,
+        "macos": 10.33
       },
       "public_repo_standard_free": true,
       "concurrent_jobs": 40,
       "concurrent_macos_jobs": 5,
-      "minutes_rollover": false
+      "minutes_rollover": false,
+      "included_usd_per_month": 18
     },
     "team": {
       "seat_usd_per_month": 4.0,
@@ -59,13 +62,14 @@
       "included_cache_gb_per_repo": 10,
       "allowance_os_multipliers": {
         "linux": 1,
-        "windows": 2,
-        "macos": 10
+        "windows": 1.67,
+        "macos": 10.33
       },
       "public_repo_standard_free": true,
       "concurrent_jobs": 60,
       "concurrent_macos_jobs": 5,
-      "minutes_rollover": false
+      "minutes_rollover": false,
+      "included_usd_per_month": 18
     },
     "enterprise": {
       "seat_usd_per_month": 21.0,
@@ -74,13 +78,14 @@
       "included_cache_gb_per_repo": 10,
       "allowance_os_multipliers": {
         "linux": 1,
-        "windows": 2,
-        "macos": 10
+        "windows": 1.67,
+        "macos": 10.33
       },
       "public_repo_standard_free": true,
       "concurrent_jobs": 500,
       "concurrent_macos_jobs": 50,
-      "minutes_rollover": false
+      "minutes_rollover": false,
+      "included_usd_per_month": 300
     }
   },
   "skus": [
@@ -231,7 +236,7 @@
       "source_url": "https://docs.github.com/en/billing/managing-billing-for-your-products/managing-billing-for-github-actions/about-billing-for-github-actions",
       "checked_on": "2026-11-01",
       "status": "official",
-      "allowance_multiplier": 2,
+      "allowance_multiplier": 1.67,
       "engine_key": "windows"
     },
     {
@@ -250,7 +255,7 @@
       "source_url": "https://docs.github.com/en/billing/managing-billing-for-your-products/managing-billing-for-github-actions/about-billing-for-github-actions",
       "checked_on": "2026-11-01",
       "status": "official",
-      "allowance_multiplier": 2
+      "allowance_multiplier": 1.67
     },
     {
       "platform": "github",
@@ -268,7 +273,25 @@
       "source_url": "https://docs.github.com/en/billing/managing-billing-for-your-products/managing-billing-for-github-actions/about-billing-for-github-actions",
       "checked_on": "2026-11-01",
       "status": "official",
-      "allowance_multiplier": 2
+      "allowance_multiplier": 1.67
+    },
+    {
+      "platform": "github",
+      "sku": "windows_arm64_standard_2core",
+      "os": "windows",
+      "arch": "arm64",
+      "cores": 2,
+      "gpu": false,
+      "unit": "minute",
+      "usd": 0.01,
+      "plan": "all",
+      "included_qty": 0,
+      "uses_allowance": true,
+      "rounding": "ceil_minute_per_job",
+      "source_url": "https://docs.github.com/en/billing/reference/actions-runner-pricing",
+      "checked_on": "2026-11-24",
+      "status": "official",
+      "allowance_multiplier": 1.67
     },
     {
       "platform": "github",
@@ -286,7 +309,7 @@
       "source_url": "https://docs.github.com/en/billing/managing-billing-for-your-products/managing-billing-for-github-actions/about-billing-for-github-actions",
       "checked_on": "2026-11-01",
       "status": "official",
-      "allowance_multiplier": 10,
+      "allowance_multiplier": 10.33,
       "engine_key": "macos"
     },
     {
@@ -305,7 +328,7 @@
       "source_url": "https://docs.github.com/en/billing/managing-billing-for-your-products/managing-billing-for-github-actions/about-billing-for-github-actions",
       "checked_on": "2026-11-01",
       "status": "official",
-      "allowance_multiplier": 10
+      "allowance_multiplier": 10.33
     },
     {
       "platform": "github",
@@ -878,5 +901,6 @@
       "status": "announced, not in effect",
       "effective_usd": 0.0
     }
-  ]
+  ],
+  "verified_at": "2026-11-24"
 }

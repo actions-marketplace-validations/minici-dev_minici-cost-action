@@ -1,0 +1,87 @@
+SOURCE: https://aws.amazon.com/codebuild/pricing/
+FETCHED: 2026-11-24 (curl, text extracted from HTML)
+---
+
+ Pricing
+ Skip to main content
+AWS CodeBuild
+Overview
+Features
+Pricing
+Getting Started
+FAQs
+Product integrations
+Customers
+AWS CodeBuild pricing
+ Get started for free
+ Request a pricing quote
+Why AWS CodeBuild?
+AWS CodeBuild uses simple pay-as-you-go pricing. There are no upfront costs or minimum fees. You pay only for the resources you use. You are charged for compute resources based on the duration it takes your build to run. The rate depends on the selected compute type.
+AWS Pricing Calculator
+Calculate your CodeBuild and architecture cost in a single estimate.
+Create your custom estimate now
+On-demand Amazon EC2 pricing
+Build duration
+Build duration is calculated in minutes, from the time you submit your build until your build is terminated, rounded up to the nearest minute.
+Compute types
+CodeBuild offers compute instance types with different amounts of memory and CPU. Charges vary by the compute instance type that you choose for your build.
+On-demand AWS Lambda pricing
+Build duration
+Build duration is calculated in seconds, from the time you submit your build until your build is terminated, rounded up to the nearest second.
+Compute types
+CodeBuild offers compute types with different amounts of memory. Charges vary by the compute type that you choose for your build.
+Reserved capacity Amazon EC2 pricing
+Instance pricing per minute
+Instance pricing is calculated in minutes, from the time you submit a request for a new instance until your instance is terminated, rounded up to the nearest minute. Each instance has a minimum usage charge of 60 minutes.
+Compute types
+AWS CodeBuild offers compute instance types with different amounts of memory and CPU. Charges vary by the compute instance type that you choose for your fleet.
+ Compute size
+ Compute name
+ Instance Name
+ Compute size
+Mac reserved instances
+Each Mac instance has a minimum usage charge of 24 hours before you can release the reserved instance.
+ Compute name
+Mac reserved instances
+Each Mac instance has a minimum usage charge of 24 hours before you can release the reserved instance.
+ Instance Name
+Incremental storage
+Managed Network Access Control List
+Managed Network Access Control List (NACL) allows you to route network traffic through a CodeBuild managed proxy. You can enable NACL on reserved capacity fleets to control a list of allowed or denied network rules. Managed proxy is charged per minute on each fleet where NACL is enabled. You will continue to incur charges on a NACL-enabled fleet until you disabled it.
+Docker image server
+Remote server pricing per second
+Docker image server allows you to speed up concurrent image build requests by routing them to a remote server with a shared layer cache. Docker image server duration is calculated in seconds on each project where the feature is enabled. You will continue to incur charges until you disable the feature.
+Compute types
+CodeBuild offers compute types with different amounts of memory and CPU. Charges vary by the compute instance type that you choose for your image server.
+ Persistent cache at rest pricing per second
+Docker image servers have a cooldown period where they remain active and waiting to receive image build requests for up to 1 hour. If no build requests arrive within the cooldown period, the server is stopped and you will incur a lower charge for cache at rest. You will continue to incur charges until you disable the feature.
+Sandbox
+Sandbox duration is calculated in seconds, from the time you start your sandbox until the sandbox is terminated, rounded up to the nearest second.
+AWS Free Tier
+The CodeBuild AWS Free Tier includes 100 total build minutes per month with the general1.small or arm1.small instance types using on-demand Amazon EC2. Using on-demand Lambda, the CodeBuild AWS Free Tier includes 6,000 total build seconds per month with the lambda.arm.1GB or lambda.x86-64.1GB compute types. Reserved Capacity EC2, Sandbox and Docker image server don't offer an AWS free tier. The CodeBuild AWS Free Tier does not automatically expire at the end of your 12-month AWS Free Tier term. It is available to new and existing AWS customers.
+Additional charges
+You may incur additional charges if your builds transfer data or use other AWS services. For example, you may incur charges from Amazon CloudWatch Logs for build log streams, Amazon Simple Storage Service (Amazon S3) for build artifact storage, and AWS Key Management Service (AWS KMS) for encryption. You may also incur additional charges if you use CodeBuild with AWS CodePipeline.
+Pricing examples
+On-demand Amazon EC2 pricing example
+If you run 100 builds in one month using build.general1.small, where each build runs for 5 minutes, then your charges would be calculated as follows:
+Monthly build charges
+Build minutes = 100 builds * 5 minutes = 500 build minutes
+Build minutes - CodeBuild AWS Free Tier build minutes = Monthly billable build minutes = 500 - 100 = 400 build minutes
+Total monthly build charges = 400 build minutes * $0.005 = $2
+On-demand AWS Lambda pricing example
+If you run 100 builds in one month using lambda.arm.1GB, where each build runs for 300 seconds, then your charges would be calculated as follows:
+Monthly build charges
+Build seconds = 100 builds * 300 seconds = 30,000 build secondsBuild seconds - CodeBuild AWS Free Tier build seconds = Monthly billable build seconds = 30,000 - 6,000 = 24,000 build seconds
+Total monthly build charges = 24,000 build seconds * $0.00001 = $0.24
+Reserved capacity Amazon EC2 pricing example
+If you reserve 1 instance for one month using reserved.x86-64.g1.small, then your charges would be calculated as follows:
+Monthly build charges
+Instance minutes = 60 minutes per hour * 24 hours per day * 30 days per month = 43,200
+Total monthly reserved charges = 43,200 instance minutes * $0.003 = $129.60
+Get started with CodeBuild
+ FAQs
+Get your CodeBuild questions answered
+ Read the CodeBuild FAQs 
+ Blog
+Learn how to set up public builds
+ Read the blog 

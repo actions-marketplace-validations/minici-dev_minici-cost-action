@@ -5,7 +5,7 @@
   "secondary_source_urls": [
     "https://aws.amazon.com/codepipeline/pricing/"
   ],
-  "checked_on": "2026-11-11",
+  "checked_on": "2026-11-24",
   "rules": {
     "infracost_delegated": true,
     "infracost_terraform_resources": [
@@ -468,5 +468,6 @@
       "checked_on": "2026-11-11",
       "status": "official"
     }
-  ]
+  ],
+  "verified_at": "2026-11-24"
 }

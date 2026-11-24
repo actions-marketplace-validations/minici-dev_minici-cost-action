@@ -1,0 +1,46 @@
+SOURCE: https://docs.github.com/en/actions/using-github-hosted-runners/using-larger-runners/about-larger-runners
+FETCHED: 2026-11-24 (curl, text extracted from HTML)
+---
+Larger runners - GitHub Docs
+Skip to main content
+Skip to content
+Collapse sidebar
+Expand sidebar
+In this article
+Larger runners
+Organize and govern your workflows with GitHub-hosted larger runners using runner groups, concurrency policies, and granular access controls.
+Copy markdown
+Who can use this feature?
+Larger runners are only available for organizations and enterprises using the GitHub Team or GitHub Enterprise Cloud plans.
+In this article
+About larger runners
+Larger runners are managed virtual machines with more resources than standard GitHub-hosted runners. They offer the following advanced features:
+More RAM, CPU, and disk space
+Static IP addresses
+Azure private networking
+The ability to group runners
+Autoscaling to support concurrent workflows
+GPU-powered runners
+These larger runners are hosted by GitHub and have the runner application and other tools preinstalled.
+What you can do with larger runners
+All larger runners support the following capabilities:
+Runner groups: Organize runners and control which repositories can use them
+Autoscaling: Scale runners up or down based on workload demand
+Concurrency controls: Limit how many jobs can run at the same time
+The following capabilities are available only on Linux and Windows runners:
+Static IP addresses: Assign static IP addresses from a specific range to runners, allowing you to configure firewall allowlists.
+Custom images: Use custom runner images to pre-install dependencies and reduce setup time.
+Azure private networking: Connect your runners to Azure private networks.
+About larger runners for code scanning default setup
+Consider configuring larger runners for code scanning default setup if:
+Your scans with standard GitHub-hosted runners are taking too long.
+Your scans with standard GitHub-hosted runners are returning memory or disk errors.
+You want to customize aspects of your code scanning runner, such as the runner size, runner image, and job concurrency, without using self-hosted runners.
+For more information on configuring larger runners for code scanning default setup, see Configuring larger runners for default setup.
+Billing
+Note
+Where available, larger runner costs can draw from the included compute usage for accounts on GitHub Team and GitHub Enterprise Cloud. After the included value is consumed, usage is billed at the per-minute rate. Usage in public repositories is also billed at the per-minute rate.
+Compared to standard GitHub-hosted runners, larger runners are billed differently. Larger runners are only billed at the per-minute rate for the amount of time workflows are executed on them. There is no cost associated with creating a larger runner that is not being used by a workflow. For more information, see Actions runner pricing.
+Next steps
+To start using larger runners, see Managing larger runners.
+To find reference information about using larger runners, see Larger runners reference.
