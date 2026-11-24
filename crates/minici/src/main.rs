@@ -5434,8 +5434,8 @@ jobs:
         );
         assert_eq!(team_rep.free_tier_included_mins, 3000.0);
         // Bug #6: Larger runner `ubuntu-4-core` (5m) MUST NOT inflate `os_weighted_free_tier_mins_per_run`!
-        // Standard `macos-latest` 10m * 10x = 100.0 pool mins/run (NOT 105.0!).
-        assert_eq!(team_rep.cost_components.os_weighted_free_tier_mins_per_run, 100.0);
+        // Standard `macos-latest` 10m * 10.33x ($0.062/$0.006, official GitHub rates) = 103.3 pool mins/run (NOT 108.3!).
+        assert_eq!(team_rep.cost_components.os_weighted_free_tier_mins_per_run, 103.3);
         // Bug #5: Larger runner `ubuntu-4-core` is metered from second 1 even though 4,300 pool mins > 3,000
         let ent_rep = analyze_path(
             &dir,
