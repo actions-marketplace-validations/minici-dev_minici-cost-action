@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MiniCI — CI/CD Cost Breakdown, PR Diff &amp; Quota Receipt</title>
   <link rel="icon" type="image/svg+xml" href="/minici-icon.svg" />
+  <link rel="canonical" href="https://minici.dev/" />
+  <meta property="og:url" content="https://minici.dev/" />
   <meta property="og:image" content="https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/web/social-preview-1280x640.png" />
   <meta name="description" content="Catch expensive CI/CD matrix spikes before you merge. Compare GitHub Actions, GitLab, CircleCI, Bitbucket, AWS CodeBuild, GCP Cloud Build, Azure DevOps &amp; Self-Hosted Spot in &lt; 1 ms." />
   <style>
@@ -181,12 +183,12 @@
       <span class="pill">0 Crates • 0 API Keys • 0 External Code Egress • 7 CI Vendors + 150 Cloud VMs</span>
       <h1>See What Every Pull Request Costs Before You Merge.</h1>
       <p>
-        AI coding and rapid pushes create a 10&times; PR storm while CI/CD bills hide until month-end. MiniCI expands your matrices in <code>&lt; 2 ms</code>, posts exact PR compute &amp; wait-time deltas across <code>227+</code> SKUs, and offers 1-click YAML fixes — without blocking PRs.
+        AI coding and rapid pushes create a 10&times; PR storm while CI/CD bills hide until month-end. MiniCI expands your matrices in <code>&lt; 2 ms</code>, posts estimated PR compute &amp; wait-time deltas across <code>227+</code> SKUs, and offers 1-click YAML fixes — without blocking PRs.
       </p>
 
       <div class="cmd-box">
-        <code id="installCmd">curl -fsSL https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/scripts/install.sh | bash</code>
-        <button class="btn" onclick="copyCmd('installCmd', this)">Copy 10s Install</button>
+        <code id="installCmd">cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 5c2152f912efcfaf89f82d6cbee3b0dd455a2bba minici</code>
+        <button class="btn" onclick="copyCmd('installCmd', this)">Copy install command</button>
       </div>
 
       <div class="video-wrap">
@@ -197,7 +199,7 @@
         <div class="video-caption">
           <span>▶ Customer Walkthrough: Build from source, local repo breakdown &amp; PR branch cost diff</span>
           <span>
-            <a href="how-to-install-and-use.mp4" download>⬇ Walkthrough MP4 (3.1 MB)</a>
+            <a href="how-to-install-and-use.mp4" download>⬇ Walkthrough MP4</a>
             &nbsp;•&nbsp;
             <a href="minici-cost-demo.mp4" download>⬇ Product Reel (1.4 MB)</a>
           </span>
@@ -306,7 +308,7 @@ minici diff --compare-to main</pre>
     <!-- 5. PRICING -->
     <section class="section" id="pricing">
       <h2>Simple, Transparent Plans</h2>
-      <p class="sub">Apache-2.0 open-source core, plus commercial FinOps plans billed via Polar.sh (cancel anytime in the <a href="https://polar.sh/minici/portal" style="color:var(--sky);">Customer Portal</a> • support: <a href="mailto:raza.aamir01@gmail.com" style="color:var(--sky);">raza.aamir01@gmail.com</a>).</p>
+      <p class="sub">Apache-2.0 open-source core, plus commercial FinOps plans billed via Polar.sh (cancel anytime in the <a href="https://polar.sh/minici/portal" style="color:var(--sky);">Customer Portal</a> • support: <a href="https://github.com/minici-dev/minici-cost-action/issues" style="color:var(--sky);">GitHub Issues</a>).</p>
 
       <div class="pricing-4">
         <div class="price-card">
@@ -366,7 +368,7 @@ minici diff --compare-to main</pre>
   </main>
 
   <footer class="container">
-    <span>Built by Aamir Raza (<a href="mailto:raza.aamir01@gmail.com" style="color:var(--muted);">raza.aamir01@gmail.com</a>) • Apache-2.0</span>
+    <span>Built by the <a href="https://github.com/minici-dev" style="color:var(--muted);">MiniCI maintainers</a> • Apache-2.0</span>
     <span><a href="/blog/" style="color:var(--sky);text-decoration:none;">Engineering Blog</a> • <a href="https://polar.sh/minici/portal" style="color:var(--emerald);text-decoration:none;">Customer Portal (Polar.sh)</a> • <a href="https://github.com/minici-dev/minici-cost-action" style="color:var(--sky);text-decoration:none;">GitHub</a></span>
   </footer>
 
@@ -416,9 +418,20 @@ minici diff --compare-to main</pre>
         ['High-Speed / Self-Hosted Cloud Spot', '50–75% compute reduction', '$' + p.bs.toFixed(4) + '/m', '$' + bsBill.toFixed(2) + ' (Spot: $' + spotBill.toFixed(2) + ')']
       ];
 
-      document.getElementById('calcBody').innerHTML = rows.map(r =>
-        `<tr><td><strong>${r[0]}</strong></td><td style="color:var(--muted)">${r[1]}</td><td class="num">${r[2]}</td><td class="num"><strong>${r[3]}</strong></td></tr>`
-      ).join('');
+      const body = document.getElementById('calcBody');
+      body.replaceChildren();
+      for (const values of rows) {
+        const row = body.insertRow();
+        values.forEach((value, index) => {
+          const cell = row.insertCell();
+          if (index === 1) cell.style.color = 'var(--muted)';
+          if (index >= 2) cell.className = 'num';
+          const target = index === 0 || index === 3
+            ? cell.appendChild(document.createElement('strong'))
+            : cell;
+          target.textContent = value;
+        });
+      }
     }
 
     function copyCmd(id, btn) {
@@ -431,7 +444,13 @@ minici diff --compare-to main</pre>
     if (new URLSearchParams(window.location.search).get('checkout') === 'success') {
       const b = document.createElement('div');
       b.style.cssText = 'background:#064e3b;border-bottom:1px solid #10b981;color:#ecfdf5;padding:12px 20px;text-align:center;font-size:0.92rem;';
-      b.innerHTML = '✓ <strong>MiniCI Plan Activated!</strong> Your license key &amp; receipts are available anytime in your <a href="https://polar.sh/minici/portal" style="color:#6ee7b7;font-weight:700;">Polar Customer Portal</a>.';
+      const title = document.createElement('strong');
+      title.textContent = 'MiniCI Plan Activated!';
+      const portal = document.createElement('a');
+      portal.href = 'https://polar.sh/minici/portal';
+      portal.style.cssText = 'color:#6ee7b7;font-weight:700;';
+      portal.textContent = 'Polar Customer Portal';
+      b.append('✓ ', title, ' Your license key & receipts are available anytime in your ', portal, '.');
       document.body.prepend(b);
     }
   </script>

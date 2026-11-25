@@ -1,0 +1,62 @@
+version: 2.1
+
+orbs:
+  node: circleci/node@5.2.0
+
+executors:
+  node-executor:
+    docker:
+      - image: cimg/node:20.11
+    resource_class: medium
+
+jobs:
+  lint:
+    executor: node-executor
+    steps:
+      - checkout
+      - node/install-packages:
+          pkg-manager: npm
+      - run:
+          name: Lint
+          command: npm run lint
+
+  test:
+    executor: node-executor
+    resource_class: large
+    parallelism: 4
+    steps:
+      - checkout
+      - node/install-packages:
+          pkg-manager: npm
+      - run:
+          name: Run tests
+          command: |
+            TESTFILES=$(circleci tests glob "test/**/*.test.js" | circleci tests split)
+            npm test -- $TESTFILES
+      - store_test_results:
+          path: reports/junit
+
+  build:
+    executor: node-executor
+    resource_class: xlarge
+    steps:
+      - checkout
+      - node/install-packages:
+          pkg-manager: npm
+      - run:
+          name: Build
+          command: npm run build
+      - store_artifacts:
+          path: dist
+
+workflows:
+  ci:
+    jobs:
+      - lint
+      - test:
+          requires: [lint]
+      - build:
+          requires: [test]
+          filters:
+            branches:
+              only: main

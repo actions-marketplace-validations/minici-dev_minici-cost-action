@@ -57,6 +57,7 @@ pub struct OptimizationReceipt {
     pub missing_timeouts_before: usize,
     pub missing_timeouts_after: usize,
     pub in_place_shrink_monthly_savings_usd: f64,
+    pub arm64_migration_monthly_savings_usd: f64,
     pub converted_github_workflow_preview: Option<String>,
     pub switching_verdict: Option<(f64, f64, f64, &'static str)>, // (eng_hours, switch_cost_usd, payback_mo, verdict)
 }
@@ -98,7 +99,7 @@ impl OptimizationReceipt {
             .map(|s| format!("\"{}\"", json_escape(s)))
             .unwrap_or_else(|| "null".to_string());
         format!(
-            "{{\n  \"operation\": \"{}\",\n  \"source_platform\": \"{}\",\n  \"target_platform\": \"{}\",\n  \"target_workflow_file\": {},\n  \"applied_to_disk\": {},\n  \"files_modified\": {},\n  \"edits_count\": {},\n  \"artifact_storage_before_usd\": {:.2},\n  \"artifact_storage_after_usd\": {:.2},\n  \"missing_timeouts_before\": {},\n  \"missing_timeouts_after\": {},\n  \"in_place_shrink_monthly_savings_usd\": {:.2},\n  \"edits\": [{}],\n  \"converted_workflow_preview\": {},\n  \"converted_github_workflow_preview\": {},\n  \"switching_tco\": {},\n  \"verified_diff\": {}\n}}",
+            "{{\n  \"operation\": \"{}\",\n  \"source_platform\": \"{}\",\n  \"target_platform\": \"{}\",\n  \"target_workflow_file\": {},\n  \"applied_to_disk\": {},\n  \"files_modified\": {},\n  \"edits_count\": {},\n  \"artifact_storage_before_usd\": {:.2},\n  \"artifact_storage_after_usd\": {:.2},\n  \"missing_timeouts_before\": {},\n  \"missing_timeouts_after\": {},\n  \"in_place_shrink_monthly_savings_usd\": {:.2},\n  \"arm64_migration_monthly_savings_usd\": {:.2},\n  \"edits\": [{}],\n  \"converted_workflow_preview\": {},\n  \"converted_github_workflow_preview\": {},\n  \"switching_tco\": {},\n  \"verified_diff\": {}\n}}",
             json_escape(&self.operation),
             json_escape(&self.source_platform),
             json_escape(&self.target_platform),
@@ -111,6 +112,7 @@ impl OptimizationReceipt {
             self.missing_timeouts_before,
             self.missing_timeouts_after,
             self.in_place_shrink_monthly_savings_usd,
+            self.arm64_migration_monthly_savings_usd,
             edits_json,
             conv_json,
             conv_json,
@@ -149,6 +151,18 @@ impl OptimizationReceipt {
             self.verified_diff.delta_monthly_compute_usd,
             self.verified_diff.delta_monthly_compute_pct
         ));
+        if self.operation == "migrate" && self.arm64_migration_monthly_savings_usd > 0.0 {
+            out.push_str(&format!(
+                "  • ARM64 Migration : saves ${:.2}/mo (same figure as `breakdown`)\n",
+                self.arm64_migration_monthly_savings_usd
+            ));
+        }
+        if self.operation == "migrate" && self.edits.is_empty() {
+            out.push_str(&format!(
+                "  • No edits        : no runner labels eligible for target `{}` (nothing changed; macOS ARM64 only rewrites Intel `macos-12/13/-large/-intel` to `macos-14`; `macos-latest` is already ARM64)\n",
+                self.target_platform
+            ));
+        }
         out.push_str(&format!(
             "  • Billed Mins/Run : {:.1}m -> {:.1}m ({:+.1}m/run)\n",
             self.verified_diff.base_billed_mins_per_run,
@@ -180,7 +194,7 @@ impl OptimizationReceipt {
                 eng_h, sw_usd, payback_str, verdict
             ));
             out.push_str(&format!(
-                "  • Optimize First  : Staying & running `minici shrink` + ARM64 saves ~${:.2}/mo in < 30 mins ($0 switch risk)\n",
+                "  • Optimize First  : Staying & running `minici shrink` + ARM64 + cancel/cache fixes combined saves ~${:.2}/mo in < 30 mins ($0 switch risk)\n",
                 self.in_place_shrink_monthly_savings_usd
             ));
         }
@@ -1141,42 +1155,11 @@ fn convert_bespoke_ci_script_via_rust_everywhere(
     let shadow_crate_dir = shadow_root.join(&rel_crate_dir);
     let _ = fs::create_dir_all(shadow_crate_dir.join("src"));
 
-    // 1. Try external `rust-everywhere` CLI if present on host (`RUST_EVERYWHERE_BIN` or `rust-everywhere`)
-    let re_bin = std::env::var("RUST_EVERYWHERE_BIN").unwrap_or_else(|_| "rust-everywhere".to_string());
-    let mut converted_via = "builtin-rust-everywhere";
-    if let Ok(out) = Command::new(&re_bin)
-        .args([
-            "convert",
-            &src_script.to_string_lossy(),
-            "--out-dir",
-            &shadow_crate_dir.to_string_lossy(),
-        ])
-        .output()
-    {
-        if out.status.success() && shadow_crate_dir.join("Cargo.toml").is_file() {
-            converted_via = "external-rust-everywhere-cli";
-        }
-    }
+    // The external converter is not used: its output cannot be parity-verified.
+    let converted_via = "builtin-rust-everywhere";
 
     // 2. Built-in pure-Rust `rust-everywhere` generator when external binary wasn't used
-    if converted_via == "builtin-rust-everywhere" {
-        let mut req_envs = Vec::new();
-        for pat in ["os.environ[", "os.environ.get("] {
-            for v in extract_quoted_literals_after(&script_body, pat) {
-                if pat == "os.environ[" && !req_envs.contains(&v) {
-                    req_envs.push(v);
-                }
-            }
-        }
-        let mut req_paths = Vec::new();
-        for pat in ["os.path.exists(", "Path(", "fs.existsSync(", "[ -f ", "[ -d "] {
-            for p in extract_quoted_literals_after(&script_body, pat) {
-                if (p.contains('.') || p.contains('/')) && !p.starts_with('-') && !req_paths.contains(&p) {
-                    req_paths.push(p);
-                }
-            }
-        }
-        let checks_conflict_markers = script_body.contains("<<<<<<<") || script_body.contains("=======");
+    {
         let script_low = script_body.to_ascii_lowercase();
         let has_heavy_dynamic_imports = script_low.contains("import requests")
             || script_low.contains("import boto3")
@@ -1187,38 +1170,6 @@ fn convert_bespoke_ci_script_via_rust_everywhere(
             || script_low.contains("from 'axios'");
 
         let src_hash = fnv1a_hex64(script_body.as_bytes());
-        let env_checks_rust = req_envs
-            .iter()
-            .map(|ev| {
-                format!(
-                    "    if env::var({:?}).map(|v| v.is_empty()).unwrap_or(true) {{\n        eprintln!(\"[rust-everywhere:{}] Missing required env var: {}\");\n        process::exit(1);\n    }}",
-                    ev, slug, ev
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let path_checks_rust = req_paths
-            .iter()
-            .filter(|p| base_dir.join(p).exists())
-            .map(|rp| {
-                format!(
-                    "    if !Path::new({:?}).exists() {{\n        eprintln!(\"[rust-everywhere:{}] Expected path missing: {}\");\n        process::exit(1);\n    }}",
-                    rp, slug, rp
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let conflict_scan_rust = if checks_conflict_markers {
-            format!(
-                "    if scan_conflict_markers(Path::new(\".\")) {{\n        eprintln!(\"[rust-everywhere:{}] Unresolved git conflict markers detected\");\n        process::exit(1);\n    }}",
-                slug
-            )
-        } else {
-            String::new()
-        };
-
         let cargo_toml = format!(
             "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\ndescription = \"Scoped CI helper accelerated via MiniCI rust-everywhere from {}\"\n\n[workspace]\n\n[dependencies]\n\n[profile.release]\nopt-level = 3\nlto = true\nstrip = true\n",
             slug, script_rel
@@ -1230,52 +1181,7 @@ fn convert_bespoke_ci_script_via_rust_everywhere(
 //! Converts ONLY this standalone CI helper step into a cached `<2ms` native Rust binary.
 
 use std::env;
-use std::fs;
-use std::path::Path;
 use std::process::{{self, Command}};
-
-#[allow(dead_code)]
-fn scan_conflict_markers(dir: &Path) -> bool {{
-    let Ok(entries) = fs::read_dir(dir) else {{ return false; }};
-    for entry in entries.flatten() {{
-        let p = entry.path();
-        let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if name.starts_with('.') || name == "target" || name == "node_modules" {{
-            continue;
-        }}
-        if p.is_dir() {{
-            if scan_conflict_markers(&p) {{
-                return true;
-            }}
-        }} else if let Ok(txt) = fs::read_to_string(&p) {{
-            if txt.lines().any(|l| l.starts_with("<<<<<<< ")) {{
-                return true;
-            }}
-        }}
-    }}
-    false
-}}
-
-fn repo_fingerprint(script_path: &str, args: &[String]) -> u64 {{
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in script_path.as_bytes() {{
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x100000001b3);
-    }}
-    if let Ok(bytes) = fs::read(script_path) {{
-        for b in bytes {{
-            h ^= b as u64;
-            h = h.wrapping_mul(0x100000001b3);
-        }}
-    }}
-    for a in args {{
-        for b in a.as_bytes() {{
-            h ^= *b as u64;
-            h = h.wrapping_mul(0x100000001b3);
-        }}
-    }}
-    h
-}}
 
 fn main() {{
     let args: Vec<String> = env::args().skip(1).collect();
@@ -1290,57 +1196,24 @@ fn main() {{
         return;
     }}
 
-{env_checks}
-{path_checks}
-{conflict_scan}
-
-    let script_changed = fs::read({script_rel:?})
-        .map(|b| {{
-            let mut h: u64 = 0xcbf29ce484222325;
-            for byte in b {{
-                h ^= byte as u64;
-                h = h.wrapping_mul(0x100000001b3);
-            }}
-            format!("{{:016x}}", h) != "{src_hash}"
-        }})
-        .unwrap_or(false);
-
-    if {has_dyn} || script_changed {{
-        let fp = format!("{{:016x}}", repo_fingerprint({script_rel:?}, &args));
-        let cache_file = Path::new(".minici/rust-everywhere/{slug}.fp.cache");
-        if !script_changed {{
-            if let Ok(prev) = fs::read_to_string(cache_file) {{
-                if prev.trim() == fp {{
-                    println!("[rust-everywhere:{slug}] Native fingerprint cache HIT ({{fp}}) in <1ms");
-                    return;
-                }}
-            }}
-        }}
-        let status = Command::new({interp:?})
-            .arg({script_rel:?})
-            .args(&args)
-            .status()
-            .unwrap_or_else(|e| {{
-                eprintln!("[rust-everywhere:{slug}] Failed to launch fallback `{interp}`: {{e}}");
-                process::exit(1);
-            }});
-        if !status.success() {{
-            process::exit(status.code().unwrap_or(1));
-        }}
-        let _ = fs::write(cache_file, fp);
-    }} else {{
-        println!("[rust-everywhere:{slug}] Native Rust CI check passed (`{script_rel}`)");
-    }}
+    // Semantics-preserving: always run the original script with the same args/stdio and
+    // propagate its exit code. No native shortcut or cache may ever turn a failure into a pass.
+    let status = Command::new({interp:?})
+        .arg({script_rel:?})
+        .args(&args)
+        .status()
+        .unwrap_or_else(|e| {{
+            eprintln!("[rust-everywhere:{slug}] Failed to launch `{interp}`: {{e}}");
+            process::exit(1);
+        }});
+    process::exit(status.code().unwrap_or(1));
 }}
 "##,
             script_rel = script_rel,
             src_hash = src_hash,
             has_dyn = has_heavy_dynamic_imports,
             slug = slug,
-            native_only = !has_heavy_dynamic_imports,
-            env_checks = env_checks_rust,
-            path_checks = path_checks_rust,
-            conflict_scan = conflict_scan_rust,
+            native_only = false,
             interp = interp,
         );
 
@@ -2029,7 +1902,19 @@ fn resolve_target_runner_sku_for_github(
     is_deploy_ceremony: bool,
 ) -> Option<String> {
     let is_macos = cur_low.starts_with("macos");
-    if matches!(target_runner_mode, "macos-m2pro" | "macos-arm64" | "macos-15-xlarge") {
+    if target_runner_mode == "macos-arm64" {
+        // Intel macOS images (macos-12/13, `-large`, `-intel`) -> standard ARM64 `macos-14`.
+        // `macos-latest`, `macos-14/15/26` and `-xlarge` are already Apple Silicon: left untouched.
+        let is_intel = is_macos
+            && !cur_low.contains("xlarge")
+            && (cur_low.contains("intel")
+                || cur_low.contains("large")
+                || cur_low.starts_with("macos-13")
+                || cur_low.starts_with("macos-12")
+                || cur_low.starts_with("macos-11"));
+        return if is_intel { Some("macos-14".to_string()) } else { None };
+    }
+    if matches!(target_runner_mode, "macos-m2pro" | "macos-15-xlarge") {
         if is_macos && !cur_low.contains("xlarge") {
             return Some("macos-15-xlarge".to_string());
         }
@@ -3693,7 +3578,8 @@ pub fn run_surgical_optimizer_with_opts(
         "depot" => "depot",
         "namespace" => "namespace",
         "runs-on" | "runson" => "runs-on",
-        "macos-m2pro" | "macos-arm64" => "macos-m2pro",
+        "macos-m2pro" => "macos-m2pro",
+        "macos-arm64" => "macos-arm64",
         "ubuntu-arm64" => "ubuntu-arm64",
         "github-arm64" => "github-arm64",
         "arm64" => "arm64",
@@ -4060,6 +3946,7 @@ pub fn run_surgical_optimizer_with_opts(
         missing_timeouts_before: cc_base.jobs_missing_timeout_minutes_count,
         missing_timeouts_after: cc_head.jobs_missing_timeout_minutes_count,
         in_place_shrink_monthly_savings_usd: ((in_place_savings) * 100.0).round() / 100.0,
+        arm64_migration_monthly_savings_usd: crate::engine::arm64_migration_savings_usd(cc_base),
         converted_github_workflow_preview: converted_preview,
         switching_verdict,
     }
@@ -4205,5 +4092,121 @@ jobs:
 
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&jdir);
+    }
+
+    fn t23_fixture(tag: &str, wf: &str, files: &[(&str, &str)]) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("minici_t23_{}_{}", tag, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join(".github/workflows")).unwrap();
+        fs::write(dir.join(".github/workflows/ci.yml"), wf).unwrap();
+        for (p, c) in files {
+            let fp = dir.join(p);
+            fs::create_dir_all(fp.parent().unwrap()).unwrap();
+            fs::write(fp, c).unwrap();
+        }
+        dir
+    }
+
+    const T23_CHECK_PY: &str = "import json, sys\nd = json.load(open('data.json'))\nif 'beta' in d and not d['beta']:\n    print('beta is empty')\n    sys.exit(1)\nprint('contracts ok')\n";
+    const T23_WF: &str = "name: ci\non: [push]\njobs:\n  check:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - uses: actions/checkout@v4\n      - run: python3 scripts/check_contracts.py\n";
+
+    #[test]
+    fn t23_rust_everywhere_helper_never_replaces_check_with_unconditional_pass() {
+        let dir = t23_fixture("re_src", T23_WF, &[("scripts/check_contracts.py", T23_CHECK_PY), ("data.json", "{\"beta\":{}}")]);
+        let _ = run_surgical_optimizer(&dir, "accelerate", "rust-everywhere", true);
+        let main_rs = dir.join(".minici/rust-everywhere");
+        let mut found = false;
+        let mut files = Vec::new();
+        collect_recursive_files(&main_rs, &main_rs, &mut files);
+        for (rel, body) in files {
+            if rel.ends_with("main.rs") {
+                found = true;
+                assert!(!body.contains("Native Rust CI check passed"), "unconditional pass banner present");
+                assert!(body.contains("process::exit(status.code()"), "helper must propagate the script exit code");
+                assert!(!body.contains("fingerprint cache HIT"), "cache must not skip the check");
+            }
+        }
+        if !found {
+            // Converter refused to translate: the original step must be kept.
+            let wf = fs::read_to_string(dir.join(".github/workflows/ci.yml")).unwrap();
+            assert!(wf.contains("python3 scripts/check_contracts.py"));
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn t23_rust_everywhere_helper_parity_with_python_check() {
+        let have = |c: &str| Command::new(c).arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
+        if !have("cargo") || !have("python3") {
+            return;
+        }
+        let dir = t23_fixture("re_par", T23_WF, &[("scripts/check_contracts.py", T23_CHECK_PY), ("data.json", "{\"beta\":{}}")]);
+        let _ = run_surgical_optimizer(&dir, "accelerate", "rust-everywhere", true);
+        let crate_dir = fs::read_dir(dir.join(".minici/rust-everywhere"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.join("Cargo.toml").is_file());
+        let Some(crate_dir) = crate_dir else {
+            let _ = fs::remove_dir_all(&dir);
+            return; // refused to convert: original step kept (covered by the test above)
+        };
+        let tdir = dir.join("target_t23");
+        let b = Command::new("cargo")
+            .args(["build", "--release", "--quiet", "--manifest-path"])
+            .arg(crate_dir.join("Cargo.toml"))
+            .env("CARGO_TARGET_DIR", &tdir)
+            .output()
+            .unwrap();
+        assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
+        let slug = crate_dir.file_name().unwrap().to_string_lossy().to_string();
+        let bin = tdir.join("release").join(&slug);
+        for data in ["{\"beta\":{}}", "{\"beta\":{\"x\":1}}"] {
+            fs::write(dir.join("data.json"), data).unwrap();
+            let py = Command::new("python3").arg("scripts/check_contracts.py").current_dir(&dir).output().unwrap();
+            let rs = Command::new(&bin).current_dir(&dir).output().unwrap();
+            assert_eq!(py.status.code(), rs.status.code(), "exit code differs for {}", data);
+            assert_eq!(py.stdout, rs.stdout, "stdout differs for {}", data);
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn t23_migrate_macos_arm64_rewrites_intel_runners() {
+        let wf = "name: ci\non: [push]\njobs:\n  a:\n    runs-on: macos-13\n    timeout-minutes: 10\n    steps:\n      - uses: actions/checkout@v4\n      - run: make test\n  b:\n    runs-on: macos-latest\n    timeout-minutes: 10\n    steps:\n      - uses: actions/checkout@v4\n      - run: make test\n";
+        let dir = t23_fixture("mac", wf, &[]);
+        let r = run_surgical_optimizer(&dir, "migrate", "macos-arm64", false);
+        assert_eq!(r.edits.len(), 1, "only the Intel runner is rewritten");
+        assert!(r.edits[0].replacement_snippet.contains("macos-14"));
+        // Nothing to migrate: a clear message instead of a silent 0-edit receipt.
+        let wf2 = wf.replace("macos-13", "macos-15");
+        fs::write(dir.join(".github/workflows/ci.yml"), wf2).unwrap();
+        let r2 = run_surgical_optimizer(&dir, "migrate", "macos-arm64", false);
+        assert!(r2.edits.is_empty());
+        assert!(r2.render_table().contains("No edits"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn t23_arm64_savings_identical_in_breakdown_migrate_table_and_json() {
+        let wf = "name: ci\non: [push]\njobs:\n  t:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    strategy:\n      matrix:\n        v: [1, 2, 3]\n    steps:\n      - uses: actions/checkout@v4\n      - run: make test\n  m:\n    runs-on: macos-latest\n    timeout-minutes: 10\n    steps:\n      - uses: actions/checkout@v4\n      - run: make test\n";
+        let dir = t23_fixture("sav", wf, &[]);
+        let mut rep = analyze_path(&dir, None);
+        let canon = crate::engine::arm64_migration_savings_usd(&rep.cost_components);
+        assert!(canon > 0.0);
+        let want = format!("${:.2}/mo", canon);
+        // 1. breakdown recommendation
+        rep.exceeds_5000m_self_hosted_breakeven = true;
+        rep.gross_monthly_compute_cost_usd = 100.0;
+        rep.monthly_blacksmith_cost_usd = 50.0;
+        let rec = crate::renderer::build_contextual_recommendation(&rep);
+        assert!(rec.contains(&format!("ARM64 runners (saves {})", want)), "{}", rec);
+        // 2. migrate receipt table + 3. migrate JSON
+        let mig = run_surgical_optimizer(&dir, "migrate", "github-arm64", false);
+        assert!(mig.render_table().contains(&format!("saves {}", want)));
+        assert_eq!(mig.arm64_migration_monthly_savings_usd, canon);
+        assert!(mig.to_json().contains(&format!("\"arm64_migration_monthly_savings_usd\": {:.2}", canon)));
+        assert!((mig.verified_diff.delta_monthly_compute_usd.abs() - canon).abs() < 0.011);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

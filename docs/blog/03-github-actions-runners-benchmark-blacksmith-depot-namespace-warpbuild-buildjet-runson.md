@@ -134,7 +134,7 @@ Comparing            : `git-ref:main` (Base) -> `./runner-migration-demo` (PR He
 
 ```bash
 # Install MiniCI (zero-dependency Rust CLI)
-curl -fsSL https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/scripts/install.sh | bash
+cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 5c2152f912efcfaf89f82d6cbee3b0dd455a2bba minici
 
 # Audit live OSS repos using Blacksmith, Depot, Namespace & RunsOn:
 minici breakdown --repo supabase/supabase

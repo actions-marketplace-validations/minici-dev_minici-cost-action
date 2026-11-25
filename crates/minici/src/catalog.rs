@@ -1449,7 +1449,7 @@ pub fn resolve_runner_sku(raw_label: &str) -> RunnerSkuSpec {
             apply_live_override(&mut s, raw_label);
             return s;
         }
-        // Only check user-persisted Jev learned aliases (`~/.minici/learned_sku_registry.json`) early
+        // Only check user-persisted classifier learned aliases (`~/.minici/learned_sku_registry.json`) early
         // so custom corporate labels containing `"ubuntu"`/`"windows"`/`"gpu"` win without disturbing
         // static Tier-2 heuristics in `pricing/learned_sku_registry.json`!
         if let Ok(user_raw) = std::fs::read_to_string(learned_sku_user_path()) {

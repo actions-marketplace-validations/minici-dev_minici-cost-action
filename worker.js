@@ -519,7 +519,8 @@ async function fetchLiveGitHubRepoSummary(slug, ghToken, windowDays = 30) {
  */
 async function getRepoReportThreeLayer(slug, windowDays, env, ctx, forceRefresh = false) {
   const clampedDays = Math.max(1, Math.min(365, Number(windowDays) || 30));
-  const l1Url = `https://cache.minici.dev/v1/report/${slug}?days=${clampedDays}`;
+  const cacheBase = (env && env.REPORT_CACHE_BASE_URL) || "https://minici.dev";
+  const l1Url = `${cacheBase}/v1/report/${slug}?days=${clampedDays}`;
   const l1Key = new Request(l1Url, { method: "GET" });
   const kvKey = `report:${slug}:${clampedDays}d`;
   const edgeCache = typeof caches !== "undefined" && caches.default ? caches.default : null;
@@ -633,7 +634,7 @@ async function getRepoReportThreeLayer(slug, windowDays, env, ctx, forceRefresh 
 /**
  * Real Edge `/v1/systemone` Constrained-Choice Evaluator:
  *   1. Checks Layer-2 KV (`jev:step:<sha256>`) & Layer-3 D1 (`step_decisions`) content-addressed cache.
- *   2. Forwards to `env.JEV_UPSTREAM_URL` (Ollaya / TypeSafe `/v1/systemone` or `jev_systemone_server.py`) when configured.
+ *   2. Forwards to `env.JEV_UPSTREAM_URL` (upstream `/v1/systemone` or `jev_systemone_server.py`) when configured.
  *   3. Executes Workers AI (`env.AI`) with cyclic-shift option-order debiasing when bound.
  *   4. Returns calibrated `noul` (`choice: null`) when offline / unbound — zero hardcoded benchmark answers!
  */
@@ -729,7 +730,7 @@ async function evaluateSystemOneEdge(req, env, ctx) {
     }
   }
 
-  // Workers AI (`env.AI`) with AnyJev L0 cyclic-shift option-order debiasing
+  // Workers AI (`env.AI`) with Classifier L0 cyclic-shift option-order debiasing
   const choices = Array.isArray(req.choice) ? req.choice.map(String) : [];
   const promptText = String(req.prompt || JSON.stringify(req.state || {}));
   if (env && env.AI && choices.length > 0) {
@@ -740,7 +741,7 @@ async function evaluateSystemOneEdge(req, env, ctx) {
       const rotated = choices.slice(shift).concat(choices.slice(0, shift));
       if (req.noul) rotated.push("NONE_ABSTAIN");
       const sysPrompt =
-        "You are a TypeSafe SystemOne constrained classifier. Output ONLY the exact matching string from ALLOWED_CHOICES and nothing else.";
+        "You are a SystemOne constrained classifier. Output ONLY the exact matching string from ALLOWED_CHOICES and nothing else.";
       const userMsg = `INPUT:\n${promptText}\n\nALLOWED_CHOICES:\n${rotated
         .map((c, idx) => `${idx + 1}. ${c}`)
         .join("\n")}\n\nRespond with ONLY one exact token from ALLOWED_CHOICES:`;
@@ -784,7 +785,7 @@ async function evaluateSystemOneEdge(req, env, ctx) {
     choice: null,
     score: 0.0,
     noul: true,
-    note: "Bind JEV_UPSTREAM_URL (jev_systemone_server.py / Ollaya) or Cloudflare Workers AI (env.AI) for live neural /v1/systemone inference."
+    note: "Bind JEV_UPSTREAM_URL (jev_systemone_server.py / upstream) or Cloudflare Workers AI (env.AI) for live neural /v1/systemone inference."
   };
 }
 
@@ -1479,6 +1480,14 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    // minici.dev is the one canonical host; www is a 301 alias for it
+    if (url.hostname === "www.minici.dev") {
+      return new Response(null, {
+        status: 301,
+        headers: { location: `https://minici.dev${url.pathname}${url.search}` }
+      });
+    }
+
     if (
       request.method === "OPTIONS" &&
       (url.pathname === "/health" ||
@@ -1511,7 +1520,7 @@ export default {
           skus: 310,
           models: 24,
           mcp_tools: 8,
-          author: "Aamir Raza <raza.aamir01@gmail.com>"
+          author: "MiniCI maintainers"
         }),
         { headers: { "content-type": "application/json; charset=utf-8", ...CORS_HEADERS } }
       );
@@ -1679,10 +1688,11 @@ export default {
 
       if (slug && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(slug)) {
         const edgeCache = typeof caches !== "undefined" && caches.default ? caches.default : null;
+        const cacheBase = (env && env.REPORT_CACHE_BASE_URL) || "https://minici.dev";
         for (const d of [7, 30, 60, 90]) {
           if (edgeCache) {
             await edgeCache
-              .delete(new Request(`https://cache.minici.dev/v1/report/${slug}?days=${d}`))
+              .delete(new Request(`${cacheBase}/v1/report/${slug}?days=${d}`))
               .catch(() => {});
           }
           if (env && env.MINICI_KV) {

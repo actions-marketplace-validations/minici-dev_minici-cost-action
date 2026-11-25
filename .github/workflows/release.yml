@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to package and publish (e.g. v0.9.1)"
+        description: "Release tag to package and publish (e.g. v0.9.2)"
         required: true
-        default: "v0.9.1"
+        default: "v0.9.2"
 
 permissions:
   contents: write
@@ -20,12 +20,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Run Rust Unit & CLI Contract Lock Suite
         run: cargo test --manifest-path crates/minici/Cargo.toml
-      - name: Verify Canonical SKU Catalog 0.00% Drift
+      - name: Verify release version and canonical SKU catalog
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           cargo build --release --manifest-path crates/minici/Cargo.toml
+          test "$(crates/minici/target/release/minici --version)" = "minici ${RELEASE_TAG#v}"
           python3 tools/sync_rust_sku_catalog.py --check --bin crates/minici/target/release/minici
 
   build-matrix:
@@ -37,19 +40,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+          # Linux assets are static musl builds: no glibc floor, so they run on Alpine, Ubuntu 20.04 and AL2023 alike.
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
             artifact: minici-linux-x86_64
             bin_name: minici
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-musl
             artifact: minici-linux-aarch64
             bin_name: minici
-          - os: macos-latest
+          # Both macOS targets build on Intel: arm64 hosted runners are often capacity-cancelled.
+          - os: macos-15-intel
             target: aarch64-apple-darwin
             artifact: minici-macos-aarch64
             bin_name: minici
-          - os: macos-latest
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             artifact: minici-macos-x86_64
             bin_name: minici
@@ -57,8 +62,15 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact: minici-windows-x86_64.exe
             bin_name: minici.exe
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            artifact: minici-windows-arm64.exe
+            bin_name: minici.exe
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install musl Toolchain
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Install Rust Target ${{ matrix.target }}
         run: rustup target add ${{ matrix.target }}
       - name: Build Zero-Dependency Release Binary
@@ -68,7 +80,10 @@ jobs:
         run: |
           mkdir -p dist
           cp "crates/minici/target/${{ matrix.target }}/release/${{ matrix.bin_name }}" "dist/${{ matrix.artifact }}"
-      - uses: actions/upload-artifact@v4
+      - name: Assert Static Linux Binary
+        if: contains(matrix.target, 'musl')
+        run: file "dist/${{ matrix.artifact }}" | grep -Eq "statically linked|static-pie linked"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}
@@ -80,10 +95,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: release-assets
           merge-multiple: true
@@ -96,16 +111,17 @@ jobs:
       - name: Publish GitHub Release & Update Floating v1 Tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           TAG_NAME="${GITHUB_REF_NAME}"
           if [[ "$TAG_NAME" != v* ]]; then
-            TAG_NAME="${{ inputs.tag }}"
+            TAG_NAME="$INPUT_TAG"
           fi
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             gh release upload "$TAG_NAME" release-assets/* --clobber
           else
             gh release create "$TAG_NAME" release-assets/* \
-              --title "MiniCI $TAG_NAME — Dynamic FinOps, 24 Models, 8-Tool MCP, Jev /v1/systemone & 7 CI Platforms" \
+              --title "MiniCI $TAG_NAME — Dynamic FinOps, 24 Models, 8-Tool MCP, classifier /v1/systemone & 7 CI Platforms" \
               --generate-notes
           fi
           git config user.name "github-actions[bot]"

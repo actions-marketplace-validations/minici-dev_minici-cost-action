@@ -5,7 +5,7 @@
   "secondary_source_urls": [
     "https://circleci.com/docs/credits/"
   ],
-  "checked_on": "2026-11-01",
+  "checked_on": "2026-11-24",
   "rules": {
     "credit_usd": 0.0006,
     "credit_pack_25000_usd": 15.0,
@@ -651,5 +651,6 @@
       "effective_usd": 0.0,
       "engine_key": "self_hosted"
     }
-  ]
+  ],
+  "verified_at": "2026-11-24"
 }

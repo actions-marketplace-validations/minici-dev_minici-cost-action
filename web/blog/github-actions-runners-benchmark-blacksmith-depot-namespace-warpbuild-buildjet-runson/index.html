@@ -6,14 +6,14 @@
   <title>Blacksmith vs Depot vs Namespace vs WarpBuild vs GitHub Runners | MiniCI Engineering</title>
   <meta name="description" content="Hardware-matched (vCPU + RAM) GitHub Actions runner pricing benchmark across Blacksmith, Depot, Namespace, WarpBuild, BuildJet &amp; RunsOn on real OSS repos with MiniCI." />
   <meta name="keywords" content="GitHub Actions alternative runners, Blacksmith vs Depot vs Namespace, WarpBuild vs BuildJet pricing, RunsOn GitHub Actions cost, GitHub Larger Runners pricing per minute, reduce GitHub Actions runner cost, MiniCI" />
-  <link rel="canonical" href="https://minici-cost-action.raza-aamir01.workers.dev/blog/github-actions-runners-benchmark-blacksmith-depot-namespace-warpbuild-buildjet-runson/" />
+  <link rel="canonical" href="https://minici.dev/blog/github-actions-runners-benchmark-blacksmith-depot-namespace-warpbuild-buildjet-runson/" />
   <link rel="icon" type="image/svg+xml" href="/minici-icon.svg" />
   <meta property="og:type" content="article" />
   <meta property="og:title" content="Blacksmith vs Depot vs Namespace vs WarpBuild vs GitHub Runners" />
   <meta property="og:description" content="Hardware-matched (vCPU + RAM) GitHub Actions runner pricing benchmark across Blacksmith, Depot, Namespace, WarpBuild, BuildJet &amp; RunsOn on real OSS repos with MiniCI." />
-  <meta property="og:url" content="https://minici-cost-action.raza-aamir01.workers.dev/blog/github-actions-runners-benchmark-blacksmith-depot-namespace-warpbuild-buildjet-runson/" />
+  <meta property="og:url" content="https://minici.dev/blog/github-actions-runners-benchmark-blacksmith-depot-namespace-warpbuild-buildjet-runson/" />
   <meta property="og:image" content="https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/web/social-preview-1280x640.png" />
-  <script type="application/ld+json">{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Blacksmith vs Depot vs Namespace vs WarpBuild vs GitHub Runners", "description": "Hardware-matched (vCPU + RAM) GitHub Actions runner pricing benchmark across Blacksmith, Depot, Namespace, WarpBuild, BuildJet & RunsOn on real OSS repos with MiniCI.", "datePublished": "2026-11-21", "author": {"@type": "Person", "name": "Aamir Raza", "url": "https://github.com/Aamir-raza-1"}, "publisher": {"@type": "Organization", "name": "MiniCI", "url": "https://minici-cost-action.raza-aamir01.workers.dev"}, "url": "https://minici-cost-action.raza-aamir01.workers.dev/blog/github-actions-runners-benchmark-blacksmith-depot-namespace-warpbuild-buildjet-runson/", "keywords": "GitHub Actions alternative runners, Blacksmith vs Depot vs Namespace, WarpBuild vs BuildJet pricing, RunsOn GitHub Actions cost, GitHub Larger Runners pricing per minute, reduce GitHub Actions runner cost, MiniCI"}</script>
+  <script type="application/ld+json">{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Blacksmith vs Depot vs Namespace vs WarpBuild vs GitHub Runners", "description": "Hardware-matched (vCPU + RAM) GitHub Actions runner pricing benchmark across Blacksmith, Depot, Namespace, WarpBuild, BuildJet & RunsOn on real OSS repos with MiniCI.", "datePublished": "2026-11-21", "author": {"@type": "Organization", "name": "MiniCI", "url": "https://github.com/minici-dev"}, "publisher": {"@type": "Organization", "name": "MiniCI", "url": "https://minici.dev"}, "url": "https://minici.dev/blog/github-actions-runners-benchmark-blacksmith-depot-namespace-warpbuild-buildjet-runson/", "keywords": "GitHub Actions alternative runners, Blacksmith vs Depot vs Namespace, WarpBuild vs BuildJet pricing, RunsOn GitHub Actions cost, GitHub Larger Runners pricing per minute, reduce GitHub Actions runner cost, MiniCI"}</script>
   <style>
 :root {
   --bg: #07090e; --card: #0d121b; --card-alt: #121926; --border: #1e293b;
@@ -146,7 +146,7 @@ Comparing            : `git-ref:main` (Base) -&gt; `./runner-migration-demo` (PR
 <hr />
 <h2>Verify on Your Own Repository in <code>30 Seconds</code></h2>
 <pre><code class="lang-bash"># Install MiniCI (zero-dependency Rust CLI)
-curl -fsSL https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/scripts/install.sh | bash
+cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 5c2152f912efcfaf89f82d6cbee3b0dd455a2bba minici
 
 # Audit live OSS repos using Blacksmith, Depot, Namespace &amp; RunsOn:
 minici breakdown --repo supabase/supabase
@@ -179,7 +179,7 @@ minici catalog</code></pre>
 
   </main>
   <footer class="container">
-    <span>Built in pure Rust by <a href="https://github.com/Aamir-raza-1">Aamir Raza</a> • Apache-2.0</span>
+    <span>Built in pure Rust by the <a href="https://github.com/minici-dev">MiniCI maintainers</a> • Apache-2.0</span>
     <span><a href="/">Home</a> • <a href="/blog/">Blog</a> • <a href="https://polar.sh/minici/portal">Customer Portal</a> • <a href="https://github.com/minici-dev/minici-cost-action">GitHub</a></span>
   </footer>
 </body>

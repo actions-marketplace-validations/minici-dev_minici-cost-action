@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -40,12 +40,16 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           BASE_REF_DEFAULT: ${{ github.base_ref }}
         run: |
+          BIN_DIR="$(mktemp -d)"
+          trap 'rm -rf "$BIN_DIR"' EXIT
+          BIN="$BIN_DIR/bin/minici"
           if [ -f "crates/minici/Cargo.toml" ]; then
-            cargo build --release --manifest-path crates/minici/Cargo.toml
-            BIN="$(pwd)/crates/minici/target/release/minici"
+            cargo build --locked --release --manifest-path crates/minici/Cargo.toml
+            mkdir -p "$BIN_DIR/bin"
+            cp crates/minici/target/release/minici "$BIN"
           else
-            curl -fsSL https://raw.githubusercontent.com/minici-dev/minici-cost-action/v1/scripts/install.sh | MINICI_INSTALL_DIR="$(pwd)/.minici-bin" bash
-            BIN="$(pwd)/.minici-bin/minici"
+            cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git \
+              --rev 5c2152f912efcfaf89f82d6cbee3b0dd455a2bba --root "$BIN_DIR" minici
           fi
           if [ "$EVENT_NAME" = "issue_comment" ]; then
             GH_API="${GITHUB_API_URL:-https://api.github.com}"

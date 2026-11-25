@@ -2048,7 +2048,7 @@ fn looks_like_date_or_identifier_col(raw_header: &str, sample_val: &str) -> bool
     false
 }
 
-/// Optional Tier-3 Founder In-Built OSS `Jev` (`POST /v1/systemone`) constrained token-trie `choice`
+/// Optional Tier-3 Founder In-Built OSS `classifier` (`POST /v1/systemone`) constrained token-trie `choice`
 /// for completely non-standard customer spreadsheet headers when `MINICI_INTERNAL_REASONER=llm_plus_jev`
 /// or `MINICI_SYSTEMONE_URL` / `JEV_SYSTEMONE_URL` is explicitly configured.
 fn tier3_jev_systemone_column_choice(raw_header: &str, sample_val: &str) -> Option<&'static str> {

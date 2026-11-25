@@ -744,12 +744,6 @@ fn discover_iac_scanner_bin() -> Option<(PathBuf, bool)> {
         }
         return None;
     }
-    for candidate in ["/opt/homebrew/bin/infracost", "/usr/local/bin/infracost"] {
-        let p = PathBuf::from(candidate);
-        if p.is_file() {
-            return Some((p, false));
-        }
-    }
     if let Ok(path_var) = env::var("PATH") {
         for dir in env::split_paths(&path_var) {
             let p = dir.join("infracost");

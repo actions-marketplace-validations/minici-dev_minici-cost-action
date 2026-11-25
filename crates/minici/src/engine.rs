@@ -183,6 +183,12 @@ impl ExpandedJobCost {
     }
 }
 
+/// Single source of truth for "what does migrating eligible Linux x64 jobs to ARM64 save per month".
+/// Used by `breakdown` (recommendation + actions), the `migrate` receipt and the `migrate` JSON.
+pub fn arm64_migration_savings_usd(cc: &CostComponentsBreakdown) -> f64 {
+    (cc.arm64_migration_monthly_savings_usd.max(0.0) * 100.0).round() / 100.0
+}
+
 #[derive(Debug, Clone)]
 pub struct CostComponentsBreakdown {
     // 1. Build Minutes Cost (published cloud & vendor rate cards)
@@ -839,10 +845,10 @@ impl BreakdownReport {
                 shrink_savings, cc.jobs_missing_timeout_minutes_count
             ));
         }
-        if cc.arm64_migration_monthly_savings_usd >= 1.0 {
+        if arm64_migration_savings_usd(cc) >= 1.0 {
             actions.push(format!(
                 "{{\"mcp_tool\":\"minici_migrate\",\"cli_cmd\":\"minici migrate --path . --to github-arm64\",\"est_monthly_savings_usd\":{:.2}}}",
-                cc.arm64_migration_monthly_savings_usd
+                arm64_migration_savings_usd(cc)
             ));
         }
         if cc.monthly_unfiltered_check_savings_usd >= 5.0 {
@@ -2358,6 +2364,7 @@ fn parse_gitlab_or_other_ci(
     let mut in_circle_jobs_section = false;
     let mut circle_job_indent: Option<usize> = None;
     let mut in_default_section = false;
+    let mut in_bb_definitions = false;
     let total_lines = content.lines().count().max(1);
 
     let flush_job = |cur: &mut Option<ParsedVendorJob>, list: &mut Vec<ParsedVendorJob>| {
@@ -2415,6 +2422,7 @@ fn parse_gitlab_or_other_ci(
             flush_job(&mut current, &mut jobs_list);
             in_default_section = key == "default";
             in_circle_jobs_section = key == "jobs";
+            in_bb_definitions = key == "definitions";
             if is_codebuild && key == "phases" {
                 current = Some(ParsedVendorJob {
                     name: "codebuild-phases".to_string(),
@@ -2531,6 +2539,10 @@ fn parse_gitlab_or_other_ci(
         // Fixes D8: Flush previous step on every `- step:` in Bitbucket Pipelines!
         if trimmed.starts_with("- step:") && !in_circle_jobs_section {
             flush_job(&mut current, &mut jobs_list);
+            // Steps under `definitions:` are reusable templates (often YAML anchors); only `pipelines:` entries run.
+            if in_bb_definitions {
+                continue;
+            }
             let step_idx = jobs_list.len() + 1;
             current = Some(ParsedVendorJob {
                 name: format!("step-{}", step_idx),
@@ -3998,7 +4010,7 @@ fn detect_workflow_hygiene_signals(target: &Path) -> WorkflowHygieneSignals {
                 }
             }
         }
-        // Fallback for monorepos with nested `<subdir>/.github/workflows` (e.g., `Eazy-Ops/Automation` `cron/.github/workflows`)
+        // Fallback for monorepos with nested `<subdir>/.github/workflows`
         if wf_files.is_empty() {
             if let Ok(sub_entries) = fs::read_dir(base_dir) {
                 let mut sub_dirs: Vec<_> = sub_entries
@@ -4975,7 +4987,7 @@ pub fn analyze_path_with_telemetry(
                 }
             }
         }
-        // Fallback for monorepos with nested `<subdir>/.github/workflows` (e.g., `Eazy-Ops/Automation` `cron/.github/workflows`)
+        // Fallback for monorepos with nested `<subdir>/.github/workflows`
         if workflow_count == 0 {
             if let Ok(sub_entries) = fs::read_dir(target) {
                 let mut sub_dirs: Vec<_> = sub_entries
@@ -8049,5 +8061,23 @@ pub fn compute_diff(base: &BreakdownReport, head: &BreakdownReport) -> DiffRepor
         head_free_quota_burn_pct: head.free_tier_quota_burn_pct,
         job_changes: changes,
         head_report: head.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bitbucket_definitions_anchors_are_not_counted_as_steps() {
+        let yml = "definitions:\n  steps:\n    - step: &lint\n        name: Lint\n        script:\n          - npm run lint\n    - step: &test\n        name: Test\n        script:\n          - npm test\npipelines:\n  default:\n    - step: *lint\n    - step: *test\n";
+        let dir = std::env::temp_dir().join(format!("minici-bb-anchors-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bitbucket-pipelines.yml");
+        fs::write(&path, yml).unwrap();
+        let mut jobs = Vec::new();
+        parse_gitlab_or_other_ci(&path, "bitbucket-pipelines.yml", "bitbucket-1x", &mut jobs);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(jobs.len(), 2);
     }
 }

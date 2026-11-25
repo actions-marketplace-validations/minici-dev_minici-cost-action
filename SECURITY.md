@@ -9,7 +9,7 @@
    - Only when fetching workflow YAML remotely via REST API on a **private repository without a local checkout** (`minici breakdown --repo private-org/repo`) is `Contents: Read` needed strictly to list `.github/workflows/*.yml` — `minici` never clones, reads, or transmits application source files.
 2. **Zero External Runtime Crates:** `crates/minici/Cargo.toml` has **`0` external crate dependencies** (`100%` Rust `std` library only), eliminating supply-chain `build.rs` and transitive crate risks.
 3. **Zero Write Permissions Ever Requested for Analysis:** `minici` actively inspects OAuth, Fine-Grained PAT (`X-Accepted-GitHub-Permissions` + `/repos` `permissions.push`), GitLab, CircleCI, and Bitbucket scopes via `minici permissions check` and **prints an explicit Security Advisory warning** if a caller passes an over-privileged `repo`, `workflow`, `write:*`, or `push:true` token.
-4. **Fail-Closed Verification:** Prebuilt binary installers (`action.yml` and `scripts/install.sh`) enforce fail-closed `SHA256SUMS.txt` verification (falling back to local `std`-only `cargo build --release` if checksums are unavailable), MCP mutating tools require explicit `"confirm_write": true`, and Slack webhooks enforce fail-closed HMAC-SHA256 `X-Slack-Signature` validation.
+4. **Fail-Closed Verification:** Prebuilt binary installers (`action.yml` and `scripts/install.sh`) enforce fail-closed `SHA256SUMS.txt` verification (falling back to local `std`-only `cargo build --release` if checksums are unavailable), SHA-pinned and branch or major-version Action refs build from the checked-out Action source. MCP mutating tools require explicit `"confirm_write": true`, and Slack webhooks enforce fail-closed HMAC-SHA256 `X-Slack-Signature` validation.
 
 ---
 
@@ -31,4 +31,4 @@ Run `minici permissions check --repo owner/repo` (or `--path . --offline`) at an
 
 ## 3. Reporting a Vulnerability
 
-Please report security issues privately to **Aamir Raza** at **`raza.aamir01@gmail.com`**. All reports receive an acknowledgment within 24 hours.
+Please report security issues privately through GitHub private vulnerability reporting (Security tab -> "Report a vulnerability") on this repository. All reports receive an acknowledgment within 24 hours.

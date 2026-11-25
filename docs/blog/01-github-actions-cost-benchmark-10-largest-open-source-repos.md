@@ -108,8 +108,8 @@ In **`supabase/supabase`**, compute is already lean (`$284.05/mo`), so `minici` 
 ## Reproduce This Benchmark Locally in `< 1 Second`
 
 ```bash
-# 1. Install MiniCI (Linux & macOS static binary, 0 dependencies)
-curl -fsSL https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/scripts/install.sh | bash
+# 1. Install MiniCI (pinned Rust source, 0 external crates)
+cargo install --locked --git https://github.com/minici-dev/minici-cost-action.git --rev 5c2152f912efcfaf89f82d6cbee3b0dd455a2bba minici
 
 # 2. Audit any public GitHub repository remotely without cloning:
 minici breakdown --repo pydantic/pydantic

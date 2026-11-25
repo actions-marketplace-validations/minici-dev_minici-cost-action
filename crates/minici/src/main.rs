@@ -31,30 +31,30 @@ fn print_help() {
 }
 
 pub fn help_text() -> &'static str {
-    "minici 0.9.1 — MiniCI: Sub-Millisecond CI/CD Cost Breakdown, PR Diff & Quota Receipt Engine\n\
-Author: Aamir Raza <raza.aamir01@gmail.com>\n\n\
+    concat!("minici ", env!("CARGO_PKG_VERSION"), " — MiniCI: CI/CD cost breakdown, PR cost diff & free-tier quota tracking\n\
+Author: MiniCI maintainers\n\n\
 USAGE:\n  \
   minici <COMMAND> [OPTIONS]\n\n\
 COMMANDS:\n  \
-  breakdown    Calculate CI/CD cost, free-tier quota burn %, and developer wait-time breakdown\n  \
-  diff         Compare base vs PR workflows/branches/repos to isolate Pull Request CI cost & time deltas\n  \
-  comment      Render or post sticky Pull Request / Merge Request / Slack CI Cost & @minici bot comment\n  \
-  permissions  Verify least-privilege zero-source-code token security & 108-attribute telemetry coverage\n  \
-  sync         Sync live GitHub Actions telemetry (ETag 304) or billing CSV into .minici/telemetry.lock.json\n  \
-  shrink       Generate or apply surgical workflow cost optimizations with verified shadow DiffReport\n  \
-  accelerate   Swap legacy CI steps to Rust tools (uv/ruff/biome/nextest) + scoped rust-everywhere CI converter\n  \
-  migrate      Evaluate or apply safe runner & 7x7 cross-platform migrations with 5-Layer Switching TCO\n  \
-  ask          Ask any natural-language CI/CD FinOps question (Jev /v1/systemone intent router + live math)\n  \
-  catalog      Inspect, sync, or override the Multi-Vendor & Cloud Compute Pricing SKU Catalog\n  \
-  cloud-price  Resolve AWS EC2, GCP GCE, or Azure VM On-Demand & Spot pricing (--region, --live)\n  \
-  telemetry    Pull live GitLab CI, CircleCI v2, or Bitbucket Pipelines run telemetry into normalized CSV\n  \
-  mcp          Start 8-tool JSON-RPC 2.0 stdio MCP server for Claude, Antigravity, Cursor & VS Code\n  \
-  self-update  Sync live pricing catalog, verify 0 drift, and self-upgrade binary (--install-dir <DIR>)\n  \
-  init-hooks   Install Shift-Left PreToolUse/PostToolUse hooks, Agent MCP (.mcp.json) & GitHub Action\n  \
-  login        Save or verify optional Polar.sh Cloud License Key (Starter $1 / Pro $10 / Team Flex)\n  \
-  share        Upload unlisted HTML/JSON FinOps report to MiniCI Cloud (/r/<id>) [Starter $1+]\n  \
-  cloud-sync   Push anonymized run KPIs to 30d/365d Cloud Trend Ledger & Org Policy Gate [Starter $1+]\n  \
-  launch-pack  Generate automatic PostToolUse 6-Channel Launch & Partner Profile Pack\n\n\
+  breakdown    Calculate CI/CD cost, free-tier quota usage %, and developer wait-time breakdown\n  \
+  diff         Compare a PR's workflows/branches/repos against a base to show the CI cost and time change\n  \
+  comment      Render or post the sticky PR/MR or Slack CI cost comment (and @minici bot replies)\n  \
+  permissions  Check token permissions are read-only and telemetry field coverage; manage consent\n  \
+  sync         Pull GitHub Actions telemetry (ETag-cached) or import a billing CSV into .minici/telemetry.lock.json\n  \
+  shrink       Suggest or apply workflow cost optimizations, verified by a before/after diff report\n  \
+  accelerate   Swap CI steps to Rust tools (uv/ruff/biome/nextest); optionally convert CI scripts to Rust\n  \
+  migrate      Evaluate or apply verified runner/platform migrations, with a cost payback verdict\n  \
+  ask          Ask a CI/CD cost question in plain language (see `minici ask --help` for data flow)\n  \
+  catalog      Inspect, sync, or override the pricing catalog (multi-vendor and cloud VM rates)\n  \
+  cloud-price  Look up AWS EC2, GCP Compute Engine, or Azure VM on-demand and spot prices\n  \
+  telemetry    Pull GitLab CI, CircleCI, or Bitbucket Pipelines run data into a normalized CSV\n  \
+  mcp          Run the 8-tool MCP server over stdio (JSON-RPC 2.0) for AI agents and editors\n  \
+  self-update  Refresh the pricing catalog, check for drift, and install the binary (--install-dir <DIR>)\n  \
+  init-hooks   Scaffold PreToolUse/PostToolUse hooks, .mcp.json, and a GitHub Actions cost workflow\n  \
+  login        Save, verify, or remove an optional Polar.sh license key for paid plans\n  \
+  share        Upload an unlisted FinOps report to MiniCI Cloud and get a /r/<id> link [paid plan]\n  \
+  cloud-sync   Send anonymized run KPIs to MiniCI Cloud trend ledger and org policy gate [paid plan]\n  \
+  launch-pack  Generate launch and partner-profile Markdown for a feature\n\n\
 OPTIONS (breakdown):\n  \
   --path <PATH_OR_URL>       Local repo path OR public GitHub URL (e.g. https://github.com/owner/repo) [default: .]\n  \
   --repo <URL_OR_SLUG>       Alias for --path: pass https://github.com/owner/repo or owner/repo directly\n  \
@@ -65,15 +65,15 @@ OPTIONS (breakdown):\n  \
   --compact                  Emit token-efficient agent JSON digest (<2KB) when --format json\n  \
   --all                      Expand all workflow job rows instead of Top-15 cost drivers\n  \
   --ascii                    Use pure 7-bit ASCII glyphs for non-UTF8 terminals\n  \
-  --report <FILE>            Generate report file (.html, .json, .md, .csv) — auto-detects format from extension\n  \
-  --out-file <FILE>          Write output to file path\n  \
-  --tier <TIER>              Pricing tier mode: auto, free, pro, team, enterprise, or paid [default: auto]\n  \
+  --report <FILE>            Write a report file; format is set by extension (.html, .json, .md, .csv)\n  \
+  --out-file <FILE>          Write output to a file path\n  \
+  --tier <TIER>              Pricing tier: auto, free, pro, team, enterprise, or paid (paid = no free-tier quota) [default: auto]\n  \
   --prs-per-week <NUM>       Pull requests per week [default: 25]\n  \
   --pushes-per-pr <NUM>      Pushes per pull request [default: 4]\n  \
-  --dev-hourly-rate <USD>    Assumed developer hourly rate in USD (pass 0 to disable) [default: 65]\n  \
-  --hook <NAME>              Run as Shift-Left Git pre-push / IDE PreToolUse hook\n  \
-  --benchmark                Run 100-iteration microsecond/millisecond latency benchmark\n  \
-  --quiet, -q                Non-interactive silent mode (suppress progress & terminal banners)\n"
+  --dev-hourly-rate <USD>    Developer hourly rate in USD for wait-time cost (pass 0 to disable) [default: 65]\n  \
+  --hook <NAME>              Run as a Git pre-push or IDE PreToolUse hook handler\n  \
+  --benchmark                Run a 100-iteration latency benchmark\n  \
+  --quiet, -q                Non-interactive silent mode (suppress progress & terminal banners)\n")
 }
 
 fn extract_json_id(raw: &str) -> String {
@@ -186,7 +186,7 @@ pub fn handle_mcp_jsonrpc_line(line: &str, default_path: &Path) -> Option<String
 {{\"name\":\"minici_anomalies\",\"description\":\"Inspect 7d/23d CI spend burn velocity, projected EOM bill, quota exhaustion day, and missing timeout-minutes exposure\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\"}}}}}}}},\
 {{\"name\":\"minici_shrink\",\"description\":\"Generate surgical comment-preserving YAML optimizations (concurrency, timeout-minutes, shallow clone, cache, retention-days, plus optional Rust CI toolchain swapper & scoped rust-everywhere CI converter) verified by shadow DiffReport\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\"}},\"security\":{{\"type\":\"boolean\"}},\"rust_tools\":{{\"type\":\"boolean\"}},\"rust_everywhere\":{{\"type\":\"boolean\"}},\"apply\":{{\"type\":\"boolean\"}},\"confirm_write\":{{\"type\":\"boolean\"}}}}}}}},\
 {{\"name\":\"minici_migrate\",\"description\":\"Evaluate safe runner migration (arm64 / high-speed / spot) or 7x7 cross-platform CI translation with 5-Layer Switching TCO payback verdict\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\"}},\"from\":{{\"type\":\"string\"}},\"target\":{{\"type\":\"string\"}},\"apply\":{{\"type\":\"boolean\"}},\"confirm_write\":{{\"type\":\"boolean\"}}}}}}}},\
-{{\"name\":\"minici_ask\",\"description\":\"Answer any free-form natural-language CI/CD FinOps question by routing intent via Jev /v1/systemone and grounding 100% of dollar figures in the 24-model engine\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"question\":{{\"type\":\"string\"}},\"path\":{{\"type\":\"string\"}},\"compare_to\":{{\"type\":\"string\"}}}},\"required\":[\"question\"]}}}}\
+{{\"name\":\"minici_ask\",\"description\":\"Answer any free-form natural-language CI/CD FinOps question by routing intent via classifier /v1/systemone and grounding 100% of dollar figures in the 24-model engine\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"question\":{{\"type\":\"string\"}},\"path\":{{\"type\":\"string\"}},\"compare_to\":{{\"type\":\"string\"}}}},\"required\":[\"question\"]}}}}\
 ]}}}}",
             id
         )),
@@ -648,9 +648,9 @@ fn resolve_target_to_dir_ext(raw_spec: &str, force_refresh: bool, quiet: bool) -
             }
         }
 
-        // 2. Check if a verified snapshot exists in `/Users/araza/personal/top10-github-repos/` (Instant Offline/Local Fallback!)
-        if let Ok(home) = env::var("HOME") {
-            let top10 = Path::new(&home).join("personal").join("top10-github-repos");
+        // 2. Check the configured directory for offline workflow snapshots.
+        if let Some(top10) = env::var_os("MINICI_SNAPSHOT_DIR").filter(|dir| !dir.is_empty()) {
+            let top10 = PathBuf::from(top10);
             if top10.exists() {
                 let norm = slug.to_lowercase().replace(['.', '_'], "-");
                 if let Ok(entries) = fs::read_dir(&top10) {
@@ -947,11 +947,21 @@ fn minici_credentials_path() -> PathBuf {
     Path::new(&home).join(".minici").join("credentials.json")
 }
 
+/// Single source of truth for the MiniCI API origin. Override with `MINICI_API_URL`
+/// (`MINICI_CLOUD_URL` is still honored for existing setups).
 fn default_cloud_api_url() -> String {
-    env::var("MINICI_CLOUD_URL")
-        .unwrap_or_else(|_| "https://minici-cost-action.raza-aamir01.workers.dev".to_string())
+    env::var("MINICI_API_URL")
+        .or_else(|_| env::var("MINICI_CLOUD_URL"))
+        .unwrap_or_else(|_| "https://minici.dev".to_string())
         .trim_end_matches('/')
         .to_string()
+}
+
+/// Polar checkout link shown in CLI hints. Override with `MINICI_CHECKOUT_URL`.
+fn polar_checkout_url() -> String {
+    env::var("MINICI_CHECKOUT_URL").unwrap_or_else(|_| {
+        "https://buy.polar.sh/polar_cl_SCcWdjeIJvtwoa3JKBo5ouVXBL0yBv40bzuZr36iPMm".to_string()
+    })
 }
 
 fn load_cloud_credentials_from(p: &Path, default_url: &str) -> (Option<String>, String) {
@@ -2193,7 +2203,7 @@ fn print_subcommand_help(sub: &str) {
         ),
         "permissions" => println!(
             "Usage: minici permissions [check|audit|consent] [OPTIONS]\n\n\
-             Verify least-privilege zero-source-code token security, 108-attribute telemetry coverage,\n\
+             Check that tokens are least-privilege and read-only, report telemetry field coverage,\n\
              and manage explicit user consent (`~/.minici/consent.json`) for ambient host credentials.\n\n\
              SUBCOMMANDS:\n\
                check, audit                   Run least-privilege read-only token & coverage audit\n\
@@ -2211,13 +2221,14 @@ fn print_subcommand_help(sub: &str) {
         ),
         "sync" => println!(
             "Usage: minici sync [OPTIONS]\n\n\
-             Sync live GitHub/GitLab/CircleCI/Bitbucket CI telemetry (ETag 304) or billing CSV into .minici/telemetry.lock.json.\n\n\
+             Sync live GitHub/GitLab/CircleCI/Bitbucket CI telemetry (ETag 304) or billing CSV into .minici/telemetry.lock.json.\n\
+             For GitHub, `sync --repo` and `telemetry pull --repo` both write the same lock file. Use `telemetry pull` for CSV output of other vendors.\n\n\
              OPTIONS:\n\
                --path <DIR>                   Repository root for .minici/telemetry.lock.json [default: .]\n\
                --repo <OWNER/REPO>            GitHub repository slug\n\
-               --gitlab <GROUP/PROJECT>       GitLab project path or ID\n\
-               --circleci <ORG/REPO>          CircleCI v2 project slug\n\
-               --bitbucket <WORKSPACE/REPO>   Bitbucket repository slug\n\
+               --gitlab <GROUP/PROJECT>       GitLab project path or ID (live API pull)\n\
+               --circleci <ORG/REPO>          CircleCI v2 project slug (live API pull)\n\
+               --bitbucket <WORKSPACE/REPO>   Bitbucket repository slug (live API pull)\n\
                --billing-csv <FILE>           FOCUS v1.1 or vendor billing CSV/TSV file\n\
                --days, --window-days <NUM>    Observation window in days (1..365) [default: 30]\n\
                --max-runs <NUM>               Maximum workflow runs to sample across pages [default: 300]\n\
@@ -2225,20 +2236,21 @@ fn print_subcommand_help(sub: &str) {
         ),
         "shrink" => println!(
             "Usage: minici shrink [OPTIONS]\n\n\
-             Generate or apply surgical comment-preserving workflow optimizations verified by shadow DiffReport.\n\n\
+             Suggest or apply comment-preserving workflow optimizations, verified by a before/after diff report.\n\n\
              OPTIONS:\n\
                --path, --repo <DIR_OR_FILE>   Repository directory or workflow YAML [default: .]\n\
                --rust-tools                   Swap legacy CI tools (pip/flake8/black/eslint/prettier/cargo test) to Rust (uv/ruff/biome/nextest)\n\
                --rust-everywhere              Also convert standalone bespoke CI scripts (scripts/*.py, tools/*.js, ci/*.sh) into cached Rust binaries\n\
                --security                     Inject least-privilege GITHUB_TOKEN permissions\n\
-               --with-fixer                   Delegate 5-Pillar SHA-pinning pass to minici-yaml-fixer\n\
+               --with-fixer                   Also pin actions to commit SHAs, via the minici-yaml-fixer tool\n\
                --apply, --write               Write verified comment-preserving patches to disk\n\
                --suggest-pr                   Emit GitHub PR committable ```suggestion Markdown blocks\n\
                --format <table|markdown|json> Output format [default: table]"
         ),
         "accelerate" => println!(
             "Usage: minici accelerate [OPTIONS]\n\n\
-             Two-tier Rust CI acceleration: drop-in Rust toolchains (MINICI-RUST-012) + scoped rust-everywhere CI-script converter (MINICI-RUST-EVERYWHERE-013).\n\n\
+             Swap CI steps to Rust toolchains (uv, ruff, biome, nextest) and, with --apply, optionally convert CI scripts to Rust binaries.\n\
+             Rule IDs: MINICI-RUST-012 (toolchains), MINICI-RUST-EVERYWHERE-013 (script converter).\n\n\
              OPTIONS:\n\
                --path, --repo <DIR_OR_FILE>   Repository directory or workflow YAML [default: .]\n\
                --apply, --write               Write verified YAML patches + .minici/rust-everywhere/<tool>/ crates to disk\n\
@@ -2247,10 +2259,10 @@ fn print_subcommand_help(sub: &str) {
         ),
         "migrate" => println!(
             "Usage: minici migrate [OPTIONS]\n\n\
-             Evaluate or apply 6-gate verified runner & platform migrations with 5-Layer Switching TCO verdict.\n\n\
+             Evaluate or apply verified runner and platform migrations, with a cost payback verdict.\n\n\
              OPTIONS:\n\
                --path, --repo <DIR_OR_FILE>   Repository directory or workflow YAML [default: .]\n\
-               --to, --target <TARGET>        github-arm64, ubuntu-slim, self-hosted, aws-spot, gitlab-ci, circleci, etc.\n\
+               --to, --target <TARGET>        github-arm64, ubuntu-slim, self-hosted, aws-spot, gitlab-ci, circleci, or bitbucket\n\
                --apply, --write               Write verified runner migrations to disk\n\
                --suggest-pr                   Emit GitHub PR committable ```suggestion Markdown blocks\n\
                --format <table|markdown|json> Output format [default: table]"
@@ -2276,7 +2288,7 @@ fn print_subcommand_help(sub: &str) {
             "Usage: minici telemetry pull [OPTIONS]\n\n\
              Pull live GitHub, GitLab CI, CircleCI v2, or Bitbucket Pipelines run telemetry.\n\n\
              OPTIONS:\n\
-               --repo <OWNER/REPO>            Sync GitHub Actions telemetry into .minici/telemetry.lock.json\n\
+               --repo <OWNER/REPO>            GitHub only: writes .minici/telemetry.lock.json (same as `minici sync --repo`)\n\
                --gitlab <GROUP/PROJECT>       Pull GitLab CI job telemetry into normalized CSV\n\
                --circleci <ORG/REPO>          Pull CircleCI v2 workflow insights into normalized CSV\n\
                --bitbucket <WORKSPACE/REPO>   Pull Bitbucket Pipelines step telemetry into normalized CSV\n\
@@ -2286,11 +2298,15 @@ fn print_subcommand_help(sub: &str) {
         ),
         "mcp" => println!(
             "Usage: minici mcp [--path <DIR>]\n\n\
-             Start 8-tool JSON-RPC 2.0 stdio MCP server (supports both NDJSON & Content-Length framing)."
+             Run the 8-tool JSON-RPC 2.0 MCP server over stdio (NDJSON and Content-Length framing both accepted).\n\n\
+             OPTIONS:\n\
+               --path <DIR>                   Repository directory the tools operate on [default: current directory]"
         ),
         "ask" => println!(
             "Usage: minici ask \"<QUESTION>\" [OPTIONS]\n\n\
-             Answer any natural-language CI/CD FinOps question via Jev /v1/systemone intent routing + live 24-model math.\n\n\
+             Answer a CI/CD cost question in plain language, using live cost math.\n\
+             Data flow: the question text is sent to the Jev routing endpoint only when MINICI_JEV_URL (or JEV_SYSTEMONE_URL)\n\
+             is set; otherwise a local deterministic router is used. Set neither to keep questions on this machine.\n\n\
              OPTIONS:\n\
                --path, --repo <PATH_OR_URL>   Repository directory or GitHub slug [default: .]\n\
                --compare-to <REF_OR_PATH>     Optional base Git ref for PR diff questions\n\
@@ -2298,7 +2314,10 @@ fn print_subcommand_help(sub: &str) {
         ),
         "self-update" | "upgrade" => println!(
             "Usage: minici self-update [--install-dir <DIR>] [--quiet]\n\n\
-             Sync pricing overrides, verify 0.00% catalog drift, and install binary into target directory."
+             Refresh pricing overrides, check the catalog for drift against upstream (0.00% means none), and install the binary.\n\n\
+             OPTIONS:\n\
+               --install-dir <DIR>            Directory to install the binary into\n\
+               --quiet, -q                    Suppress progress output"
         ),
         "init-hooks" => println!(
             "Usage: minici init-hooks [--path <DIR>]\n\n\
@@ -2306,7 +2325,43 @@ fn print_subcommand_help(sub: &str) {
         ),
         "launch-pack" => println!(
             "Usage: minici launch-pack [--feature <NAME>] [--out-file <FILE>]\n\n\
-             Generate 6-Channel Launch & Partner Profile Pack Markdown."
+             Generate launch and partner-profile Markdown for a feature.\n\n\
+             OPTIONS:\n\
+               --feature <NAME>               Feature name to write the pack about\n\
+               --out-file <FILE>              Write Markdown to a file instead of stdout"
+        ),
+        "login" => println!(
+            "Usage: minici login [KEY] [OPTIONS]\n\n\
+             Save, verify, or remove an optional Polar.sh Cloud License Key for paid plans.\n\
+             Plans (as of 0.9.2, may change): Starter $1, Pro $10, Team Flex.\n\n\
+             OPTIONS:\n\
+               [KEY], --key, --token <KEY>    License key to save (a key on the command line may end up in shell history)\n\
+               --status                       Show the saved license status\n\
+               --logout                       Remove the saved license key\n\
+               --api-url, --url <URL>         Cloud API base URL override\n\
+               --quiet, -q                    Suppress banners"
+        ),
+        "share" => println!(
+            "Usage: minici share [OPTIONS]\n\n\
+             Upload an unlisted HTML/JSON FinOps report to MiniCI Cloud and print its /r/<id> link. Requires a paid plan (see `minici login --help`).\n\n\
+             OPTIONS:\n\
+               --path, --repo <DIR>           Repository to report on [default: .]\n\
+               --key <KEY>                    License key override for this run\n\
+               --api-url, --url <URL>         Cloud API base URL override\n\
+               --format <FMT>                 Output format for the result [default: text]\n\
+               --quiet, -q                    Suppress banners"
+        ),
+        "cloud-sync" => println!(
+            "Usage: minici cloud-sync [OPTIONS]\n\n\
+             Push anonymized run KPIs to the 30d/365d Cloud Trend Ledger. Requires a paid plan (see `minici login --help`).\n\n\
+             OPTIONS:\n\
+               --path, --repo <DIR>           Repository to sample [default: .]\n\
+               --compare-to <REF_OR_PATH>     Base Git ref or directory for PR delta KPIs\n\
+               --enforce-policy               Exit 1 if the PR's monthly cost delta exceeds the org policy threshold\n\
+               --key <KEY>                    License key override for this run\n\
+               --api-url, --url <URL>         Cloud API base URL override\n\
+               --format <FMT>                 Output format for the result [default: text]\n\
+               --quiet, -q                    Suppress banners"
         ),
         _ => print_help(),
     }
@@ -2384,7 +2439,7 @@ fn main() {
         return;
     }
     if args[0] == "--version" || args[0] == "-V" || args[0] == "version" {
-        println!("minici 0.9.1");
+        println!("minici {}", env!("CARGO_PKG_VERSION"));
         return;
     }
 
@@ -4219,10 +4274,11 @@ fn main() {
                 api_url = saved_u;
             }
             let Some(k) = active_key else {
+                let checkout_url = polar_checkout_url();
                 println!(
                     "MiniCI Local CLI, MCP & GitHub Action are 100% Free ($0) with no login required.\n\
                      To enable optional Cloud Sync (`minici share`, 30d/365d trend badges, Friday Slack digests):\n\
-                     1. Get a $1 Starter, $10 Pro, or Team Flex key at https://buy.polar.sh/polar_cl_SCcWdjeIJvtwoa3JKBo5ouVXBL0yBv40bzuZr36iPMm\n\
+                     1. Get a $1 Starter, $10 Pro, or Team Flex key at {checkout_url}\n\
                      2. Run: minici login <MINICI_KEY>"
                 );
                 return;
@@ -4300,10 +4356,11 @@ fn main() {
             let (saved_k, saved_u) = load_saved_cloud_credentials();
             let api_url = api_url_override.unwrap_or(saved_u);
             let Some(cloud_key) = key_override.or(saved_k) else {
+                let checkout_url = polar_checkout_url();
                 eprintln!(
                     "ℹ️ `minici share` uploads an unlisted cloud permalink (Starter $1/mo+).\n\
                      For $0 offline sharing, run: `minici breakdown --path {} --report report.html`\n\
-                     Or connect a key via: `minici login <MINICI_KEY>` (https://buy.polar.sh/polar_cl_SCcWdjeIJvtwoa3JKBo5ouVXBL0yBv40bzuZr36iPMm)",
+                     Or connect a key via: `minici login <MINICI_KEY>` ({checkout_url})",
                     path.display()
                 );
                 return;
@@ -5377,8 +5434,8 @@ jobs:
         );
         assert_eq!(team_rep.free_tier_included_mins, 3000.0);
         // Bug #6: Larger runner `ubuntu-4-core` (5m) MUST NOT inflate `os_weighted_free_tier_mins_per_run`!
-        // Standard `macos-latest` 10m * 10x = 100.0 pool mins/run (NOT 105.0!).
-        assert_eq!(team_rep.cost_components.os_weighted_free_tier_mins_per_run, 100.0);
+        // Standard `macos-latest` 10m * 10.33x ($0.062/$0.006, official GitHub rates) = 103.3 pool mins/run (NOT 108.3!).
+        assert_eq!(team_rep.cost_components.os_weighted_free_tier_mins_per_run, 103.3);
         // Bug #5: Larger runner `ubuntu-4-core` is metered from second 1 even though 4,300 pool mins > 3,000
         let ent_rep = analyze_path(
             &dir,
@@ -5742,13 +5799,13 @@ jobs:
     }
 
     #[test]
-    fn test_receipt_maxim_applicability_and_first_party_branding_gate() {
-        let dir = std::env::temp_dir().join("minici_receipt_maxim_gate");
+    fn test_receipt_applicability_and_first_party_branding_gate() {
+        let dir = std::env::temp_dir().join("minici_receipt_applicability_gate");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join(".github/workflows")).unwrap();
         fs::write(
             dir.join(".github/workflows/ci.yml"),
-            "name: Maxim\non: pull_request\njobs:\n  heavy:\n    runs-on: blacksmith-4vcpu-ubuntu-2404\n    est-minutes: 6.0\n    strategy:\n      matrix:\n        shard: [1, 2, 3, 4]\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/upload-artifact@v4\n        with:\n          retention-days: 1\n  light:\n    runs-on: ubuntu-latest\n    est-minutes: 1.0\n    steps:\n      - run: echo ok\n",
+            "name: CI fixture\non: pull_request\njobs:\n  heavy:\n    runs-on: blacksmith-4vcpu-ubuntu-2404\n    est-minutes: 6.0\n    strategy:\n      matrix:\n        shard: [1, 2, 3, 4]\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/upload-artifact@v4\n        with:\n          retention-days: 1\n  light:\n    runs-on: ubuntu-latest\n    est-minutes: 1.0\n    steps:\n      - run: echo ok\n",
         )
         .unwrap();
         let rep = analyze_path(&dir, None);
@@ -6173,7 +6230,7 @@ jobs:
         assert!(gha_prev.contains("  lint:\n"));
         assert!(gha_prev.contains("  ios_test:\n    runs-on: macos-15-xlarge"));
 
-        // 4. H2 Receipt: Persisted Jev learned SKU (`~/.minici/learned_sku_registry.json`) wins even when
+        // 4. H2 Receipt: Persisted classifier learned SKU (`~/.minici/learned_sku_registry.json`) wins even when
         //    the custom label contains `"ubuntu"` (`acme-ubuntu-enterprise-pool` -> `ubuntu-16-core` $0.042/m)!
         let user_learned_path = catalog::learned_sku_user_path();
         let prev_user_learned = fs::read_to_string(&user_learned_path).ok();
@@ -6191,8 +6248,8 @@ jobs:
     }
 
     #[test]
-    fn test_pydantic_matrix_runs_on_and_maxim_blacksmith_preserve() {
-        let dir = std::env::temp_dir().join("minici_pydantic_maxim_guard");
+    fn test_pydantic_matrix_runs_on_and_blacksmith_preserve() {
+        let dir = std::env::temp_dir().join("minici_pydantic_blacksmith_guard");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join(".github/workflows")).unwrap();
         let wf = r#"name: Matrix & Blacksmith Guard
@@ -6389,7 +6446,7 @@ jobs:
     #[test]
     fn test_v090_proxy_headers_csv_merge_live_weighting_and_4ide_hooks() {
         // 1. Proxy CONNECT + 301 Redirect final HTTP header parser (Bugs #1, #2, #6)
-        let proxied_404 = "HTTP/1.1 200 Connection established\r\n\r\nHTTP/2 301 \r\nlocation: https://api.github.com/organizations/Eazy-Ops/settings/billing/usage\r\n\r\nHTTP/2 404 \r\netag: \"abc123\"\r\nx-ratelimit-remaining: 4988\r\n\r\n{\"message\":\"Not Found\"}";
+        let proxied_404 = "HTTP/1.1 200 Connection established\r\n\r\nHTTP/2 301 \r\nlocation: https://api.github.com/organizations/example-org/settings/billing/usage\r\n\r\nHTTP/2 404 \r\netag: \"abc123\"\r\nx-ratelimit-remaining: 4988\r\n\r\n{\"message\":\"Not Found\"}";
         let (code, hdrs, body) = permissions::parse_final_curl_http_response(proxied_404);
         assert_eq!(code, 404);
         assert!(hdrs.contains("x-ratelimit-remaining: 4988"));
@@ -6829,7 +6886,8 @@ jobs:
             .expect("run generated rust-everywhere binary");
         assert!(run_out.status.success());
         let stdout_s = String::from_utf8_lossy(&run_out.stdout);
-        assert!(stdout_s.contains("Native Rust CI check passed"));
+        // The helper delegates to the original script; it must never print an unconditional pass banner.
+        assert!(!stdout_s.contains("Native Rust CI check passed"));
 
         // 4. Strict YAML 1.2 AST check (`Psych.parse_file` via ruby if installed)
         if let Ok(rb) = Command::new("ruby")
@@ -6848,7 +6906,7 @@ jobs:
             );
         }
 
-        // 5. Verify external `RUST_EVERYWHERE_BIN` CLI delegation path (`external-rust-everywhere-cli`)!
+        // 5. An external `RUST_EVERYWHERE_BIN` converter's output cannot be parity-verified, so it must NOT be used.
         let ext_dir = std::env::temp_dir().join("minici_v091_ext_re_bin_test");
         let _ = fs::remove_dir_all(&ext_dir);
         fs::create_dir_all(ext_dir.join(".github/workflows")).unwrap();
@@ -6881,10 +6939,12 @@ jobs:
             ext_receipt
                 .edits
                 .iter()
-                .any(|e| e.description.contains("external-rust-everywhere-cli")),
-            "Expected external-rust-everywhere-cli delegation, got: {:?}",
+                .all(|e| !e.description.contains("external-rust-everywhere-cli")),
+            "external converter output must not replace a CI step, got: {:?}",
             ext_receipt.edits
         );
+        let ext_main = fs::read_to_string(ext_dir.join(".minici/rust-everywhere/re_custom_gate/src/main.rs")).unwrap_or_default();
+        assert!(!ext_main.contains("external rust-everywhere ok"));
         let _ = fs::remove_dir_all(&ext_dir);
 
         // 6. Verify `codebuild-github-runner` 1-line `runs-on:` migration preserves GitHub Actions YAML!

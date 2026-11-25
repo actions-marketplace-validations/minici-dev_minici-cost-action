@@ -6,7 +6,7 @@
     "https://learn.microsoft.com/en-us/azure/devops/managed-devops-pools/pricing",
     "https://prices.azure.com/api/retail/prices?$filter=serviceName eq 'Azure DevOps'"
   ],
-  "checked_on": "2026-11-11",
+  "checked_on": "2026-11-24",
   "rules": {
     "infracost_delegated": true,
     "infracost_service": "Virtual Machines",
@@ -273,5 +273,6 @@
       "checked_on": "2026-11-11",
       "status": "official"
     }
-  ]
+  ],
+  "verified_at": "2026-11-24"
 }

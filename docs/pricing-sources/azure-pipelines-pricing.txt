@@ -1,0 +1,610 @@
+SOURCE: https://azure.microsoft.com/en-us/pricing/details/devops/azure-devops-services/
+FETCHED: 2026-11-24 (curl, text extracted from HTML)
+---
+
+ Azure DevOps Services Pricing | Microsoft Azure
+This browser is no longer supported.
+Upgrade to Microsoft Edge to take advantage of the latest features, security updates, and technical support.
+ Download Microsoft Edge
+ More information
+ Skip to main content
+ Azure 
+ Get to know Azure
+ Microsoft as Customer Zero
+ View all products (200+)
+ Microsoft Foundry
+ Azure Copilot
+ GitHub Copilot
+ Azure Kubernetes Service (AKS)
+ Azure Cosmos DB
+ Azure Database for PostgreSQL
+ Azure Arc
+ Microsoft Fabric
+ Linux virtual machines in Azure
+ Foundry Models
+ Foundry Agent Service
+ Foundry IQ
+ Foundry Tools
+ Foundry Control Plane
+ Observability in Foundry Control Plane
+ Azure OpenAI in Foundry Models
+ Azure Speech in Foundry Tools
+ Azure Machine Learning
+ View all databases
+ Azure Cosmos DB
+ Azure DocumentDB
+ Azure SQL
+ Azure Database for PostgreSQL
+ Azure Managed Redis
+ Microsoft Fabric
+ Azure Databricks
+ Linux virtual machines in Azure
+ Windows Server on Azure
+ Azure Functions
+ Azure Virtual Machine Scale Sets
+ Azure API Management
+ Azure Container Apps
+ Azure Kubernetes Service (AKS)
+ Azure Kubernetes Fleet Manager
+ Azure Container Registry
+ Azure Red Hat OpenShift
+ Azure Container Instances
+ Azure Container Storage
+ Azure Arc
+ Azure Local
+ Microsoft Defender for Cloud
+ Azure Monitor
+ Microsoft Sentinel
+ Azure Catalyst
+ View all solutions (40+)
+ Cloud solutions for small and medium businesses
+ Cloud migration and modernization center
+ Data analytics for AI
+ Azure Databases
+ AI apps and agents
+ Microsoft Marketplace
+ Microsoft Sovereign Cloud
+ AI apps and agents
+ Responsible AI with Azure
+ AI Infrastructure
+ Data analytics for AI
+ Machine learning operations (MLOps)
+ Low-code application development on Azure
+ Integration Services
+ Serverless computing
+ DevOps
+ Migration and modernization center
+ .NET apps migration
+ Databases on Azure
+ Linux on Azure
+ Oracle on Azure
+ SAP on the Microsoft Cloud
+ Adaptive cloud
+ High-performance computing (HPC)
+ Infrastructure as a service (IaaS)
+ Resiliency
+ Azure Essentials
+ Frontier Accelerate for Azure
+ FinOps on Azure
+ Microsoft Marketplace
+ Azure pricing overview
+ Create an Azure account
+ Free Azure services
+ Flexible purchase options
+ Pricing calculator
+ FinOps on Azure
+ Maximize ROI from AI
+ Azure savings plans
+ Azure reservations
+ Azure Hybrid Benefit
+ Virtual Machines
+ Azure SQL
+ Microsoft Foundry
+ Microsoft Fabric
+ Azure Kubernetes Service (AKS)
+ Microsoft Defender for Cloud
+ View more
+ Software Development Companies
+ Microsoft Marketplace
+ Find a partner
+ Resources for Azure partners
+ Get started with Azure
+ Customer stories
+ Analyst reports, white papers, and e-books
+ Videos
+ Learn more about cloud computing
+ Documentation
+ Explore Azure portal
+ Developer resources
+ Quickstart templates
+ Resources for startups
+ Developer community
+ Students
+ Azure for partners
+ Blog
+ Events and Webinars
+ Learn
+ Support
+ Contact Sales
+ Get started with Azure
+ Sign in
+Pricing for Azure DevOps
+ Azure DevOps Services
+ Azure DevOps Server
+Prices are estimates only and are not intended as actual price quotes. Actual pricing may vary depending on the type of agreement entered with Microsoft, date of purchase, and the currency exchange rate. Prices are calculated based on US dollars and converted using London closing spot rates that are captured in the two business days prior to the last business day of the previous month end. If the two business days prior to the end of the month fall on a bank holiday in major markets, the rate setting day is generally the day immediately preceding the two business days. This rate applies to all transactions during the upcoming month. Sign in to the Azure pricing calculator to see pricing based on your current program/offer with Microsoft. Contact an Azure sales specialist for more information on pricing or to request a price quote. See frequently asked questions about Azure pricing.
+ Region:
+ Central US
+ East US
+ East US 2
+ North Central US
+ South Central US
+ West Central US
+ West US
+ West US 2
+ West US 3
+ UK South
+ UK West
+ UAE Central
+ UAE North
+ Taiwan North
+ Switzerland North
+ Switzerland West
+ Sweden Central
+ Sweden South
+ Spain Central
+ Qatar Central
+ Poland Central
+ Norway East
+ Norway West
+ New Zealand North
+ Mexico Central
+ Malaysia West
+ Korea Central
+ Korea South
+ Japan East
+ Japan West
+ Italy North
+ Israel Central
+ Indonesia Central
+ Central India
+ India South Central
+ South India
+ West India
+ Germany North
+ Germany West Central
+ France Central
+ France South
+ North Europe
+ West Europe
+ Denmark East
+ Chile Central
+ Canada Central
+ Canada East
+ Brazil South
+ Brazil Southeast
+ Belgium Central
+ US Gov Arizona
+ US Gov Texas
+ US Gov Virginia
+ Austria East
+ Australia Central
+ Australia Central 2
+ Australia East
+ Australia Southeast
+ East Asia
+ Southeast Asia
+ South Africa North
+ South Africa West
+ Currency:
+ United States – Dollar ($) USD
+ Australia – Dollar ($) AUD
+ Brazil – Real (R$) BRL
+ Canada – Dollar ($) CAD
+ Denmark – Krone (kr) DKK
+ Euro Zone – Euro (€) EUR
+ India – Rupee (₹) INR
+ Japan – Yen (¥) JPY
+ Korea – Won (₩) KRW
+ New Zealand – Dollar ($) NZD
+ Norway – Krone (kr) NOK
+ Russia – Ruble (руб) RUB
+ Sweden – Krona (kr) SEK
+ Switzerland – Franc (chf) CHF
+ Taiwan – Dollar (NT$) TWD
+ United Kingdom – Pound (£) GBP
+US government entities are eligible to purchase Azure Government services from a licensing solution provider with no upfront financial commitment, or directly through a pay-as-you-go online subscription.
+Learn more
+Important—The price in R$ is merely a reference; this is an international transaction and the final price is subject to exchange rates and the inclusion of IOF taxes. An eNF will not be issued.
+US government entities are eligible to purchase Azure Government services from a licensing solution provider with no upfront financial commitment, or directly through a pay-as-you-go online subscription.
+Learn more
+Important—The price in R$ is merely a reference; this is an international transaction and the final price is subject to exchange rates and the inclusion of IOF taxes. An eNF will not be issued.
+ Get started with Azure
+ Learn more about setting up Azure DevOps in Azure
+Individual services
+GitHub Copilot Code Review
+ GitHub Copilot code review billed via GitHub AI Credits for Azure DevOps ($-/credit)
+ Learn more
+Azure Pipelines
+1 Free Microsoft-hosted CI/CD
+1 Free Self-Hosted CI/CD
+1 Microsoft-hosted job with 1,800 minutes per month for CI/CD and 1 self-hosted job with unlimited minutes per month
+ $40 per extra Microsoft-hosted CI/CD parallel job and $15 per extra self-hosted CI/CD parallel job with unlimited minutes
+GitHub-hosted agents:
+-Mac OS Standard – $-/min
+-Mac OS XL – $-/min
+-Linux 8-core - $-/min
+-Linux 16-core - $-/min
+-Windows 8-core - $-/min
+-Windows 16-core - $-/min
+-Per-minute billing, no parallel job required
+Microsoft-hosted
+1
+1 free parallel job with 1,800 minutes
+$40 per extra parallel job with unlimited minutes
+/mo
+Self-hosted
+0
+1 free parallel job with unlimited minutes
+$15 per extra parallel job with unlimited minutes
+/mo
+Azure Artifacts
+2 GiB free,
+then starting at $2 per GiB
+Industry-leading NuGet Server
+Support for Maven, npm, and Python packages
+Upstream sources to help protect open-source dependancies
+Integrated with Azure Pipelines
+Sophisticated access controls
+GitHub Advanced Security for Azure DevOps
+Code Security: $30 per committer per month
+Code scanning
+Dependency scanning
+ Activate now
+Secret Protection: $19 per committer per month
+Secret scanning with push protection
+ Activate now
+ Copilot Autofix provides AI-powered fix suggestions via Code Security with additional charges billed via GitHub AI Credits for Azure DevOps ($-/credit)
+ Learn more
+Microsoft-hosted
+0
+1,800 minutes free with 1 free parallel job
+$40 per parallel job with unlimited minutes
+/mo
+First 2 GiB free
+2
+$0/extra gigabyte
+2
+10
+100
+1000
+1.79769313486232E+308
+$2/extra gigabyte
+$1/extra gigabyte
+$0.5/extra gigabyte
+$0.25/extra gigabyte
+/mo
+Code Security committers
+0
+$30/committer/month
+/mo
+Self-hosted
+1
+1 free parallel job with unlimited minutes
+$15 per extra parallel job with unlimited minutes
+/mo
+Rate card
+0 - 2 GiB = Free
+2 - 10 GiB = $2 per GiB
+10 - 100 GiB = $1 per GiB
+100 - 1,000 GiB = $0.5 per GiB
+1,000+ GiB = $0.25 per GiB
+Secret Protection committers
+0
+$19/committer/month
+/mo
+User licenses
+Basic Plan
+First 5 users free, 
+ then $6 per user per month
+Azure Pipelines: Includes the free offer from INDIVIDUAL SERVICES
+Azure Boards: Work item tracking and Kanban boards
+Azure Repos: Unlimited private Git repos
+Azure Artifacts: 2 GiB free per organization
+First 5 users free
+5
+$6/user/month
+/mo
+Basic + Test Plans
+$52 per user
+per month
+ 30 day free trial
+Includes all Basic plan features
+Test planning, tracking & execution
+Browser-based tests with annotation
+Rich-client test execution
+User acceptance testing
+Centralized reporting
+First 5 users free. For additional users, use slider
+0
+Additional users are charged $6/user/month
+/mo
+$52 per user per month
+0
+$52/user/month
+/mo
+ Learn more about Azure DevOps services
+Azure DevOps is included with Visual Studio Subscriptions
+Visual Studio subscribers get free access to Azure DevOps.
+Subscribers get access to any number of organizations and don't count against your 5 free users.
+ Learn more about Visual Studio Subscriptions
+Azure DevOps Basic is included in GitHub Enterprise
+GitHub Enterprise includes access to Azure DevOps.
+GitHub Enterprise Cloud customers who manage users with Entra ID can access Azure DevOps without additional cost.
+ Learn more about GitHub Enterprise
+Compare features
+ | Product and Features
+ | Stakeholders (Free)
+ | Basic
+ | Basic + Test plans
+ | 
+Azure Boards
+ | Create and edit work items, including bugs, requirements, and tasks
+ | 
+ Available
+ | 
+ Available
+ | 
+ Available
+ | Search and query work items
+ | 
+ Available
+ | 
+ Available
+ | 
+ Available
+ | View backlog and boards
+ | 
+ Available
+ | 
+ Available
+ | 
+ Available
+ | Set alerts and get notified about changing work items
+ | 
+ Available
+ | 
+ Available
+ | 
+ Available
+ | Provide feedback
+ | 
+ Available
+ | 
+ Available
+ | 
+ Available
+ | Request feedback
+ | 
+ Not available
+ | 
+ Available
+ | 
+ Available
+ | Agile tools (Kanban boards, backlogs, sprint planning, portfolio management)
+ | 
+ Not available
+ | 
+ Available
+ | 
+ Available
+ | Create new work item tags
+ | 
+ Not available
+ | 
+ Available
+ | 
+ Available
+ | Delivery plans
+ | 
+ Not available
+ | 
+ Available
+ | 
+ Available
+ | 
+Azure Repos
+ | Copilot Code Review
+ | 
+ Not available
+ | 
+ Available
+ | 
+ Available
+ | Unlimited Git repositories
+ | 
+ Not available
+ | 
+ Available
+ | 
+ Available
+ | Connect to your code using Xcode, Eclipse, InteliJ, Android Studio, Visual Studio, Visual Studio Code, and more
+ | 
+ Not available
+ | 
+ Available
+ | 
+ Available
+ | Centralized version control with Team Foundation Version Control, including Code Review
+ | 
+ Not available
+ | 
+ Available
+ | 
+ Available
+ | Powerful semantic code search
+ | 
+ Not available
+ | 
+ Available
+ | 
+ Available
+ | 
+Azure Pipelines
+ | Continuous integration and deployment
+ | 
+ Available
+ | 
+ Available
+ | 
+ Available
+ | Approve releases
+ | 
+ Available
+ | 
+ Available
+ | 
+ Available
+ | 
+Azure Artifacts
+ | Store 2 GiB free in artifacts
+ | 
+ Available
+ | 
+ Available
+ | 
+ Available
+ | 
+Azure Test Plans
+ | Exploratory testing
+ | 
+ Available
+ | 
+ Available
+ | 
+ Available
+ | Create and manage Test Plans
+ | 
+ Not available
+ | 
+ Not available
+ | 
+ Available
+ | Web-based test execution from Test Runner
+ | 
+ Not available
+ | 
+ Available
+ | 
+ Available
+ | Add and run tests from the Kanban board
+ | 
+ Not available
+ | 
+ Available
+ | 
+ Available
+ | 
+Other features
+ | View charts, widgets, dashboards, and wikis
+ | 
+ Available
+ | 
+ Available
+ | 
+ Available
+ | Create charts, configure widgets, set up dashboards, and write wikis
+ | 
+ Not available
+ | 
+ Available
+ | 
+ Available
+Extensions Marketplace
+Timetracker
+Docker Integration
+Slack Integration
+Sentry
+GitHub Integration
+Access 1,000+ extensions or create your own.
+ View all extensions
+Support & SLA
+We guarantee at least 99.9% availability of Azure DevOps Services for paid Azure DevOps Services users, including users with paid User-Based Extensions to Azure DevOps Services, to access the associated Azure DevOps Services organization. 
+We guarantee at least 99.9% availability to execute load testing operations using the paid Azure Test Plans Load Testing Service.
+We guarantee at least 99.9% availability to execute build and deployment operations using the paid Azure Pipelines.
+Availability is calculated over a monthly billing cycle.
+Frequently asked questions
+ Do I need a credit card to start using Azure DevOps?
+No, a credit card isn’t necessary to get started. When you’re ready to use more services or add more users, we’ll set up your credit card as part of the purchase experience.
+ In order to use Azure Pipelines, do I need to use all Azure DevOps products?
+No. While our services are designed to work together, you may use any Azure DevOps service individually.
+ Where can I find more information about other Azure services?
+For more information about other Azure services check out the Azure Services page.
+ Can I access the other services of Azure DevOps if I already signed up for Azure Pipelines or Azure Artifacts?
+Yes. When you create an account for Azure Pipelines or Azure Artifacts, you’re automatically assigned a Basic license for Azure DevOps and you may access the other Azure DevOps services for your organization.
+ Can I invite other people to my organization if I signed up for Azure Pipelines or Azure Artifacts?
+Yes, you may add unlimited users to your organizations, and they’ll get access to Azure Pipelines or Azure Artifacts at no extra charge. If you decide later to enable other Azure DevOps services, such as Azure Repos or Azure Boards, the first five users in the organization get a Basic license for free (with full access to Azure Repos and Azure Boards). Subsequent users are assigned to the Stakeholder tier by default; buy Basic licenses to give those users access to Azure Repos and Azure Boards. Access to Azure Pipelines and Azure Artifacts is available to all users, including Stakeholders.
+ How do the free minutes for CI/CD work?
+Each Azure DevOps organization gets one parallel job with 1,800 minutes (30 hours) of build time every month using Microsoft-hosted agents. If you need more time or would like to run more than one job at a time, simply buy the number of pipelines you need. When you buy your first Microsoft-hosted pipeline, the number of parallel jobs in the organization remains at one; this purchase removes only the time limit on the free pipeline. To run two jobs concurrently, buy two Microsoft-hosted pipelines.
+Additionally, each Azure DevOps organization gets one free self-hosted agent that can be used to run one parallel job with unlimited minutes. If you need to run more parallel jobs, simply buy more self-hosted pipelines.
+ Load more FAQ
+ If I have another question, could I chat with someone?
+Yes! Our friendly team is ready to chat with you if you need something. View the Azure DevOps Services support page to get started.
+ When do I get charged?
+All charges appear on your next monthly invoice. Charges are based on the number of users and build and deployment agents you purchased during the month, plus the actual usage of other services that were used. The free amounts of build and cloud-based load testing reset on the first day of the month.
+ What if I add a user in the middle of the month?
+Azure DevOps licenses assigned to or removed from users in the middle of a billing cycle are pro-rated for the days they were in use. When you give a user paid access for a few weeks, or even a few days, you pay only for the time they're assigned the paid access, rather than a full month.
+ How will I be billed?
+You’ll be charged daily based on the number of users assigned, the number of build and deployment agents you purchased, and your actual usage of other services. The free build and cloud-based load testing reset on the first day of each month.
+ Chat with Sales
+ ;
+Can we help you?
+ Chat Now
+ No thanks
+ What is Azure? 
+ Get started with Azure 
+ Global infrastructure 
+ Datacenter regions 
+ Trust your cloud 
+ Azure Essentials 
+ Customer stories 
+ Products 
+ Azure pricing 
+ Free Azure services 
+ Flexible purchase options 
+ FinOps on Azure 
+ Maximize ROI from AI 
+ Solutions 
+ Resources for accelerating growth 
+ Solution architectures 
+ Support 
+ Azure demo and live Q&A 
+ Software Development Companies 
+ Microsoft Marketplace 
+ Find a partner 
+ Documentation 
+ Blog 
+ Developer resources 
+ Students 
+ Events and Webinars 
+ Analyst reports, white papers, and e-books 
+ Videos 
+ What is cloud computing? 
+ What is multicloud? 
+ What is machine learning? 
+ What is deep learning? 
+ What is AIaaS? 
+ What are LLMs? 
+ What is a container? 
+ What is RAG? 
+ English (United States)
+ Your Privacy Choices
+ Consumer Health Privacy
+ Sitemap
+ Contact Microsoft
+ Privacy 
+ Manage cookies
+ Terms of use
+ Trademarks
+ Safety & eco
+ Recycling
+ About our ads

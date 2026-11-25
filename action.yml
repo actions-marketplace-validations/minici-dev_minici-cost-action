@@ -1,6 +1,6 @@
 name: "MiniCI — CI/CD Cost Breakdown, PR Diff & Quota Receipt"
 description: "See what each Pull Request adds to your CI bill & dev wait time before merge. Sticky PR diff + 1-click YAML fixes."
-author: "Aamir Raza <raza.aamir01@gmail.com>"
+author: "MiniCI"
 branding:
   icon: "dollar-sign"
   color: "green"
@@ -54,10 +54,10 @@ inputs:
     description: "Optional Polar.sh MiniCI Cloud Key (Starter $1 / Pro $10 / Team Flex) for unlisted /r/<id> report links, 30d/365d trend ledger & org policy sync"
     required: false
     default: ""
-  cloud-api-url:
-    description: "MiniCI Cloud Worker API base URL (used only when cloud-key is provided)"
+  api-url:
+    description: "MiniCI API base URL (used only when cloud-key is provided; override for self-hosted or staging Workers)"
     required: false
-    default: "https://minici-cost-action.raza-aamir01.workers.dev"
+    default: "https://minici.dev"
 
 outputs:
   gross_monthly_compute_cost_usd:
@@ -192,7 +192,7 @@ runs:
         INPUT_SUGGEST_FIXES: ${{ inputs.suggest-fixes }}
         INPUT_SLACK_WEBHOOK_URL: ${{ inputs.slack-webhook-url }}
         INPUT_CLOUD_KEY: ${{ inputs.cloud-key }}
-        INPUT_CLOUD_API_URL: ${{ inputs.cloud-api-url }}
+        INPUT_API_URL: ${{ inputs.api-url }}
         EVENT_NAME: ${{ github.event_name }}
         EVENT_PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
       run: |
@@ -210,13 +210,13 @@ runs:
           if [ "$OS_RAW" = "Linux" ] && { [ "$ARCH_RAW" = "aarch64" ] || [ "$ARCH_RAW" = "arm64" ]; }; then ASSET="minici-linux-aarch64"; fi
           if [ "$OS_RAW" = "Darwin" ] && [ "$ARCH_RAW" = "arm64" ]; then ASSET="minici-macos-aarch64"; fi
           if [ "$OS_RAW" = "Darwin" ] && [ "$ARCH_RAW" = "x86_64" ]; then ASSET="minici-macos-x86_64"; fi
-          if [ -n "$EXE_EXT" ]; then ASSET="minici-windows-x86_64.exe"; fi
-          REL_BASE="https://github.com/minici-dev/minici-cost-action/releases/latest/download"
-          if [[ "${ACTION_REF:-}" == v*.*.* ]]; then
+          if [ -n "$EXE_EXT" ]; then ASSET="minici-windows-x86_64.exe"; [ "${RUNNER_ARCH:-}" = "ARM64" ] && ASSET="minici-windows-arm64.exe"; fi
+          REL_BASE=""
+          if [[ "${ACTION_REF:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             REL_BASE="https://github.com/minici-dev/minici-cost-action/releases/download/${ACTION_REF}"
           fi
           TMP_DL="$(mktemp -d)"
-          if [ -n "$ASSET" ] && curl -fsSL "${REL_BASE}/${ASSET}" -o "${TMP_DL}/${ASSET}" 2>/dev/null; then
+          if [ -n "$REL_BASE" ] && [ -n "$ASSET" ] && curl -fsSL "${REL_BASE}/${ASSET}" -o "${TMP_DL}/${ASSET}" 2>/dev/null; then
             VERIFIED_OK=0
             if curl -fsSL "${REL_BASE}/SHA256SUMS.txt" -o "${TMP_DL}/SHA256SUMS.txt" 2>/dev/null; then
               EXP_HASH="$(grep " ${ASSET}\$" "${TMP_DL}/SHA256SUMS.txt" | awk '{print $1}' || true)"
@@ -284,6 +284,8 @@ runs:
             --post || true
           exit 0
         fi
+        REPORT_DIR="$(mktemp -d)"
+        trap 'rm -rf "$REPORT_DIR"' EXIT
         EXTRA_BD_ARGS=()
         if [ "$INPUT_LIVE_TELEMETRY" = "true" ]; then
           "$BIN_PATH" telemetry sync --path "$INPUT_PATH" --quiet >/dev/null 2>&1 || true
@@ -308,7 +310,7 @@ runs:
           --dev-hourly-rate "$INPUT_DEV_HOURLY_RATE" \
           "${EXTRA_BD_ARGS[@]}" \
           --format markdown \
-          --out-file .minici_breakdown.md \
+          --out-file "$REPORT_DIR/minici_breakdown.md" \
           --quiet
         if [ -n "$INPUT_COMPARE_TO" ]; then
           "$BIN_PATH" diff \
@@ -327,7 +329,7 @@ runs:
             --pushes-per-pr "$INPUT_PUSHES_PER_PR" \
             --dev-hourly-rate "$INPUT_DEV_HOURLY_RATE" \
             --format markdown \
-            --out-file .minici_diff.md \
+            --out-file "$REPORT_DIR/minici_diff.md" \
             --quiet
           if [ "$INPUT_POST_PR_COMMENT" = "true" ] && [ -n "${GITHUB_EVENT_PATH:-}" ] && [ "${EVENT_NAME:-}" != "issue_comment" ]; then
             SUGGEST_FLAG="--no-suggest-fixes"
@@ -358,8 +360,8 @@ runs:
               --webhook-url "$INPUT_SLACK_WEBHOOK_URL" \
               --quiet || true
           fi
-          if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f .minici_diff.md ]; then
-            cat .minici_diff.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "$REPORT_DIR/minici_diff.md" ]; then
+            cat "$REPORT_DIR/minici_diff.md" >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
           fi
         elif [ -n "${INPUT_SLACK_WEBHOOK_URL:-}" ]; then
@@ -372,8 +374,8 @@ runs:
             --webhook-url "$INPUT_SLACK_WEBHOOK_URL" \
             --quiet || true
         fi
-        if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f .minici_breakdown.md ]; then
-          cat .minici_breakdown.md >> "$GITHUB_STEP_SUMMARY"
+        if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "$REPORT_DIR/minici_breakdown.md" ]; then
+          cat "$REPORT_DIR/minici_breakdown.md" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
         fi
         if [ -n "${GITHUB_OUTPUT:-}" ]; then
@@ -385,17 +387,18 @@ runs:
             --dev-hourly-rate "$INPUT_DEV_HOURLY_RATE" \
             "${EXTRA_BD_ARGS[@]}" \
             --format json \
-            --out-file .minici_breakdown.json \
+            --out-file "$REPORT_DIR/minici_breakdown.json" \
             --quiet
-          python3 -c '
-        import json, os
-        d = json.load(open(".minici_breakdown.json"))
+          python3 - "$REPORT_DIR/minici_breakdown.json" <<'PYTHON'
+        import json, os, sys
+        with open(sys.argv[1]) as report:
+            d = json.load(report)
         cc = d.get("cost_components", {})
         with open(os.environ["GITHUB_OUTPUT"], "a") as f:
             wf = lambda k, v: f.write(f"{k}={float(v):.2f}\n")
             ws = lambda k, v: f.write(f"{k}={v}\n")
-            wf("gross_monthly_compute_cost_usd", d.get("gross_monthly_compute_cost_usd", 0.0))
-            wf("net_billed_monthly_compute_cost_usd", d.get("net_billed_monthly_compute_cost_usd", 0.0))
+            wf("gross_monthly_compute_cost_usd", d["gross_monthly_compute_cost_usd"])
+            wf("net_billed_monthly_compute_cost_usd", d["net_billed_monthly_compute_cost_usd"])
             wf("monthly_rounding_tax_usd", cc.get("build_minutes_cost", {}).get("monthly_rounding_tax_usd", 0.0))
             ws("recommended_ec2_instance", cc.get("runner_cost", {}).get("recommended_cloud_instance", ""))
             wf("artifact_storage_90d_usd", cc.get("artifact_storage_cost", {}).get("monthly_vendor_storage_90d_usd", 0.0))
@@ -428,15 +431,15 @@ runs:
             ws("jobs_missing_timeout_minutes_count", cc.get("spend_anomaly_and_forecast", {}).get("jobs_missing_timeout_minutes_count", 0))
             ws("spend_anomaly_alert_active", str(cc.get("spend_anomaly_and_forecast", {}).get("spend_anomaly_alert_active", False)).lower())
             ws("provenance_mode", d.get("provenance_mode", "static_heuristic"))
-        '
+        PYTHON
         fi
         if [ -n "${INPUT_CLOUD_KEY:-}" ]; then
-          CLOUD_SYNC_ARGS=(--path "$INPUT_PATH" --key "$INPUT_CLOUD_KEY" --api-url "$INPUT_CLOUD_API_URL" --format json --quiet)
+          CLOUD_SYNC_ARGS=(--path "$INPUT_PATH" --key "$INPUT_CLOUD_KEY" --api-url "$INPUT_API_URL" --format json --quiet)
           if [ -n "$INPUT_COMPARE_TO" ]; then
             CLOUD_SYNC_ARGS+=(--compare-to "$INPUT_COMPARE_TO")
           fi
           "$BIN_PATH" cloud-sync "${CLOUD_SYNC_ARGS[@]}" >/dev/null 2>&1 || true
-          SHARE_JSON="$("$BIN_PATH" share --path "$INPUT_PATH" --key "$INPUT_CLOUD_KEY" --api-url "$INPUT_CLOUD_API_URL" --format json --quiet 2>/dev/null || true)"
+          SHARE_JSON="$("$BIN_PATH" share --path "$INPUT_PATH" --key "$INPUT_CLOUD_KEY" --api-url "$INPUT_API_URL" --format json --quiet 2>/dev/null || true)"
           if [ -n "$SHARE_JSON" ] && [ -n "${GITHUB_OUTPUT:-}" ]; then
             python3 -c '
         import json, os, sys
@@ -450,4 +453,3 @@ runs:
             ' <<< "$SHARE_JSON"
           fi
         fi
-        rm -f .minici_breakdown.md .minici_diff.md .minici_breakdown.json

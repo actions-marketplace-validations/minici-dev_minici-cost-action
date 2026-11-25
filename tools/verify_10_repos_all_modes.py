@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-End-to-End 27-Repository (10 Primary + 7 Internal Edge-Case + 10 Fresh World-Scale) Validation & Golden Baseline Lock Suite
+End-to-End 17-Repository (7 Primary + 10 Fresh World-Scale) Validation & Golden Baseline Lock Suite
 for Feature 1 (`minici-cost-action` / `minici` v0.3.0).
 
 Tests all repositories in parallel across:
@@ -12,7 +12,7 @@ Tests all repositories in parallel across:
      - `cicdcost.com` 6 line-by-line invoice components (`build_minutes_cost`, `runner_cost`, `artifact_storage_cost`,
        `parallelism_cost`, `log_retention_cost`, `cross_region_egress_cost`)
      - Official 2026 GitHub Billing Docs Math (`docs.github.com` 1-min ceiling, 2,000 free mins, 2026 SKU rates)
-     - `Infracost v2.19.0` (`/opt/homebrew/bin/infracost`)
+     - `Infracost v2.19.0`
      - Golden Baseline Lock (`tests/golden_baseline_10_repos.json` + `docs/GOLDEN_BASELINE_27_REPOS_KPI_AND_PERFORMANCE.md`)
 """
 from __future__ import annotations
@@ -22,7 +22,6 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import math
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -30,17 +29,14 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MINICI_BIN = REPO_ROOT / "target" / "release" / "minici"
+MINICI_BIN = REPO_ROOT / "crates" / "minici" / "target" / "release" / "minici"
 DEFAULT_CACHE_DIR = Path.home() / ".minici" / "10-repos-cache"
-FALLBACK_TMP_DIR = Path("/tmp/minici-cost-10-repos")
-FRESH_10_DIR = Path("/Users/araza/personal/top10-github-repos")
+FALLBACK_TMP_DIR = Path(tempfile.gettempdir()) / "minici-cost-10-repos"
+FRESH_10_DIR = Path(os.environ.get("MINICI_SNAPSHOT_DIR") or DEFAULT_CACHE_DIR / "world-scale")
 DEFAULT_GOLDEN_BASELINE = REPO_ROOT / "tests" / "golden_baseline_10_repos.json"
 DEFAULT_MARKDOWN_BASELINE = REPO_ROOT / "docs" / "GOLDEN_BASELINE_27_REPOS_KPI_AND_PERFORMANCE.md"
 
 TEN_REPOS = [
-    ("01_MaximVote__maxim", "MaximVote/maxim", "Internal (MaximVote • Private)"),
-    ("02_mgjartproject__FineArts-BE", "mgjartproject/FineArts-BE", "Internal (Grassy Fine Arts • Private)"),
-    ("03_Eazy-Ops__Backend", "Eazy-Ops/Backend", "Internal (Eazy-Ops • Private)"),
     ("04_astral-sh__uv", "astral-sh/uv", "Fresh OSS (Rust/Python Packaging)"),
     ("05_denoland__deno", "denoland/deno", "Fresh OSS (JS/TS Runtime)"),
     ("06_ggml-org__llama.cpp", "ggml-org/llama.cpp", "Fresh OSS (C++ LLM Inference)"),
@@ -48,16 +44,6 @@ TEN_REPOS = [
     ("08_langgenius__dify", "langgenius/dify", "Fresh OSS (Agentic AI Platform)"),
     ("09_open-webui__open-webui", "open-webui/open-webui", "Fresh OSS (AI Web Interface)"),
     ("10_mendableai__firecrawl", "mendableai/firecrawl", "Fresh OSS (AI Web Scraper)"),
-]
-
-EDGE_CASE_REPOS = [
-    ("check_MaximVote__tf", "MaximVote/tf", "Internal (6 Terragrunt VPN/GCP workflows)"),
-    ("check_mgjartproject__gfa-data-pipelines", "mgjartproject/gfa-data-pipelines", "Internal (17x matrix scraper pipeline)"),
-    ("check_mgjartproject__frontend", "mgjartproject/frontend", "Internal (GFA Frontend WIF + Security)"),
-    ("check_mgjartproject__FineArt_AI_Pipeline", "mgjartproject/FineArt_AI_Pipeline", "Internal Edge Case (0 workflows)"),
-    ("check_Eazy-Ops__frontend", "Eazy-Ops/frontend", "Internal (Eazy-Ops Frontend Docker)"),
-    ("check_Eazy-Ops__multi-cloud-finops-mcp-server", "Eazy-Ops/multi-cloud-finops-mcp-server", "Internal (Within 2,000m Free Tier -> $0 net)"),
-    ("check_Eazy-Ops__Automation", "Eazy-Ops/Automation", "Internal Edge Case (Nested cron/.github/workflows)"),
 ]
 
 FRESH_10_REPOS = [
@@ -494,32 +480,31 @@ def validate_single_repo_all_modes(
 def write_markdown_baseline_doc(
     md_path: Path,
     ten_results: list[dict],
-    edge_results: list[dict],
     fresh_results: list[dict],
 ) -> None:
     lines = [
-        "# Locked 27-Repository Golden Baseline: KPIs, 24 Unified CI/CD Cost Models & 3-Mode Latency (`v0.9.0`)",
+        "# Locked 17-Repository Golden Baseline: KPIs, 24 Unified CI/CD Cost Models & 3-Mode Latency (`v0.9.0`)",
         "",
         "**Locked Version:** `minici 0.9.0` (`tag: v0.9.0`)  ",
-        "**Total Repositories Locked:** `27` (`10` Primary + `7` Internal Edge-Case + `10` Fresh World-Scale OSS)  ",
+        "**Total Repositories Locked:** `17` (`7` Primary + `10` Fresh World-Scale OSS)  ",
         "**Execution Modes Verified on Every Repo:** `Mode 1: CLI` • `Mode 2: GitHub Action Workflow` • `Mode 3: MCP JSON-RPC 2.0 (7 Tools) + Shift-Left Hook`  ",
         "**Machine-Readable Companion Lock:** [`tests/golden_baseline_10_repos.json`](../tests/golden_baseline_10_repos.json)",
         "",
         "## How to Re-Verify Zero Deviation in Future Sessions",
         "",
         "```bash",
-        "# Run the 27-repository parallel verification gate (< 3s):",
+        "# Run the 17-repository parallel verification gate (< 3s):",
         "bash scripts/validate_minici_cost_10_repos.sh",
         "",
         "# Or invoke the verifier directly:",
         "python3 tools/verify_10_repos_all_modes.py",
         "```",
         "",
-        "If any commit alters job expansion, 1-minute ceiling rounding, SKU pricing, or any of the 24 unified CI/CD cost models (`6` invoice components + `5` hidden payroll/pipeline models + `5` team-stage & pipeline-shape models + `4` multi-vendor calculator & stack intelligence models + `4` unit economics, anomaly/timeout, container registry & fleet SLA models) on any of the 27 repositories, `verify_10_repos_all_modes.py` exits non-zero and prints the exact field delta.",
+        "If any commit alters job expansion, 1-minute ceiling rounding, SKU pricing, or any of the 24 unified CI/CD cost models (`6` invoice components + `5` hidden payroll/pipeline models + `5` team-stage & pipeline-shape models + `4` multi-vendor calculator & stack intelligence models + `4` unit economics, anomaly/timeout, container registry & fleet SLA models) on any of the 17 repositories, `verify_10_repos_all_modes.py` exits non-zero and prints the exact field delta.",
         "",
         "---",
         "",
-        "## Part 1: 10 Primary Repositories (`3 Internal + 7 Modern OSS`) — Core KPIs & 3-Mode Performance",
+        "## Part 1: 7 Primary Repositories — Core KPIs & 3-Mode Performance",
         "",
         "| Repository | Category | WF / Def / Exp Jobs | Billed Mins/Run | Gross Monthly Compute | Free-Tier Burn % | Monthly Dev Wait (`$65/hr`) | Engine (`ms`) | CLI (`ms`) | Workflow (`ms`) | MCP 4-RPC (`ms`) |",
         "| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
@@ -533,7 +518,7 @@ def write_markdown_baseline_doc(
 
     lines.extend([
         "",
-        "### Part 1B: 10 Primary Repositories — 6 Core CI/CD Invoice Components (`$/mo`)",
+        "### Part 1B: 7 Primary Repositories — 6 Core CI/CD Invoice Components (`$/mo`)",
         "",
         "| Repository | C1: Rounding Tax | C2: Self-Hosted EC2 (`Spot $/mo`) | C3: Artifact (`90d` -> `S3 14d`) | C4: Parallelism Tax | C5: Log Profile (`External 90d`) | C6: Egress (`NAT Worst` -> `VPC+Cache`) |",
         "| :--- | :---: | :---: | :---: | :---: | :---: | :---: |",
@@ -547,7 +532,7 @@ def write_markdown_baseline_doc(
 
     lines.extend([
         "",
-        "### Part 1C: 10 Primary Repositories — 5 Hidden Payroll & Pipeline Hygiene Cost Models (`$/mo`)",
+        "### Part 1C: 7 Primary Repositories — 5 Hidden Payroll & Pipeline Hygiene Cost Models (`$/mo`)",
         "",
         "| Repository | H1: 40% Context-Switch Payroll Loss | H2: Rerun Flake Cost (`12%`) | H3: Cache Coverage (`Unrealized Savings`) | H4: Combined Flake Tax (`+ Triage`) | H5: Missing `cancel-in-progress` Waste | H5: Missing Path-Filter Savings |",
         "| :--- | :---: | :---: | :---: | :---: | :---: | :---: |",
@@ -561,7 +546,7 @@ def write_markdown_baseline_doc(
 
     lines.extend([
         "",
-        "### Part 1D: 10 Primary Repositories — 5 Dynamic Team-Stage & Pipeline-Shape Cost Models",
+        "### Part 1D: 7 Primary Repositories — 5 Dynamic Team-Stage & Pipeline-Shape Cost Models",
         "",
         "| Repository | S1: Inferred Team Stage (`Devs` • `Mac mini Payback`) | S2: Recoverable Waste (`Platform Eng ROI %`) | S3: Compliance Controls (`Residency` • `1yr SIEM`) | S4: Pipeline Shape (`Units` • `Tool` • `Affected Savings`) | S5: Setup Share (`Shared Base Savings` • `Unpinned`) |",
         "| :--- | :---: | :---: | :---: | :---: | :---: |",
@@ -577,7 +562,7 @@ def write_markdown_baseline_doc(
 
     lines.extend([
         "",
-        "### Part 1E: 10 Primary Repositories — 4 Calculator & Stack Intelligence Pillars (`P17–P20`)",
+        "### Part 1E: 7 Primary Repositories — 4 Calculator & Stack Intelligence Pillars (`P17–P20`)",
         "",
         "| Repository | P17: Cheapest Vendor TCO (`2x Migration Rule`) | P18: Best First Phase (`Reducible $/mo`) | P19: Compute Profile (`Larger` • `ARM64 Savings` • `Best Tier`) | P20: Stack Archetype (`Stack Savings $/mo`) |",
         "| :--- | :---: | :---: | :---: | :---: |",
@@ -592,7 +577,7 @@ def write_markdown_baseline_doc(
 
     lines.extend([
         "",
-        "### Part 1F: 10 Primary Repositories — 4 FinOps Unit Economics, Anomaly/Timeout, Registry & Fleet SLA Models (`M21–M24`)",
+        "### Part 1F: 7 Primary Repositories — 4 FinOps Unit Economics, Anomaly/Timeout, Registry & Fleet SLA Models (`M21–M24`)",
         "",
         "| Repository | M21: Cost / Merged PR (`$/Dev/Mo`) | M22: Projected EOM (`Missing Timeouts`) | M23: Container Images (`Registry $/mo`) | M24: Est. P95 Queue (`Idle Warm Pool $/mo`) |",
         "| :--- | :---: | :---: | :---: | :---: |",
@@ -609,7 +594,7 @@ def write_markdown_baseline_doc(
         "",
         "---",
         "",
-        "## Part 2: 10 Fresh World-Scale GitHub Repositories (`/Users/araza/personal/top10-github-repos`) — Core KPIs & 3-Mode Performance",
+        "## Part 2: 10 Fresh World-Scale GitHub Repositories — Core KPIs & 3-Mode Performance",
         "",
         "| Repository | Category | WF / Def / Exp Jobs | Billed Mins/Run | Gross Monthly Compute | Free-Tier Burn % | Monthly Dev Wait (`$65/hr`) | Engine (`ms`) | CLI (`ms`) | Workflow (`ms`) | MCP 4-RPC (`ms`) |",
         "| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
@@ -695,28 +680,13 @@ def write_markdown_baseline_doc(
             f"| `{r['m24_est_p95_queue_sec']:.1f}s` (`${r['m24_idle_warm_pool_usd']:,.2f}/mo`) |"
         )
 
-    lines.extend([
-        "",
-        "---",
-        "",
-        "## Part 3: 7 Internal Edge-Case Repositories — KPIs & Latency",
-        "",
-        "| Repository | Edge-Case Scenario | WF / Exp Jobs | Gross Monthly Compute | Net Billed Monthly | CLI Latency (`ms`) |",
-        "| :--- | :--- | :---: | :---: | :---: | :---: |",
-    ])
-    for e in edge_results:
-        lines.append(
-            f"| **`{e['repo']}`** | {e['note']} | `{e['workflows']}` / `{e['expanded_jobs']}` "
-            f"| `${abs(e['monthly_cost_usd']):,.2f}/mo` | **`${abs(e['net_billed_monthly_usd']):,.2f}/mo`** | `{e['wall_ms']:.2f}` |"
-        )
-
     md_path.parent.mkdir(parents=True, exist_ok=True)
     md_path.write_text("\n".join(lines) + "\n")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Validate minici-cost-action across 27 repositories (10 primary + 7 internal edge-case + 10 fresh world-scale) and all 3 modes.")
-    parser.add_argument("--cache-dir", default=str(DEFAULT_CACHE_DIR), help="Directory holding the 10+7 repo workflow snapshots")
+    parser = argparse.ArgumentParser(description="Validate minici-cost-action across 17 repositories (7 primary + 10 fresh world-scale) and all 3 modes.")
+    parser.add_argument("--cache-dir", default=str(DEFAULT_CACHE_DIR), help="Directory holding the 7 repo workflow snapshots")
     parser.add_argument("--fresh-dir", default=str(FRESH_10_DIR), help="Directory holding the 10 fresh world-scale repo snapshots")
     parser.add_argument("--out-json", default=str(DEFAULT_CACHE_DIR / "minici_10_repos_validation_results.json"), help="Output JSON report path")
     parser.add_argument("--golden-baseline", default=str(DEFAULT_GOLDEN_BASELINE), help="Golden baseline JSON path")
@@ -732,18 +702,15 @@ def main():
     if not MINICI_BIN.exists():
         print(f"Building release binary at {MINICI_BIN}...")
         subprocess.run(["cargo", "build", "--manifest-path", str(REPO_ROOT / "crates" / "minici" / "Cargo.toml"), "--release"], check=True)
-        shutil.copy(REPO_ROOT / "crates" / "minici" / "target" / "release" / "minici", MINICI_BIN)
-
-    edge_case_results = []
 
     print("=" * 118)
-    print(" MINICI-COST-ACTION (v0.9.0) — 27-REPOSITORY (17 EXISTING + 10 FRESH) x 3-MODE PARALLEL VALIDATION & GOLDEN LOCK")
+    print(" MINICI-COST-ACTION (v0.9.0) — 17-REPOSITORY (7 PRIMARY + 10 FRESH) x 3-MODE PARALLEL VALIDATION & GOLDEN LOCK")
     print("=" * 118)
 
-    with tempfile.TemporaryDirectory(prefix="minici-27repo-reports-") as tmp_rep_dir:
+    with tempfile.TemporaryDirectory(prefix="minici-17repo-reports-") as tmp_rep_dir:
         tmp_rep = Path(tmp_rep_dir)
 
-        # Execute the 10 Primary + 10 Fresh repositories in parallel across all 3 modes (CLI, Workflow, MCP)
+        # Execute the 7 Primary + 10 Fresh repositories in parallel across all 3 modes (CLI, Workflow, MCP)
         with ThreadPoolExecutor(max_workers=8) as pool:
             ten_futures = [
                 pool.submit(validate_single_repo_all_modes, folder, repo_name, category, cache_dir / folder, tmp_rep)
@@ -778,36 +745,6 @@ def main():
                     f"| Engine: {row['engine_time_ms']:5.2f} ms ({row['engine_time_us']:4d} µs) | CLI: {row['cli_wall_ms']:5.2f} ms | WF: {row['workflow_wall_ms']:5.2f} ms "
                     f"| MCP(4 RPCs): {row['mcp_4rpc_wall_ms']:5.2f} ms | ${row['monthly_cost_usd']:8.2f}/mo | {warn_tag}"
                 )
-
-        print("-" * 118)
-        print(" 7 ADDITIONAL INTERNAL REPOSITORIES & EDGE-CASE SCANS:")
-        for folder, repo_name, note in EDGE_CASE_REPOS:
-            repo_path = cache_dir / folder
-            if not repo_path.exists():
-                continue
-            rc_e, out_e, err_e, wall_e_ms = run_timed(
-                [str(MINICI_BIN), "breakdown", "--path", str(repo_path), "--format", "json"]
-            )
-            ed = json.loads(out_e)
-            wf_cnt = ed.get("total_workflows", ed.get("workflows_parsed", 0))
-            job_cnt = ed.get("total_expanded_matrix_jobs", 0)
-            gross_mo = float(ed.get("gross_monthly_compute_cost_usd", ed.get("total_monthly_cost", 0.0)))
-            net_mo = float(ed.get("net_billed_monthly_compute_cost_usd", 0.0))
-            tier_lbl = ed.get("effective_tier", "skipped (0 workflows)")
-            edge_case_results.append({
-                "repo": repo_name,
-                "note": note,
-                "workflows": wf_cnt,
-                "expanded_jobs": job_cnt,
-                "monthly_cost_usd": gross_mo,
-                "net_billed_monthly_usd": net_mo,
-                "wall_ms": round(wall_e_ms, 2),
-                "status": tier_lbl,
-            })
-            print(
-                f" • {repo_name:42s} | {wf_cnt:2d} wf / {job_cnt:3d} jobs "
-                f"| {wall_e_ms:5.2f} ms | Gross: ${abs(gross_mo):6.2f}/mo • Net: ${abs(net_mo):6.2f}/mo — {note}"
-            )
 
     def extract_locked_kpi(r: dict) -> dict:
         return {
@@ -890,27 +827,19 @@ def main():
         "minici_version": "0.9.1",
         "repos": {r["repo"]: extract_locked_kpi(r) for r in results},
         "fresh_10_repos": {r["repo"]: extract_locked_kpi(r) for r in fresh_results},
-        "edge_case_repos": {
-            e["repo"]: {
-                "workflows": e["workflows"],
-                "expanded_jobs": e["expanded_jobs"],
-                "monthly_cost_usd": abs(e["monthly_cost_usd"]),
-                "net_billed_monthly_usd": abs(e["net_billed_monthly_usd"]),
-            }
-            for e in edge_case_results
-        },
+        "edge_case_repos": {},
     }
 
     if args.write_locked_baseline or not golden_path.exists():
         golden_path.parent.mkdir(parents=True, exist_ok=True)
         golden_path.write_text(json.dumps(locked_deterministic, indent=2) + "\n")
-        write_markdown_baseline_doc(md_path, results, edge_case_results, fresh_results)
-        print(f"🔒 Wrote locked 27-repo golden JSON baseline to: {golden_path}")
-        print(f"🔒 Wrote locked 27-repo Markdown KPI & Performance baseline to: {md_path}")
+        write_markdown_baseline_doc(md_path, results, fresh_results)
+        print(f"🔒 Wrote locked 17-repo golden JSON baseline to: {golden_path}")
+        print(f"🔒 Wrote locked 17-repo Markdown KPI & Performance baseline to: {md_path}")
     else:
         existing_golden = json.loads(golden_path.read_text())
         deviations = []
-        for section_key in ("repos", "fresh_10_repos", "edge_case_repos"):
+        for section_key in ("repos", "fresh_10_repos"):
             for repo_name, curr_vals in locked_deterministic.get(section_key, {}).items():
                 exp_vals = existing_golden.get(section_key, {}).get(repo_name)
                 if not exp_vals:
@@ -932,10 +861,10 @@ def main():
             for d in deviations:
                 print(f"   - {d}", file=sys.stderr)
             sys.exit(1)
-        total_verified = len(results) + len(fresh_results) + len(edge_case_results)
+        total_verified = len(results) + len(fresh_results)
         print(
-            f"🔒 GOLDEN LOCKED BASELINE VERIFIED: {total_verified}/27 repositories "
-            f"({len(results)} primary + {len(fresh_results)} fresh world-scale + {len(edge_case_results)} internal edge-case) "
+            f"🔒 GOLDEN LOCKED BASELINE VERIFIED: {total_verified}/17 repositories "
+            f"({len(results)} primary + {len(fresh_results)} fresh world-scale) "
             f"match {golden_path.name} with 0.00% deviation!"
         )
 
@@ -947,7 +876,7 @@ def main():
         "minici_version": "0.9.0",
         "ten_repos": results,
         "fresh_10_repos": fresh_results,
-        "edge_case_repos": edge_case_results,
+        "edge_case_repos": [],
     }
     out_json_path.write_text(json.dumps(summary_payload, indent=2))
     print("=" * 118)

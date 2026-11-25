@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# MiniCI 1-Line Portable Installer (`scripts/install.sh`)
+# MiniCI Portable Installer (`scripts/install.sh`)
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/minici-dev/minici-cost-action/main/scripts/install.sh | bash
+#   bash scripts/install.sh
 # ==============================================================================
 set -euo pipefail
 
@@ -16,6 +16,7 @@ ARCH_RAW="$(uname -m)"
 case "$OS_RAW" in
   Linux*)  OS="linux" ;;
   Darwin*) OS="macos" ;;
+  MINGW*|MSYS*|CYGWIN*) echo "Windows shell detected: use PowerShell instead: irm https://raw.githubusercontent.com/$REPO/main/scripts/install.ps1 | iex"; exit 1 ;;
   *) echo "Unsupported OS: $OS_RAW (use cargo install --git https://github.com/$REPO.git minici)"; exit 1 ;;
 esac
 
@@ -28,8 +29,10 @@ esac
 ASSET="minici-${OS}-${ARCH}"
 if [ "$VERSION" = "latest" ]; then
   BASE_URL="https://github.com/${REPO}/releases/latest/download"
+  SOURCE_REF="5c2152f912efcfaf89f82d6cbee3b0dd455a2bba"
 else
   BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+  SOURCE_REF="refs/tags/${VERSION}"
 fi
 
 mkdir -p "$INSTALL_DIR"
@@ -56,18 +59,27 @@ if curl -fsSL "${BASE_URL}/${ASSET}" -o "${TMP_DIR}/minici" 2>/dev/null \
   fi
   echo "✅ Verified SHA-256 checksum (${ACTUAL:0:16}...)"
   chmod +x "${TMP_DIR}/minici"
-  rm -f "${INSTALL_DIR}/minici"
-  mv "${TMP_DIR}/minici" "${INSTALL_DIR}/minici"
-  INSTALLED_PREBUILT=1
+  # A checksum-verified asset can still be unrunnable (e.g. built against a newer glibc than this host has).
+  if "${TMP_DIR}/minici" --version >/dev/null; then
+    rm -f "${INSTALL_DIR}/minici"
+    mv "${TMP_DIR}/minici" "${INSTALL_DIR}/minici"
+    INSTALLED_PREBUILT=1
+  else
+    echo "⚠️ Verified ${ASSET} does not run on this system (libc mismatch?); falling back to source build..."
+  fi
 fi
 
 if [ "$INSTALLED_PREBUILT" = "0" ]; then
-  echo "⚙️ Verified release asset + SHA256SUMS.txt not yet cached; compiling std-only Rust binary from source (< 2s)..."
-  git clone --depth 1 "https://github.com/${REPO}.git" "${TMP_DIR}/src"
-  cargo build --release --manifest-path "${TMP_DIR}/src/crates/minici/Cargo.toml"
+  echo "⚙️ Verified release asset + SHA256SUMS.txt not yet cached; compiling std-only Rust binary from source..."
+  git init -q "${TMP_DIR}/src"
+  git -C "${TMP_DIR}/src" fetch --depth 1 "https://github.com/${REPO}.git" "${SOURCE_REF}"
+  git -C "${TMP_DIR}/src" checkout --detach FETCH_HEAD
+  cargo build --locked --release --manifest-path "${TMP_DIR}/src/crates/minici/Cargo.toml"
   rm -f "${INSTALL_DIR}/minici"
   cp "${TMP_DIR}/src/crates/minici/target/release/minici" "${INSTALL_DIR}/minici"
   chmod +x "${INSTALL_DIR}/minici"
 fi
 
-echo "✅ Installed $("${INSTALL_DIR}/minici" --version) -> ${INSTALL_DIR}/minici"
+# Assign separately: inside echo's $(...) a failing --version would not stop the script.
+INSTALLED_VERSION="$("${INSTALL_DIR}/minici" --version)"
+echo "✅ Installed ${INSTALLED_VERSION} -> ${INSTALL_DIR}/minici"

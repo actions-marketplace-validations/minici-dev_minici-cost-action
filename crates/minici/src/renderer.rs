@@ -787,7 +787,7 @@ pub fn render_breakdown_csv(r: &BreakdownReport) -> String {
     out
 }
 
-fn build_contextual_recommendation(r: &BreakdownReport) -> String {
+pub(crate) fn build_contextual_recommendation(r: &BreakdownReport) -> String {
     let cc = &r.cost_components;
     let hosted_total_jobs = r
         .total_expanded_matrix_jobs
@@ -819,7 +819,8 @@ fn build_contextual_recommendation(r: &BreakdownReport) -> String {
             (r.gross_monthly_compute_cost_usd - r.monthly_self_hosted_spot_cost_usd).max(0.0);
         if blacksmith_savings_usd >= 20.0 {
             format!(
-                "Right-size heavy jobs to ARM64 / High-Speed Runners (${:.2}/mo, saves ${:.2}/mo) or Cloud Spot (${:.2}/mo, saves ${:.2}/mo)",
+                "Switch eligible Linux x64 jobs to ARM64 runners (saves ${:.2}/mo) or right-size heavy jobs to High-Speed Runners (${:.2}/mo, saves ${:.2}/mo) or Cloud Spot (${:.2}/mo, saves ${:.2}/mo)",
+                crate::engine::arm64_migration_savings_usd(cc),
                 r.monthly_blacksmith_cost_usd,
                 blacksmith_savings_usd,
                 r.monthly_self_hosted_spot_cost_usd,
@@ -832,10 +833,10 @@ fn build_contextual_recommendation(r: &BreakdownReport) -> String {
                 r.monthly_self_hosted_spot_cost_usd,
                 spot_savings_usd
             )
-        } else if cc.arm64_migration_monthly_savings_usd >= 1.0 {
+        } else if crate::engine::arm64_migration_savings_usd(cc) >= 1.0 {
             format!(
                 "Switch eligible Linux x64 jobs to ARM64 runners (saves ${:.2}/mo)",
-                cc.arm64_migration_monthly_savings_usd
+                crate::engine::arm64_migration_savings_usd(cc)
             )
         } else if cc.jobs_uploading_artifacts > 0 && cc.configured_retention_days > 14 {
             format!(
@@ -1696,32 +1697,32 @@ pub fn render_slack_payload(d: &DiffReport) -> String {
 pub fn generate_post_tool_use_launch_pack(feature_name: &str, sample_latency_us: u128) -> String {
     format!(
         "# 🚀 AUTOMATIC `PostToolUse` 6-CHANNEL NATURAL-LANGUAGE LAUNCH & PARTNER PROFILE PACK (`{feature_name}`)\n\n\
-> **Founder & Publisher Contact:** Aamir Raza (`raza.aamir01@gmail.com`)\n\
+> **Founder & Publisher Contact:** MiniCI maintainers (`github.com/minici-dev`)\n\
 > **Category Positioning:** **CI/CD with Taste** (`taste-ci-1`) — *\"If we were building CI/CD for software built with AI, MiniCI is what it would look like.\"*\n\
 > **Pricing Model:** **Open-Source Core (`$0` CLI + Action + MCP)** • **Team Pro (`$79/mo` flat per GitHub Org — 1-Click Auto-Fix PR Bot + 30-Day Drift Memory + Weekly Slack CFO Digest)** • **Enterprise (`Custom`)**\n\
 > **Empirically Measured Portable Rust Benchmark:** `{sample_latency_us} µs` (`{:.3} ms`) on 1–2 CPU threads • Zero External Dependencies\n\n\
 ---\n\n\
 ## 1. Y Combinator (YC) Application — Product & Technical Moat Profile\n\
-- **Founder:** Aamir Raza (`raza.aamir01@gmail.com`)\n\
+- **Founder:** MiniCI maintainers (`github.com/minici-dev`)\n\
 - **Company / Project:** MiniCI — **Deterministic CI/CD FinOps & Workflow Economics**\n\
 - **50-Character Description:** Sub-ms Rust CI/CD cost breakdown & PR diff engine.\n\
 - **What we built (`{feature_name}`):** AI coding agents push 4x more commits per day, silently expanding CI matrices and burning runner budgets. We built `minici` 100% in **Rust** (`{sample_latency_us} µs` execution, zero runtime dependencies). Every `git push` or PR gets an instant `< 1 ms` receipt showing **Free-Tier Quota Burn %**, **Developer Wait-Time Dollars (`$65/hr` default, 40% DORA context-switch loss)**, **Billed Compute Cost (with GitHub's 1-minute per-job ceiling rounding and macOS 10x multiplier)**, **Artifact Storage Optimization (`$0.25/GB-mo` vs `$0.023` S3)**, and **Self-Hosted Spot Break-Even (`5,000 mins/mo`)**.\n\n\
 ## 2. Product Hunt — Maker Launch Listing\n\
 - **Name:** MiniCI — Sub-Millisecond CI/CD Cost & PR Diff Engine\n\
-- **Maker Contact:** Aamir Raza (`raza.aamir01@gmail.com`)\n\
+- **Maker Contact:** MiniCI maintainers (`github.com/minici-dev`)\n\
 - **Tagline:** Catch expensive Pull Request CI matrix spikes in `< 1ms` with zero-dependency Rust.\n\
 - **Maker Comment (Natural Voice):** Hey Product Hunt! AI coding agents are shipping code faster than ever, but CI/CD hasn't caught up—one tiny `strategy.matrix` edit in a PR can silently multiply your GitHub Actions or GitLab bill by 10x. I built `minici` in pure Rust (`{sample_latency_us} µs` execution, zero dependencies): it shows your exact Free Quota Burn %, Developer Wait-Time cost, and Per-PR Compute Invoice before merge.\n\n\
 ## 3. Reddit (`r/devops`, `r/rust`, `r/sre`) Technical Post (Natural Engineer Voice)\n\
 - **Title:** `I built a zero-dependency Rust CLI that expands GitHub/GitLab/CircleCI workflow matrices and calculates PR cost diffs in {sample_latency_us} µs`\n\
-- **Body:** GitHub Actions and GitLab CI only show you a lump-sum bill at the end of the month—they never tell you which PR or `strategy.matrix` change spiked your runner bill or burned your 2,000 free minutes. I wrote `minici` in pure Rust with an embedded zero-copy SKU catalog (supporting 1-minute per-job ceiling rounding, macOS 10x multipliers, `$0.25/GB-mo` artifact storage overage, developer wait-time cost, and the 5,000 min/mo self-hosted break-even threshold). Always exits `0` so it never blocks a build. Feedback welcome: `raza.aamir01@gmail.com`.\n\n\
+- **Body:** GitHub Actions and GitLab CI only show you a lump-sum bill at the end of the month—they never tell you which PR or `strategy.matrix` change spiked your runner bill or burned your 2,000 free minutes. I wrote `minici` in pure Rust with an embedded zero-copy SKU catalog (supporting 1-minute per-job ceiling rounding, macOS 10x multipliers, `$0.25/GB-mo` artifact storage overage, developer wait-time cost, and the 5,000 min/mo self-hosted break-even threshold). Always exits `0` so it never blocks a build. Feedback welcome: [GitHub Issues](https://github.com/minici-dev/minici-cost-action/issues).\n\n\
 ## 4. LinkedIn — Founder Build-in-Public Post (Natural Staff SRE Voice)\n\
-- **Post:** AI coding agents expanded PR volume 4x, and one `strategy.matrix` change can silently multiply your GitHub Actions bill overnight. So I built **MiniCI (`minici`)** in pure Rust. In **{sample_latency_us} microseconds** (`< 1 ms`), it expands your CI matrices and posts the exact Per-PR & Monthly Cost Diff, Free-Tier Quota Burn %, and Developer Wait-Time cost right on the PR or local `pre-push` hook. Open-source CLI, Action, and MCP server (`Apache-2.0`). Reach out anytime at `raza.aamir01@gmail.com`.\n\n\
+- **Post:** AI coding agents expanded PR volume 4x, and one `strategy.matrix` change can silently multiply your GitHub Actions bill overnight. So I built **MiniCI (`minici`)** in pure Rust. In **{sample_latency_us} microseconds** (`< 1 ms`), it expands your CI matrices and posts the exact Per-PR & Monthly Cost Diff, Free-Tier Quota Burn %, and Developer Wait-Time cost right on the PR or local `pre-push` hook. Open-source CLI, Action, and MCP server (`Apache-2.0`). Reach out anytime via [GitHub Issues](https://github.com/minici-dev/minici-cost-action/issues).\n\n\
 ## 5. AI Coding Agent & IDE (`PreToolUse` / `PostToolUse` / MCP) Profile\n\
 - **Integration Name:** `minici` — Sub-Millisecond CI/CD with Taste Guard for AI Coding Agents\n\
-- **Maintainer:** Aamir Raza (`raza.aamir01@gmail.com`)\n\
+- **Maintainer:** MiniCI maintainers (`github.com/minici-dev`)\n\
 - **Hook Specification:** Plugs directly into IDE & Git hooks (`PreToolUse` / `PostToolUse` on `git push` or `.github/workflows/*.yml` edits) in `{sample_latency_us} µs` with `exit 0` informational receipts so coding agents respect your repo's CI budget (`taste-ci-1`) before pushing.\n\n\
 ## 6. Mozilla Builders / Open-Source AI & DevTools Grant Profile\n\
-- **Applicant:** Aamir Raza (`raza.aamir01@gmail.com`)\n\
+- **Applicant:** MiniCI maintainers (`github.com/minici-dev`)\n\
 - **Project Summary:** Open-source, zero-telemetry-egress Rust binary (`Apache-2.0`) that brings `CI/CD with Taste` locally to any developer machine or cheap 1–2 vCPU container without sending proprietary source code to third-party servers.\n",
         (sample_latency_us as f64) / 1000.0
     )
